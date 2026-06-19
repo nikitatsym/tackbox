@@ -12,7 +12,7 @@ repos:
       - id: go-build
         name: go build
         entry: go
-        args: [build, ./...]
+        args: [build, ./go/...]
         language: system
         pass_filenames: false
         types: [go]
@@ -20,7 +20,7 @@ repos:
       - id: go-vet
         name: go vet
         entry: go
-        args: [vet, ./...]
+        args: [vet, ./go/...]
         language: system
         pass_filenames: false
         types: [go]
@@ -28,7 +28,7 @@ repos:
       - id: go-test
         name: go test
         entry: go
-        args: [test, -race, ./...]
+        args: [test, -race, ./go/...]
         language: system
         pass_filenames: false
         types: [go]
@@ -36,7 +36,7 @@ repos:
       - id: erclint
         name: erclint (self)
         entry: go
-        args: [run, ./go/cmd/erclint, ./...]
+        args: [run, ./go/cmd/erclint, ./go/...]
         language: system
         pass_filenames: false
         types: [go]
@@ -48,3 +48,19 @@ repos:
         language: system
         pass_filenames: false
         types: [go]
+
+      - id: npm-test
+        name: npm test (JS rules)
+        entry: npm
+        args: [test]
+        language: system
+        pass_filenames: false
+        types_or: [javascript]
+
+      - id: tackbox-eslint-self
+        name: tackbox-eslint (self)
+        entry: node
+        args: [./bin/tackbox-eslint.js, js/eslint-plugin.js, js/report.js, js/rules, bin]
+        language: system
+        pass_filenames: false
+        types_or: [javascript]

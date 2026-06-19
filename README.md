@@ -6,13 +6,14 @@ and the rules apply uniformly.
 
 ## Hooks
 
-| Hook id              | Engine        | Languages              | Rules covered          |
-|----------------------|---------------|------------------------|------------------------|
-| `erclint-go`         | go/analysis   | Go                     | ERC001-005             |
-| `erclint-opengrep`   | opengrep      | Go, Python, JS, TS     | ERC006 (fingerprint)   |
+| Hook id              | Engine        | Languages              | Rules covered                  |
+|----------------------|---------------|------------------------|--------------------------------|
+| `erclint-go`         | go/analysis   | Go                     | ERC001-005                     |
+| `erclint-opengrep`   | opengrep      | Go, Python, JS, TS     | ERC006 (fingerprint)           |
+| `tackbox-eslint`     | ESLint        | JS, TS, Svelte         | frontend swallow/report rules  |
 
-Per-language hooks for Python, JS, TS, Svelte and Java analyzers
-(ERC001-005 equivalents) come in later versions.
+Per-language hooks for Python and Java analyzers come in later
+versions.
 
 ### Prerequisites
 
@@ -20,6 +21,7 @@ Per-language hooks for Python, JS, TS, Svelte and Java analyzers
   `erclint-opengrep` via `go install`).
 - `opengrep` binary in PATH for the `erclint-opengrep` hook. See
   https://github.com/opengrep/opengrep for installation.
+- Node 18+ in PATH for the `tackbox-eslint` hook.
 
 ## Quick start (pre-commit)
 
@@ -31,6 +33,7 @@ repos:
     hooks:
       - id: erclint-go
       - id: erclint-opengrep
+      - id: tackbox-eslint
 ```
 
 Then:
@@ -90,18 +93,27 @@ by their last identifier - `sentryErr`, `SentryErr`, `Warn`, `Panic`
 
 ```
 .pre-commit-hooks.yaml                 # hooks exposed to consumers
-go.mod                                 # root Go module (pre-commit needs it at root)
+go.mod                                 # Go module
+package.json                           # npm package (ESLint plugin + report helper)
+eslint.config.preset.js                # default config used by tackbox-eslint bin
+bin/tackbox-eslint.js                  # ESLint CLI wrapper with bundled preset
 go/
 ├── cmd/erclint/                       # native Go analyzers (ERC001-005)
 ├── cmd/erclint-opengrep/              # opengrep wrapper with embedded rule yamls
 │   └── rules/                         # multi-language ERC006 yamls
 ├── analyzers/                         # per-rule go/analysis packages
-└── internal/                          # markers + AST helpers
+├── internal/                          # markers + AST helpers
+└── report/                            # Go capture helper (Sentry/glitchtip)
+js/
+├── eslint-plugin.js                   # ESLint plugin entry
+├── rules/                             # 8 frontend rules
+├── report.js                          # browser capture helper (@sentry/browser)
+└── tests/                             # RuleTester + node:test
 ```
 
-Python, JS, TS, Java directories with their own manifests will be
-added in the corresponding tackbox versions; they will sit next to
-`go.mod` in the repo root.
+Python and Java directories with their own manifests will be added
+in later versions; they will sit next to `go.mod` and `package.json`
+in the repo root.
 
 ## Repo conventions
 

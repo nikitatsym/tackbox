@@ -18,3 +18,15 @@
   types_or: [go, python, javascript, typescript]
   pass_filenames: true
   require_serial: true
+
+- id: tackbox-eslint
+  name: tackbox-eslint (JS/TS/Svelte error-reporting rules)
+  description: >-
+    ESLint plugin with no-swallow-catch, no-swallow-promise-catch,
+    no-console-error, valid-error-report, valid-throw-error,
+    no-throw-and-report. Uses the bundled preset config.
+  language: node
+  entry: tackbox-eslint
+  types_or: [javascript, jsx, ts, tsx, svelte]
+  pass_filenames: true
+  require_serial: true

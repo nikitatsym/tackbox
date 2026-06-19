@@ -76,6 +76,23 @@ func IsTestFile(pass *analysis.Pass, f *ast.File) bool {
 	return strings.HasSuffix(pos.Name(), "_test.go")
 }
 
+// IsExcluded reports whether the file lives in a vendored or
+// third-party directory we never want to lint: node_modules, vendor,
+// dist, build.
+func IsExcluded(pass *analysis.Pass, f *ast.File) bool {
+	pos := pass.Fset.File(f.Pos())
+	if pos == nil {
+		return false
+	}
+	name := pos.Name()
+	for _, frag := range []string{"/node_modules/", "/vendor/", "/dist/", "/build/", "/.git/"} {
+		if strings.Contains(name, frag) {
+			return true
+		}
+	}
+	return false
+}
+
 // IsGenerated reports whether the file carries the standard
 // `// Code generated ... DO NOT EDIT` header — cgo wrappers,
 // protoc output, stringer, etc. Such files are not in scope for
@@ -92,10 +109,11 @@ func IsGenerated(f *ast.File) bool {
 	return false
 }
 
-// EachFile invokes fn for every non-test, non-generated file.
+// EachFile invokes fn for every non-test, non-generated, in-project
+// file.
 func EachFile(pass *analysis.Pass, fn func(f *ast.File)) {
 	for _, f := range pass.Files {
-		if IsTestFile(pass, f) || IsGenerated(f) {
+		if IsTestFile(pass, f) || IsGenerated(f) || IsExcluded(pass, f) {
 			continue
 		}
 		fn(f)
