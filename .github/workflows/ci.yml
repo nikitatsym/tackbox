@@ -1,0 +1,74 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump'
+        required: false
+        default: 'patch'
+        type: choice
+        options: [patch, minor, major]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: go run ./go/cmd/erclint ./...
+      - name: Install opengrep
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/opengrep/opengrep/releases/latest/download/opengrep_manylinux_x86 -o /usr/local/bin/opengrep
+          chmod +x /usr/local/bin/opengrep
+          opengrep --version
+      - run: go run ./go/cmd/erclint-opengrep ./go
+
+  tag:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Bump and push tag
+        env:
+          BUMP: ${{ github.event.inputs.bump || 'patch' }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --quiet
+          latest=$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n1)
+          if [ -z "$latest" ]; then
+            next="v0.1.0"
+          else
+            ver=${latest#v}
+            major=${ver%%.*}
+            rest=${ver#*.}
+            minor=${rest%%.*}
+            patch=${rest#*.}
+            case "$BUMP" in
+              major) next="v$((major+1)).0.0" ;;
+              minor) next="v${major}.$((minor+1)).0" ;;
+              patch) next="v${major}.${minor}.$((patch+1))" ;;
+              *) echo "unknown bump: $BUMP" >&2; exit 1 ;;
+            esac
+          fi
+          echo "previous: ${latest:-none}"
+          echo "next:     $next"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$next" -m "release $next"
+          git push origin "$next"

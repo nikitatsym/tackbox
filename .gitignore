@@ -1,0 +1,14 @@
+# Go
+bin/
+*.test
+*.out
+coverage.txt
+
+# Editors
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Local artifacts
+/dist/

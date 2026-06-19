@@ -1,0 +1,21 @@
+rules:
+  - id: erc006-fingerprint-user-input-go
+    message: >-
+      Capture argument references raw user input from
+      *http.Request (URL.Path, Header.Get, Body). Use a routing
+      pattern or a scrubbed value instead.
+    severity: ERROR
+    languages: [go]
+    pattern-either:
+      - pattern: sentryErr(..., $R.URL.Path, ...)
+      - pattern: sentryErr(..., $R.Header.Get(...), ...)
+      - pattern: sentryErr(..., $R.Body, ...)
+      - pattern: SentryErr(..., $R.URL.Path, ...)
+      - pattern: SentryErr(..., $R.Header.Get(...), ...)
+      - pattern: SentryErr(..., $R.Body, ...)
+      - pattern: Warn(..., $R.URL.Path, ...)
+      - pattern: Warn(..., $R.Header.Get(...), ...)
+      - pattern: Warn(..., $R.Body, ...)
+      - pattern: Panic(..., $R.URL.Path, ...)
+      - pattern: Panic(..., $R.Header.Get(...), ...)
+      - pattern: Panic(..., $R.Body, ...)
