@@ -1,5 +1,4 @@
 # Go
-bin/
 *.test
 *.out
 coverage.txt
@@ -12,3 +11,8 @@ coverage.txt
 
 # Local artifacts
 /dist/
+
+# Node
+node_modules/
+npm-debug.log*
+.npm

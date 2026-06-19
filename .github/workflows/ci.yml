@@ -22,10 +22,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go build ./...
-      - run: go vet ./...
-      - run: go test -race ./...
-      - run: go run ./go/cmd/erclint ./...
+      - run: go build ./go/...
+      - run: go vet ./go/...
+      - run: go test -race ./go/...
+      - run: go run ./go/cmd/erclint ./go/...
       - name: Install opengrep
         run: |
           set -euo pipefail
@@ -33,6 +33,13 @@ jobs:
           chmod +x /usr/local/bin/opengrep
           opengrep --version
       - run: go run ./go/cmd/erclint-opengrep ./go
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: node ./bin/tackbox-eslint.js js/eslint-plugin.js js/report.js js/rules bin
 
   tag:
     needs: test

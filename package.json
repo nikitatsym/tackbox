@@ -1,0 +1,41 @@
+{
+  "name": "tackbox",
+  "version": "0.1.0",
+  "description": "Universal error-reporting-and-coverage rules and helpers (ESLint plugin + browser report helper).",
+  "license": "MIT",
+  "main": "./js/eslint-plugin.js",
+  "exports": {
+    ".": "./js/eslint-plugin.js",
+    "./report": "./js/report.js"
+  },
+  "bin": {
+    "tackbox-eslint": "./bin/tackbox-eslint.js"
+  },
+  "files": [
+    "js/",
+    "bin/",
+    "eslint.config.preset.js"
+  ],
+  "scripts": {
+    "test": "node --test js/tests/*.test.js"
+  },
+  "peerDependencies": {
+    "eslint": ">=8"
+  },
+  "dependencies": {
+    "@sentry/browser": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "svelte": "^5.0.0",
+    "svelte-eslint-parser": "^0.43.0"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nikitatsym/tackbox.git"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
