@@ -1,0 +1,50 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+
+  - repo: local
+    hooks:
+      - id: go-build
+        name: go build
+        entry: go
+        args: [build, ./...]
+        language: system
+        pass_filenames: false
+        types: [go]
+
+      - id: go-vet
+        name: go vet
+        entry: go
+        args: [vet, ./...]
+        language: system
+        pass_filenames: false
+        types: [go]
+
+      - id: go-test
+        name: go test
+        entry: go
+        args: [test, -race, ./...]
+        language: system
+        pass_filenames: false
+        types: [go]
+
+      - id: erclint
+        name: erclint (self)
+        entry: go
+        args: [run, ./go/cmd/erclint, ./...]
+        language: system
+        pass_filenames: false
+        types: [go]
+
+      - id: erclint-opengrep
+        name: erclint-opengrep (self)
+        entry: go
+        args: [run, ./go/cmd/erclint-opengrep, ./go]
+        language: system
+        pass_filenames: false
+        types: [go]

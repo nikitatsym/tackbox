@@ -1,0 +1,20 @@
+- id: erclint-go
+  name: erclint (Go error reporting coverage)
+  description: Enforce error reporting coverage rules on Go sources.
+  language: golang
+  entry: erclint
+  types: [go]
+  pass_filenames: false
+  require_serial: true
+  args: ['./...']
+
+- id: erclint-opengrep
+  name: erclint (opengrep fingerprint rules)
+  description: >-
+    Enforce ERC006 fingerprint rules via opengrep. Requires opengrep
+    to be available on PATH; the rules are embedded in the binary.
+  language: golang
+  entry: erclint-opengrep
+  types_or: [go, python, javascript, typescript]
+  pass_filenames: true
+  require_serial: true

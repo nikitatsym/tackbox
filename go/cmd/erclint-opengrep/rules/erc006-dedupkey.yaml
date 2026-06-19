@@ -1,0 +1,47 @@
+rules:
+  - id: erc006-dedupkey-missing
+    message: >-
+      Capture call must include a dedupKey. Expected signature
+      `(ctx, msg, err, tags, key)` — 5 arguments. A missing or
+      extra-argument call breaks fingerprint stability.
+    severity: ERROR
+    languages: [go]
+    patterns:
+      - pattern-either:
+          - pattern: sentryErr(...)
+          - pattern: SentryErr(...)
+          - pattern: Warn(...)
+      - pattern-not: sentryErr($CTX, $MSG, $ERR, $TAGS, $KEY)
+      - pattern-not: SentryErr($CTX, $MSG, $ERR, $TAGS, $KEY)
+      - pattern-not: Warn($CTX, $MSG, $ERR, $TAGS, $KEY)
+
+  - id: erc006-dedupkey-not-literal
+    message: >-
+      dedupKey (last arg) must be a string literal so the
+      fingerprint is stable across calls.
+    severity: ERROR
+    languages: [go]
+    patterns:
+      - pattern-either:
+          - pattern: sentryErr($CTX, $MSG, $ERR, $TAGS, $KEY)
+          - pattern: SentryErr($CTX, $MSG, $ERR, $TAGS, $KEY)
+          - pattern: Warn($CTX, $MSG, $ERR, $TAGS, $KEY)
+      - pattern-not: sentryErr($CTX, $MSG, $ERR, $TAGS, "...")
+      - pattern-not: SentryErr($CTX, $MSG, $ERR, $TAGS, "...")
+      - pattern-not: Warn($CTX, $MSG, $ERR, $TAGS, "...")
+
+  - id: erc006-dedupkey-bad-format
+    message: >-
+      dedupKey must follow `area.suffix[:identifier]` format —
+      lowercase area, dot, suffix, optional `:identifier`. The
+      area prefix is extracted as the `area` tag.
+    severity: ERROR
+    languages: [go]
+    patterns:
+      - pattern-either:
+          - pattern: sentryErr($CTX, $MSG, $ERR, $TAGS, "$KEY")
+          - pattern: SentryErr($CTX, $MSG, $ERR, $TAGS, "$KEY")
+          - pattern: Warn($CTX, $MSG, $ERR, $TAGS, "$KEY")
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: '^(?![a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*(:[a-zA-Z0-9_.-]+)?$).*$'
