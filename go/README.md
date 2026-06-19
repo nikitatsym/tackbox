@@ -5,21 +5,37 @@ described in the parent README and the source spec.
 
 ## Install
 
-```
+```bash
 go install github.com/nikitatsym/tackbox/go/cmd/erclint@latest
 erclint ./...
 ```
 
 ## Rules
 
-| Code     | Name           | Summary                                                                 |
-|----------|----------------|-------------------------------------------------------------------------|
-| ERC001   | errcheck       | `if err != nil` branch: propagate, capture, or `// no-sentry: <reason>` |
-| ERC002   | parsenil       | parser err: capture or `// parse-skip: <reason>`                        |
-| ERC003   | terminal       | `log.Fatal*` / `os.Exit` / `die`: capture above, or `// no-sentry: <reason>` |
-| ERC004   | returnnil      | bare `return nil` on `*T`/`[]T`/`map`: marker or use `(val, ok/err)`    |
-| ERC005   | doublecapture  | capture and `return err` in the same err-branch                         |
-| ERC006   | fingerprint    | capture args may not name secrets or raw user input                     |
+| Code   | Name          | Summary                              |
+|--------|---------------|--------------------------------------|
+| ERC001 | errcheck      | err branch must propagate or capture |
+| ERC002 | parsenil      | parser err must capture or mark      |
+| ERC003 | terminal      | Fatal/Exit/die need capture above    |
+| ERC004 | returnnil     | bare nil return needs marker or pair |
+| ERC005 | doublecapture | no capture and `return err` together |
+| ERC006 | fingerprint   | capture args may not name secrets    |
+
+Details per rule:
+
+- ERC001 `errcheck` - in any `if err != nil` branch, propagate,
+  capture, or carry `// no-sentry: <reason>`.
+- ERC002 `parsenil` - parser results that fall through to nil must
+  capture or carry `// parse-skip: <reason>`.
+- ERC003 `terminal` - `log.Fatal*`, `os.Exit`, project-local `die`:
+  must be preceded by a capture call or carry `// no-sentry: <reason>`
+  (e.g. for normal `os.Exit(0)` at the end of `main`).
+- ERC004 `returnnil` - bare `return nil` on `*T`/`[]T`/`map` needs
+  `// nil-return: <reason>` or use `(val, ok)` / `(val, err)`.
+- ERC005 `doublecapture` - a single err-branch may not both capture
+  and `return err`.
+- ERC006 `fingerprint` - capture-call fingerprint args may not name
+  secrets or carry raw user input.
 
 `_test.go` files are skipped by every analyzer.
 
@@ -28,7 +44,7 @@ erclint ./...
 Markers must appear on the line immediately above the branch or
 return they apply to and must carry a non-empty reason.
 
-```
+```go
 // no-sentry: caller already wraps and captures
 if err != nil {
     return err

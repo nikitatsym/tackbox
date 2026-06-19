@@ -31,7 +31,7 @@ repos:
         args: [test, -race, ./go/...]
         language: system
         pass_filenames: false
-        types: [go]
+        always_run: true
 
       - id: erclint
         name: erclint (self)
@@ -55,7 +55,7 @@ repos:
         args: [test]
         language: system
         pass_filenames: false
-        types_or: [javascript]
+        always_run: true
 
       - id: tackbox-eslint-self
         name: tackbox-eslint (self)
@@ -64,3 +64,11 @@ repos:
         language: system
         pass_filenames: false
         types_or: [javascript]
+
+      - id: tackbox-mdlint-self
+        name: tackbox-mdlint (self)
+        entry: node
+        args: [./bin/tackbox-mdlint.js, README.md, go/README.md, js/README.md]
+        language: system
+        pass_filenames: false
+        types: [markdown]
