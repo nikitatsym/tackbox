@@ -30,3 +30,14 @@
   types_or: [javascript, jsx, ts, tsx, svelte]
   pass_filenames: true
   require_serial: true
+
+- id: tackbox-mdlint
+  name: tackbox-mdlint (markdown lint)
+  description: >-
+    markdownlint with the bundled preset (full MD001-MD059 default
+    rule set plus the custom ASCII-only rule).
+  language: node
+  entry: tackbox-mdlint
+  types: [markdown]
+  pass_filenames: true
+  require_serial: true

@@ -6,11 +6,12 @@ and the rules apply uniformly.
 
 ## Hooks
 
-| Hook id              | Engine        | Languages              | Rules covered                  |
-|----------------------|---------------|------------------------|--------------------------------|
-| `erclint-go`         | go/analysis   | Go                     | ERC001-005                     |
-| `erclint-opengrep`   | opengrep      | Go, Python, JS, TS     | ERC006 (fingerprint)           |
-| `tackbox-eslint`     | ESLint        | JS, TS, Svelte         | frontend swallow/report rules  |
+| Hook id            | Engine       | Languages          | Rules covered     |
+|--------------------|--------------|--------------------|-------------------|
+| `erclint-go`       | go/analysis  | Go                 | ERC001-005        |
+| `erclint-opengrep` | opengrep     | Go, Python, JS, TS | ERC006            |
+| `tackbox-eslint`   | ESLint       | JS, TS, Svelte     | frontend swallow  |
+| `tackbox-mdlint`   | markdownlint | Markdown           | MD001-059 + ASCII |
 
 Per-language hooks for Python and Java analyzers come in later
 versions.
@@ -20,8 +21,9 @@ versions.
 - Go 1.24+ in PATH (pre-commit installs `erclint` and
   `erclint-opengrep` via `go install`).
 - `opengrep` binary in PATH for the `erclint-opengrep` hook. See
-  https://github.com/opengrep/opengrep for installation.
-- Node 18+ in PATH for the `tackbox-eslint` hook.
+  <https://github.com/opengrep/opengrep> for installation.
+- Node 20+ in PATH for the `tackbox-eslint` and `tackbox-mdlint`
+  hooks.
 
 ## Quick start (pre-commit)
 
@@ -29,37 +31,38 @@ versions.
 # .pre-commit-config.yaml in the consumer repo
 repos:
   - repo: https://github.com/nikitatsym/tackbox
-    rev: v0.1.0
+    rev: main  # rolling release
     hooks:
       - id: erclint-go
       - id: erclint-opengrep
       - id: tackbox-eslint
+      - id: tackbox-mdlint
 ```
 
 Then:
 
-```
+```bash
 pre-commit install
 pre-commit run --all-files
 ```
 
 ## Quick start (Go CLI, no pre-commit)
 
-```
+```bash
 go install github.com/nikitatsym/tackbox/go/cmd/erclint@latest
 erclint ./...
 ```
 
 ## Quick start (opengrep wrapper, no pre-commit)
 
-```
+```bash
 go install github.com/nikitatsym/tackbox/go/cmd/erclint-opengrep@latest
 erclint-opengrep path/to/sources
 ```
 
 `erclint-opengrep` is a thin Go wrapper: it embeds the rule yamls
 and shells out to `opengrep scan`. Opengrep itself must be on PATH
-(install from https://github.com/opengrep/opengrep/releases or via
+(install from <https://github.com/opengrep/opengrep/releases> or via
 Homebrew).
 
 ## What the rules enforce
@@ -86,29 +89,32 @@ By design, the ruleset is a single non-negotiable bundle. There are
 no flags to disable individual rules. Suppressing a finding requires
 the explicit per-site marker (`// no-sentry`, `// parse-skip`,
 `// nil-return`) with a non-empty reason. Capture helpers are matched
-by their last identifier - `sentryErr`, `SentryErr`, `Warn`, `Panic`
-- so both `sentryErr(...)` and `report.SentryErr(...)` are recognized.
+by the last identifier in the call (`sentryErr`, `SentryErr`, `Warn`,
+`Panic`), so both `sentryErr(...)` and `report.SentryErr(...)` are
+recognized.
 
 ## Layout
 
-```
+```text
 .pre-commit-hooks.yaml                 # hooks exposed to consumers
 go.mod                                 # Go module
 package.json                           # npm package (ESLint plugin + report helper)
 eslint.config.preset.js                # default config used by tackbox-eslint bin
 bin/tackbox-eslint.js                  # ESLint CLI wrapper with bundled preset
+bin/tackbox-mdlint.js                  # markdownlint wrapper with bundled preset
 go/
-├── cmd/erclint/                       # native Go analyzers (ERC001-005)
-├── cmd/erclint-opengrep/              # opengrep wrapper with embedded rule yamls
-│   └── rules/                         # multi-language ERC006 yamls
-├── analyzers/                         # per-rule go/analysis packages
-├── internal/                          # markers + AST helpers
-└── report/                            # Go capture helper (Sentry/glitchtip)
+  cmd/erclint/                         # native Go analyzers (ERC001-005)
+  cmd/erclint-opengrep/                # opengrep wrapper, embedded rule yamls
+    rules/                             # multi-language ERC006 yamls
+  analyzers/                           # per-rule go/analysis packages
+  internal/                            # markers + AST helpers
+  report/                              # Go capture helper (Sentry/glitchtip)
 js/
-├── eslint-plugin.js                   # ESLint plugin entry
-├── rules/                             # 8 frontend rules
-├── report.js                          # browser capture helper (@sentry/browser)
-└── tests/                             # RuleTester + node:test
+  eslint-plugin.js                     # ESLint plugin entry
+  rules/                               # 8 frontend rules
+  markdownlint-rules/                  # custom markdownlint rules
+  report.js                            # browser capture helper (@sentry/browser)
+  tests/                               # RuleTester + node:test
 ```
 
 Python and Java directories with their own manifests will be added

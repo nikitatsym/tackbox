@@ -40,6 +40,7 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm test
       - run: node ./bin/tackbox-eslint.js js/eslint-plugin.js js/report.js js/rules bin
+      - run: node ./bin/tackbox-mdlint.js README.md go/README.md js/README.md
 
   tag:
     needs: test
