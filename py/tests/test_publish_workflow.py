@@ -184,6 +184,24 @@ def test_publish_thin_job_uses_oidc_no_tokens(workflow):
     assert "password" not in lowered
 
 
+def test_publish_fat_and_thin_use_distinct_environments(workflow):
+    """PyPI Trusted Publishers rejects two pending TPs with the same
+    (owner, repo, workflow, environment) tuple - the OIDC subject cannot
+    disambiguate between project names. If both jobs share an environment,
+    only one of tackbox / tackbox-engines can be pending at a time.
+    Each publish job must live in its own environment."""
+    fat = _publish_fat_job(workflow["jobs"])
+    thin = _publish_thin_job(workflow["jobs"])
+    fat_env = fat.get("environment")
+    thin_env = thin.get("environment")
+    assert fat_env, "publish-fat must declare an environment for OIDC subject scoping"
+    assert thin_env, "publish-thin must declare an environment for OIDC subject scoping"
+    assert fat_env != thin_env, (
+        f"publish-fat and publish-thin must use distinct environments; "
+        f"both are {fat_env!r}. PyPI pending TP would collide."
+    )
+
+
 def test_publish_thin_depends_on_publish_fat(workflow):
     """Thin pins tackbox-engines==X in Requires-Dist. If fat isn't up on PyPI
     when thin is uploaded, `uv pip install tackbox` cannot resolve. Sequential."""
