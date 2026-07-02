@@ -159,6 +159,30 @@ def test_validate_parent_traversal_nested_rejected():
         validate_path("src/../../secret")
 
 
+def test_validate_dot_slash_prefix_rejected():
+    with pytest.raises(PathspecMagicError):
+        validate_path("./src")
+
+
+def test_validate_bare_dot_slash_rejected():
+    with pytest.raises(PathspecMagicError):
+        validate_path("./")
+
+
+def test_validate_dot_segment_rejected():
+    with pytest.raises(PathspecMagicError):
+        validate_path("src/./foo")
+
+
+def test_validate_double_slash_rejected():
+    with pytest.raises(PathspecMagicError):
+        validate_path("src//foo")
+
+
+def test_validate_trailing_slash_still_ok():
+    validate_path("src/foo/")
+
+
 # -- narrow_by_path --------------------------------------------------------
 
 
