@@ -188,7 +188,10 @@ jobs:
     name: publish tackbox_engines to PyPI
     needs: smoke
     runs-on: ubuntu-latest
-    environment: pypi
+    # PyPI Trusted Publishers rejects two pending TPs with the same
+    # (owner, repo, workflow, environment) tuple: the OIDC subject cannot
+    # disambiguate between project names. tackbox-engines gets its own env.
+    environment: pypi-engines
     permissions:
       id-token: write
     steps:

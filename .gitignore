@@ -30,6 +30,7 @@ __pycache__/
 # wheels/publish CI workflow local artifacts
 /.wheels-venv/
 /.smoke-venv/
+.pypirc
 /fixture-repo/
 /fat/
 /thin/
