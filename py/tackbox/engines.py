@@ -176,16 +176,22 @@ def resolve_dev_versions(tackbox_root: Path) -> dict[str, str]:
     resolution share the same binary-location logic.
     """
     return {
-        "erclint": _version_from_binary(
-            _built_go_binary(tackbox_root, "erclint"),
-            ("--version",),
-            prefix="erclint ",
-        ),
+        "erclint": _erclint_dev_version(tackbox_root),
         "opengrep": _version_from_binary("opengrep", ("--version",)),
         "node": _version_from_binary("node", ("--version",), strip_v=True),
         "eslint": _version_from_npm_manifest(tackbox_root, "eslint"),
         "markdownlint": _version_from_npm_manifest(tackbox_root, "markdownlint"),
     }
+
+
+def _erclint_dev_version(tackbox_root: Path) -> str:
+    # The dev binary is built on demand; without a Go toolchain the build
+    # itself fails, and the banner must degrade to "?" rather than crash.
+    try:
+        bin_ = _built_go_binary(tackbox_root, "erclint")
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return "?"
+    return _version_from_binary(bin_, ("--version",), prefix="erclint ")
 
 
 def _version_from_binary(

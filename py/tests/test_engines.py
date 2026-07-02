@@ -244,3 +244,21 @@ def test_dev_engines_eslint_covers_ts_and_svelte():
 def test_dev_engines_mdlint_extension_is_only_md():
     md = next(e for e in DEV_ENGINES if e.id == "tackbox-mdlint")
     assert md.extensions == frozenset([".md"])
+
+
+# -- resolve_dev_versions ---------------------------------------------------
+
+
+def test_resolve_versions_erclint_degrades_to_question_without_go(
+    monkeypatch, tmp_path
+):
+    # No Go toolchain: the dev-binary build fails and the banner must show
+    # "?" for erclint instead of crashing the whole CLI.
+    import tackbox.engines as engines
+
+    def _no_go(_root, _name):
+        raise FileNotFoundError("go")
+
+    monkeypatch.setattr(engines, "_built_go_binary", _no_go)
+    versions = engines.resolve_dev_versions(tmp_path)
+    assert versions["erclint"] == "?"
