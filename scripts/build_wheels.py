@@ -203,8 +203,11 @@ def prepare_fat(pl: Platform, manifest: dict, engines_version: str) -> tuple[Pat
         shutil.copyfile(vendor_src / "package.json", td_path / "package.json")
         shutil.copyfile(lock_src, td_path / "package-lock.json")
         print("npm ci (vendored deps)", file=sys.stderr)
+        # On Windows npm is `npm.cmd` (batch); subprocess.run does not resolve
+        # PATHEXT, so pass the full path from shutil.which.
+        npm = shutil.which("npm") or "npm"
         subprocess.run(
-            ["npm", "ci", "--omit=dev", "--no-audit", "--no-fund", "--loglevel=error"],
+            [npm, "ci", "--omit=dev", "--no-audit", "--no-fund", "--loglevel=error"],
             cwd=td_path, check=True, stdout=sys.stderr,
         )
         dest_vendor = fat_root / "vendor"
