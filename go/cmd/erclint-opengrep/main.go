@@ -5,14 +5,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/nikitatsym/tackbox/go/report"
 )
@@ -32,7 +35,7 @@ func main() {
 		}
 		defer report.Flush()
 	}
-	code, err := run(os.Args[1:])
+	code, err := run(os.Args[1:], os.Stdout, os.Stderr)
 	if err != nil {
 		report.SentryErr(context.Background(),
 			"opengrep wrapper failed",
@@ -44,29 +47,100 @@ func main() {
 	os.Exit(code)
 }
 
-func run(args []string) (int, error) {
-	tmp, err := os.MkdirTemp("", "erclint-rules-*")
+func run(args []string, stdout, stderr io.Writer) (int, error) {
+	origCwd, err := os.Getwd()
 	if err != nil {
-		return 0, fmt.Errorf("create temp dir: %w", err)
+		return 0, fmt.Errorf("get cwd: %w", err)
 	}
-	defer os.RemoveAll(tmp)
+	if err := rejectSemgrepignore(origCwd); err != nil {
+		return 0, err
+	}
 
-	if err := extractRules(tmp); err != nil {
+	rulesDir, err := os.MkdirTemp("", "erclint-rules-*")
+	if err != nil {
+		return 0, fmt.Errorf("create rules dir: %w", err)
+	}
+	defer os.RemoveAll(rulesDir)
+	if err := extractRules(rulesDir); err != nil {
 		return 0, fmt.Errorf("extract rules: %w", err)
 	}
 
-	full := append([]string{"scan", "--config", tmp, "--error"}, args...)
+	// Empty .semgrepignore in the scan cwd suppresses opengrep's builtin
+	// default-ignore patterns (tests/, node_modules/, ...); those must not
+	// silently drop files the caller explicitly passed in.
+	scanCwd, err := os.MkdirTemp("", "erclint-scan-*")
+	if err != nil {
+		return 0, fmt.Errorf("create scan cwd: %w", err)
+	}
+	defer os.RemoveAll(scanCwd)
+	if err := os.WriteFile(filepath.Join(scanCwd, ".semgrepignore"), nil, 0o644); err != nil {
+		return 0, fmt.Errorf("write empty .semgrepignore: %w", err)
+	}
+
+	full := append([]string{"scan", "--config", rulesDir, "--error"}, toAbs(origCwd, args)...)
 	cmd := exec.Command("opengrep", full...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	cmd.Dir = scanCwd
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+
+	runErr := cmd.Run()
+
+	// Opengrep sees absolute paths; rewrite them back so consumers see the
+	// same shape they would if opengrep ran directly in origCwd.
+	if _, err := io.WriteString(stdout, rewritePaths(outBuf.String(), origCwd)); err != nil {
+		return 0, fmt.Errorf("write stdout: %w", err)
+	}
+	if _, err := io.WriteString(stderr, rewritePaths(errBuf.String(), origCwd)); err != nil {
+		return 0, fmt.Errorf("write stderr: %w", err)
+	}
+
+	if runErr != nil {
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if errors.As(runErr, &exitErr) {
 			return exitErr.ExitCode(), nil
 		}
-		return 0, fmt.Errorf("invoke opengrep (must be on PATH): %w", err)
+		return 0, fmt.Errorf("invoke opengrep (must be on PATH): %w", runErr)
 	}
 	return 0, nil
+}
+
+func rejectSemgrepignore(dir string) error {
+	fi, err := os.Stat(filepath.Join(dir, ".semgrepignore"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("stat .semgrepignore in %s: %w", dir, err)
+	}
+	if fi.IsDir() {
+		return nil
+	}
+	return fmt.Errorf(
+		".semgrepignore in %s is not supported: tackbox does not allow "+
+			"configurable engine excludes; use suppression markers "+
+			"(// no-sentry: ..., // parse-skip: ..., // nil-return: ...) instead",
+		dir,
+	)
+}
+
+func toAbs(cwd string, args []string) []string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		if filepath.IsAbs(a) {
+			out[i] = a
+			continue
+		}
+		out[i] = filepath.Join(cwd, a)
+	}
+	return out
+}
+
+func rewritePaths(s, cwd string) string {
+	if s == "" || cwd == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, cwd+string(os.PathSeparator), "")
 }
 
 func extractRules(dst string) error {
