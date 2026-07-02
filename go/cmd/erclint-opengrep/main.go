@@ -23,7 +23,16 @@ import (
 //go:embed all:rules
 var rulesFS embed.FS
 
+// version is injected at build time via -ldflags "-X main.version=...".
+var version = "dev"
+
 func main() {
+	for _, arg := range os.Args[1:] {
+		if arg == "--version" || arg == "-version" {
+			fmt.Printf("erclint-opengrep %s\n", version)
+			return
+		}
+	}
 	if dsn := report.DSNFromEnv(); dsn != "" {
 		// no-sentry: report itself failed, capture would be a no-op
 		if err := report.Init(report.Options{
