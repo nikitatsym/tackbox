@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TextIO
 
 from . import engines as engines_mod
+from .cache import sha256_tree
 from .source_set import (
     filter_source_set,
     parse_ls_files_stage,
@@ -116,10 +117,15 @@ def _check_payload_checksums() -> CheckResult:
         else:
             continue
         target = root / tail
-        if not target.is_file():
+        if target.is_dir():
+            # Directory entries (vendored npm packages, vendor-tree) carry a
+            # tree digest; a file digest here would silently verify nothing.
+            actual = sha256_tree(target)
+        elif target.is_file():
+            actual = _sha256_file(target)
+        else:
             missing.append(rel_path)
             continue
-        actual = _sha256_file(target)
         if actual != expected:
             mismatches.append(rel_path)
     if missing or mismatches:
@@ -144,11 +150,13 @@ def _check_binaries_start() -> CheckResult:
     engines_root = engines_mod.hermetic_engines_root()
     tackbox_root = engines_mod._TACKBOX_PKG_ROOT
     exe = engines_mod.exe_name
-    # erclint-opengrep has no --version flag; probe with no args and
-    # accept a nonzero usage exit as "process starts".
     probes: list[tuple[str, list[str], bool]] = [
         ("erclint", [str(tackbox_root / "bin" / exe("erclint")), "--version"], True),
-        ("erclint-opengrep", [str(tackbox_root / "bin" / exe("erclint-opengrep"))], False),
+        (
+            "erclint-opengrep",
+            [str(tackbox_root / "bin" / exe("erclint-opengrep")), "--version"],
+            True,
+        ),
         ("opengrep", [str(engines_root / "bin" / exe("opengrep")), "--version"], True),
         ("node", [str(engines_root / "bin" / exe("node")), "--version"], True),
     ]

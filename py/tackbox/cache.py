@@ -120,6 +120,23 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def sha256_tree(root: Path) -> str:
+    """Deterministic digest of a directory tree: sorted rel paths + content.
+
+    Shared by the wheel builder (stamping engines.json) and doctor
+    (verifying it) - one implementation so the two can never drift.
+    """
+    h = hashlib.sha256()
+    for f in sorted(root.rglob("*")):
+        if not f.is_file():
+            continue
+        h.update(f.relative_to(root).as_posix().encode())
+        h.update(b"\0")
+        h.update(sha256_file(f).encode())
+        h.update(b"\0")
+    return h.hexdigest()
+
+
 def gc_stale_engines(current: str, root: Path) -> None:
     """Drop every `<engines-hash>/` sibling other than `current`."""
     if not root.is_dir():

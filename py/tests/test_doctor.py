@@ -50,11 +50,22 @@ def test_dev_mode_skips_payload_and_binaries():
     assert "ok binaries-start: skipped (dev mode)" in text
 
 
+def _foreign_platform_key() -> str:
+    """Any supported key guaranteed to differ from the host."""
+    system = sys.platform
+    if system.startswith("linux"):
+        system = "linux"
+    elif system.startswith("win") or system == "cygwin":
+        system = "windows"
+    host = doctor._SUPPORTED_PLATFORMS.get((system, platform.machine().lower()))
+    return "linux-x86_64" if host != "linux-x86_64" else "macos-aarch64"
+
+
 def test_hermetic_platform_mismatch_flags_check(tmp_path, monkeypatch):
     engines_json = {
         "schema": 1,
         "payload_sha256": "deadbeef",
-        "platform": "linux-x86_64",
+        "platform": _foreign_platform_key(),
         "wheel_plat": "manylinux_2_28_x86_64",
         "engines": [],
     }
@@ -68,17 +79,12 @@ def test_hermetic_platform_mismatch_flags_check(tmp_path, monkeypatch):
     )
     (tmp_path / "tackbox_engines" / "bin").mkdir(parents=True)
 
-    system = sys.platform
-    machine = platform.machine().lower()
-    if not (system == "darwin" and machine in ("arm64", "aarch64")):
-        pytest.skip("test authored on macOS arm64; adjust when porting")
-
     out = io.StringIO()
     rc = doctor.run(out)
     assert rc == 1
     text = out.getvalue()
     assert "fail platform:" in text
-    assert "wheel built for linux-x86_64" in text
+    assert f"wheel built for {_foreign_platform_key()}" in text
     assert "doctor: 5 checks, " in text
 
 
