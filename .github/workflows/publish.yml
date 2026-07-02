@@ -132,7 +132,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          uv venv .smoke-venv
+          # ubuntu-22.04 ships Python 3.10; tackbox-engines requires >=3.11.
+          uv venv --python 3.11 .smoke-venv
           fat=$(ls dist/tackbox_engines-*.whl | head -n1)
           thin=$(ls dist/tackbox-*.whl | grep -v tackbox_engines | head -n1)
           echo "fat=$fat"

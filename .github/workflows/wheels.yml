@@ -68,7 +68,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          uv venv .wheels-venv
+          uv venv --python 3.11 .wheels-venv
           fat=$(ls dist/tackbox_engines-*.whl | head -n1)
           thin=$(ls dist/tackbox-0.0.0-*.whl | grep -v tackbox_engines | head -n1)
           echo "fat=$fat"
