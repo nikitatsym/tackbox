@@ -118,6 +118,17 @@ func stripWhitespace(s string) string {
 	}, s)
 }
 
+func TestVersionFlag(t *testing.T) {
+	bin := buildOpengrepWrapper(t)
+	out, err := exec.Command(bin, "--version").Output()
+	if err != nil {
+		t.Fatalf("run --version: %v", err)
+	}
+	if string(out) != "erclint-opengrep dev\n" {
+		t.Fatalf("--version stdout mismatch: %q", out)
+	}
+}
+
 func buildOpengrepWrapper(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
