@@ -13,10 +13,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import __version__
+from . import __version__, cache
 from .engines import (
     DEV_ENGINES,
     EngineResult,
+    EngineSpec,
     dispatch,
     parse_erclint_findings,
     resolve_dev_versions,
@@ -38,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"tackbox: unknown command {args.command!r}", file=sys.stderr)
         return 2
     try:
-        return _run_lint(args.path)
+        return _run_lint(args.path, no_cache=args.no_cache)
     except PathspecMagicError as e:
         print(f"tackbox: {e}", file=sys.stderr)
         return 2
@@ -49,10 +50,15 @@ def _parse_argv(argv: list[str]) -> argparse.Namespace:
     sub = parser.add_subparsers(dest="command", required=True)
     lint = sub.add_parser("lint", help="lint the source set")
     lint.add_argument("path", nargs="?", default=".", help="scope path (default: .)")
+    lint.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="ignore and do not write the (unit, engine) cache",
+    )
     return parser.parse_args(argv)
 
 
-def _run_lint(scope: str) -> int:
+def _run_lint(scope: str, no_cache: bool) -> int:
     repo_root = _find_repo_root()
     tackbox_root = Path(__file__).resolve().parents[2]
 
@@ -72,7 +78,23 @@ def _run_lint(scope: str) -> int:
     plan = dispatch(files, DEV_ENGINES)
     if not plan:
         return 0
-    results = run_engines(plan, repo_root, tackbox_root)
+
+    # Self-lint: tackbox lints itself. Cache is disabled so tackbox never
+    # self-caches its own bugs (plan: "чтобы tackbox не самокэшировал").
+    if tackbox_root.resolve() == repo_root.resolve():
+        no_cache = True
+
+    if no_cache:
+        results = run_engines(plan, repo_root, tackbox_root)
+    else:
+        cache_root = cache.default_cache_root()
+        engines_hash = cache.engines_hash_dev()
+        cache.gc_stale_engines(engines_hash, cache_root)
+
+        filtered_plan, pending = _apply_cache(plan, repo_root, engines_hash, cache_root)
+        results = run_engines(filtered_plan, repo_root, tackbox_root)
+        _mark_clean_units(results, pending, engines_hash, cache_root)
+        cache.gc_soft_cap(engines_hash, cache.SOFT_CAP, cache_root)
 
     for r in results:
         sys.stdout.write(f"== {r.engine_id} ==\n")
@@ -86,6 +108,89 @@ def _run_lint(scope: str) -> int:
                 sys.stderr.write("\n")
 
     return _aggregate_exit(results)
+
+
+# -- Cache wiring ---------------------------------------------------------
+
+
+def _apply_cache(
+    plan: list[tuple[EngineSpec, list[str]]],
+    repo_root: Path,
+    engines_hash: str,
+    cache_root: Path,
+) -> tuple[list[tuple[EngineSpec, list[str]]], dict[str, dict]]:
+    """Filter cached units out of each engine's args.
+
+    Returns:
+    - filtered_plan: engines that still have uncached args.
+    - pending[engine_id] = {
+        "arg_digest": [(arg, digest), ...],   # uncached args passed to engine
+        "arg_ip": {arg: import_path, ...},     # erclint-only mapping
+      }
+      Used post-run to translate engine output into per-unit success and
+      write markers for the clean units.
+    """
+    filtered_plan: list[tuple[EngineSpec, list[str]]] = []
+    pending: dict[str, dict] = {}
+    for engine, args in plan:
+        arg_digest, extras = _digests_for_engine(engine, args, repo_root)
+        uncached: list[tuple[str, str]] = []
+        for arg, digest in arg_digest:
+            key = cache.CacheKey(engines_hash, digest, engine.id)
+            if not cache.is_cached(key, cache_root):
+                uncached.append((arg, digest))
+        pending[engine.id] = {"arg_digest": uncached, **extras}
+        if uncached:
+            filtered_plan.append((engine, [a for a, _ in uncached]))
+    return filtered_plan, pending
+
+
+def _digests_for_engine(
+    engine: EngineSpec, args: list[str], repo_root: Path
+) -> tuple[list[tuple[str, str]], dict]:
+    if engine.id == "erclint":
+        digest_map = cache.erclint_package_digests(repo_root, args)
+        ip_map = cache.erclint_import_paths(repo_root, args)
+        arg_digest = [(a, digest_map[a]) for a in args if a in digest_map]
+        return arg_digest, {"arg_ip": ip_map}
+    arg_digest = [(a, cache.sha256_file(repo_root / a)) for a in args]
+    return arg_digest, {}
+
+
+def _mark_clean_units(
+    results: list[EngineResult],
+    pending: dict[str, dict],
+    engines_hash: str,
+    cache_root: Path,
+) -> None:
+    for r in results:
+        info = pending.get(r.engine_id)
+        if not info:
+            continue
+        clean_args = _clean_args(r, info)
+        digest_of = dict(info["arg_digest"])
+        for arg in clean_args:
+            digest = digest_of.get(arg)
+            if digest is None:
+                continue
+            cache.mark_clean(
+                cache.CacheKey(engines_hash, digest, r.engine_id), cache_root
+            )
+
+
+def _clean_args(r: EngineResult, info: dict) -> list[str]:
+    args = [a for a, _ in info["arg_digest"]]
+    if r.engine_id == "erclint":
+        try:
+            findings = parse_erclint_findings(r.stdout)
+        except ValueError:
+            return []
+        dirty_ips = {f.get("pkg") for f in findings}
+        ip_map = info.get("arg_ip", {})
+        return [a for a in args if ip_map.get(a) not in dirty_ips]
+    if r.exit_code == 0:
+        return args
+    return []
 
 
 def _aggregate_exit(results: list[EngineResult]) -> int:
