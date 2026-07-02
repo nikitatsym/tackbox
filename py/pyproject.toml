@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tackbox"
+version = "0.0.0"
+description = "Universal lints + capture helpers driven by a hermetic Python CLI."
+requires-python = ">=3.11"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tackbox"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
