@@ -33,6 +33,14 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: py-test
+        name: py test
+        entry: uv
+        args: [run, --directory, py, --with, pytest, pytest, -q]
+        language: system
+        pass_filenames: false
+        always_run: true
+
       - id: erclint
         name: erclint (self)
         entry: go
