@@ -1,0 +1,297 @@
+"""(unit, engine) cache: layout, digests, marker ops, GC.
+
+Layout: `<TACKBOX_CACHE_HOME>/v1/<engines-hash>/<unit-digest>.<engine-id>`.
+Marker is an empty file. `TACKBOX_CACHE_HOME` defaults to `~/.cache/tackbox`;
+tests point it at a tmp dir.
+
+Semantics per plan:
+- Marker written only on success. Failures are not cached.
+- Cache hit re-touches the marker: mtime is the LRU signal.
+- Corrupt / unreadable marker -> treated as miss (rerun), never fatal.
+- `mark_clean` is best-effort; cache is an optimisation, never a hard error.
+
+Unit granularity:
+- eslint / mdlint / opengrep -> unit = file, digest = sha256(content).
+- erclint -> unit = Go package, digest = sha256(import path + own .go files +
+  transitive in-module deps' .go files + go.mod + go.sum). A signature change
+  in package B invalidates every in-module package that depends on B.
+
+engines-hash:
+- Dev mode returns the literal string "dev". The plan's real payload digest
+  arrives with hermetic wheels (step 6); until then all dev runs share a
+  single sub-directory. Modifying tackbox rules in dev mode does not
+  invalidate consumer caches by itself - developers use `--no-cache` (or
+  clear `~/.cache/tackbox`) when iterating on rules.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+
+
+CACHE_ROOT_ENV = "TACKBOX_CACHE_HOME"
+CACHE_VERSION = "v1"
+SOFT_CAP = 20000
+
+
+def default_cache_root() -> Path:
+    """Root under which the `v1/<engines-hash>/...` tree lives."""
+    override = os.environ.get(CACHE_ROOT_ENV)
+    if override:
+        return Path(override) / CACHE_VERSION
+    return Path.home() / ".cache" / "tackbox" / CACHE_VERSION
+
+
+@dataclass(frozen=True)
+class CacheKey:
+    engines_hash: str
+    unit_digest: str
+    engine_id: str
+
+    def marker(self, root: Path) -> Path:
+        return root / self.engines_hash / f"{self.unit_digest}.{self.engine_id}"
+
+
+def engines_hash_dev() -> str:
+    return "dev"
+
+
+def is_cached(key: CacheKey, root: Path) -> bool:
+    """Return True iff a valid marker file exists; re-touch for LRU on hit."""
+    p = key.marker(root)
+    try:
+        if not p.is_file():
+            return False
+        p.touch()
+        return True
+    except OSError:
+        return False
+
+
+def mark_clean(key: CacheKey, root: Path) -> None:
+    """Write empty marker; swallow any OSError so cache never blocks a run."""
+    p = key.marker(root)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.touch()
+    except OSError:
+        pass
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def gc_stale_engines(current: str, root: Path) -> None:
+    """Drop every `<engines-hash>/` sibling other than `current`."""
+    if not root.is_dir():
+        return
+    for entry in root.iterdir():
+        if entry.is_dir() and entry.name != current:
+            shutil.rmtree(entry, ignore_errors=True)
+
+
+def gc_soft_cap(engines_hash: str, cap: int, root: Path) -> None:
+    """Trim markers in the current dir when the count exceeds `cap`.
+
+    Sort by mtime ascending; drop from the front until at or under cap. Files
+    that vanish under us (concurrent run) are ignored - GC never blocks.
+    """
+    d = root / engines_hash
+    if not d.is_dir():
+        return
+    markers = [p for p in d.iterdir() if p.is_file()]
+    if len(markers) <= cap:
+        return
+    markers.sort(key=lambda p: p.stat().st_mtime)
+    for m in markers[: len(markers) - cap]:
+        try:
+            m.unlink()
+        except OSError:
+            pass
+
+
+# -- erclint package digest -----------------------------------------------
+
+
+def erclint_package_digests(
+    repo_root: Path, package_dirs: list[str]
+) -> dict[str, str]:
+    """Compute {package_dir: unit_digest} for erclint units.
+
+    Runs `go list -deps -json` once for all requested packages, filters to
+    same-module deps, then hashes each package's own .go files together with
+    the .go files of its transitive in-module deps plus go.mod / go.sum. A
+    change to any file that erclint would see for a package flips the digest.
+
+    Missing / not-a-package entries are dropped from the returned map; the
+    caller decides what to do (usually: skip caching for that entry).
+    """
+    if not package_dirs:
+        return {}
+    args = [f"./{p}" for p in package_dirs]
+    completed = subprocess.run(
+        ["go", "list", "-deps", "-json", *args],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    pkgs = list(_iter_json_objects(completed.stdout))
+
+    our_module = _module_path_from_pkgs(pkgs)
+    if our_module is None:
+        return {}
+
+    in_module: dict[str, dict] = {}
+    for p in pkgs:
+        if p.get("Standard"):
+            continue
+        mod = p.get("Module") or {}
+        if mod.get("Path") != our_module:
+            continue
+        import_path = p["ImportPath"]
+        dir_ = Path(p["Dir"])
+        go_files = list(p.get("GoFiles") or [])
+        # Deps is the transitive closure per `go list -json`; filter later.
+        deps = set(p.get("Deps") or [])
+        in_module[import_path] = {
+            "dir": dir_,
+            "files": [dir_ / f for f in go_files],
+            "deps": deps,
+        }
+    for info in in_module.values():
+        info["deps"] = {d for d in info["deps"] if d in in_module}
+
+    file_digest: dict[Path, str] = {}
+    for info in in_module.values():
+        for f in info["files"]:
+            if f not in file_digest and f.is_file():
+                file_digest[f] = sha256_file(f)
+
+    go_mod_digest = _optional_file_digest(repo_root / "go.mod")
+    go_sum_digest = _optional_file_digest(repo_root / "go.sum")
+
+    dir_to_import: dict[str, str] = {}
+    repo_resolved = repo_root.resolve()
+    for import_path, info in in_module.items():
+        try:
+            rel = info["dir"].resolve().relative_to(repo_resolved)
+        except ValueError:
+            continue
+        key = str(rel) if str(rel) != "." else "."
+        dir_to_import[key] = import_path
+
+    result: dict[str, str] = {}
+    for pkg_dir in package_dirs:
+        import_path = dir_to_import.get(pkg_dir)
+        if import_path is None:
+            continue
+        result[pkg_dir] = _package_digest(
+            import_path, in_module, file_digest, go_mod_digest, go_sum_digest
+        )
+    return result
+
+
+def erclint_import_paths(
+    repo_root: Path, package_dirs: list[str]
+) -> dict[str, str]:
+    """Return {package_dir: import_path}. Used to interpret erclint findings."""
+    if not package_dirs:
+        return {}
+    args = [f"./{p}" for p in package_dirs]
+    completed = subprocess.run(
+        ["go", "list", "-json", *args],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    pkgs = list(_iter_json_objects(completed.stdout))
+    repo_resolved = repo_root.resolve()
+    result: dict[str, str] = {}
+    for p in pkgs:
+        try:
+            rel = Path(p["Dir"]).resolve().relative_to(repo_resolved)
+        except ValueError:
+            continue
+        key = str(rel) if str(rel) != "." else "."
+        if key in package_dirs:
+            result[key] = p["ImportPath"]
+    return result
+
+
+def _package_digest(
+    import_path: str,
+    in_module: dict[str, dict],
+    file_digest: dict[Path, str],
+    go_mod_digest: str,
+    go_sum_digest: str,
+) -> str:
+    h = hashlib.sha256()
+    h.update(import_path.encode())
+    h.update(b"\n---self---\n")
+    _hash_files(h, in_module[import_path]["files"], file_digest)
+    h.update(b"---deps---\n")
+    for dep in sorted(in_module[import_path]["deps"]):
+        h.update(dep.encode())
+        h.update(b"\n")
+        _hash_files(h, in_module[dep]["files"], file_digest)
+    h.update(b"---go.mod---\n")
+    h.update(go_mod_digest.encode())
+    h.update(b"\n---go.sum---\n")
+    h.update(go_sum_digest.encode())
+    return h.hexdigest()
+
+
+def _hash_files(h, files, file_digest: dict[Path, str]) -> None:
+    for f in sorted(files):
+        digest = file_digest.get(f)
+        if digest is None:
+            continue
+        h.update(f.name.encode())
+        h.update(b"\t")
+        h.update(digest.encode())
+        h.update(b"\n")
+
+
+def _optional_file_digest(path: Path) -> str:
+    if not path.is_file():
+        return ""
+    return sha256_file(path)
+
+
+def _module_path_from_pkgs(pkgs: list[dict]) -> str | None:
+    for p in pkgs:
+        if p.get("Standard"):
+            continue
+        mod = p.get("Module") or {}
+        path = mod.get("Path")
+        if path:
+            return path
+    return None
+
+
+def _iter_json_objects(text: str):
+    """Iterate over concatenated top-level JSON objects in `text`."""
+    decoder = json.JSONDecoder()
+    idx = 0
+    n = len(text)
+    while idx < n:
+        while idx < n and text[idx].isspace():
+            idx += 1
+        if idx >= n:
+            break
+        obj, end = decoder.raw_decode(text, idx)
+        yield obj
+        idx = end

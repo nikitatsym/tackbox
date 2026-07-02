@@ -88,13 +88,18 @@ def _git(cwd: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
 
 
-def _run_tackbox(fixture_repo: Path) -> subprocess.CompletedProcess:
-    """Invoke the CLI in a subprocess so we exercise the real entrypoint."""
+def _run_tackbox(fixture_repo: Path, *extra: str) -> subprocess.CompletedProcess:
+    """Invoke the CLI in a subprocess so we exercise the real entrypoint.
+
+    `--no-cache` keeps these golden tests deterministic across pytest runs -
+    step 4's cache would otherwise skip engines with stable-clean units
+    (e.g. opengrep on pkg/swallow.go in the scoped test).
+    """
     tackbox_root = Path(__file__).resolve().parents[2]
     env = dict(os.environ)
     env["PYTHONPATH"] = str(tackbox_root / "py")
     return subprocess.run(
-        [sys.executable, "-m", "tackbox.cli", "lint", "."],
+        [sys.executable, "-m", "tackbox.cli", "lint", ".", "--no-cache", *extra],
         cwd=fixture_repo,
         env=env,
         capture_output=True,
@@ -246,7 +251,7 @@ def test_scoped_go_only_run_promotes_erclint_findings(fixture_repo):
     env = dict(os.environ)
     env["PYTHONPATH"] = str(tackbox_root / "py")
     result = subprocess.run(
-        [sys.executable, "-m", "tackbox.cli", "lint", "pkg/swallow.go"],
+        [sys.executable, "-m", "tackbox.cli", "lint", "pkg/swallow.go", "--no-cache"],
         cwd=fixture_repo,
         env=env,
         capture_output=True,
