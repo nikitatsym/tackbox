@@ -442,7 +442,8 @@ def main() -> int:
 
     version = args.version
     engines_version = args.engines_version or version
-    outdir = Path(args.outdir)
+    # `python -m build --outdir` resolves against subprocess cwd, not ours.
+    outdir = Path(args.outdir).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
 
     _, engines_entries = prepare_fat(pl, manifest, engines_version)
