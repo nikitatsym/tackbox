@@ -88,7 +88,7 @@ def _run_lint(scope: str, no_cache: bool) -> int:
         results = run_engines(plan, repo_root, tackbox_root)
     else:
         cache_root = cache.default_cache_root()
-        engines_hash = cache.engines_hash_dev()
+        engines_hash = cache.engines_hash_dev(tackbox_root)
         cache.gc_stale_engines(engines_hash, cache_root)
 
         filtered_plan, pending = _apply_cache(plan, repo_root, engines_hash, cache_root)
@@ -136,6 +136,9 @@ def _apply_cache(
         arg_digest, extras = _digests_for_engine(engine, args, repo_root)
         uncached: list[tuple[str, str]] = []
         for arg, digest in arg_digest:
+            if digest is None:
+                uncached.append((arg, digest))
+                continue
             key = cache.CacheKey(engines_hash, digest, engine.id)
             if not cache.is_cached(key, cache_root):
                 uncached.append((arg, digest))
@@ -151,7 +154,9 @@ def _digests_for_engine(
     if engine.id == "erclint":
         digest_map = cache.erclint_package_digests(repo_root, args)
         ip_map = cache.erclint_import_paths(repo_root, args)
-        arg_digest = [(a, digest_map[a]) for a in args if a in digest_map]
+        # digest None = lint always, cache never; dropping the arg instead
+        # would silently skip linting the package.
+        arg_digest = [(a, digest_map.get(a)) for a in args]
         return arg_digest, {"arg_ip": ip_map}
     arg_digest = [(a, cache.sha256_file(repo_root / a)) for a in args]
     return arg_digest, {}
@@ -187,7 +192,11 @@ def _clean_args(r: EngineResult, info: dict) -> list[str]:
             return []
         dirty_ips = {f.get("pkg") for f in findings}
         ip_map = info.get("arg_ip", {})
-        return [a for a in args if ip_map.get(a) not in dirty_ips]
+        # Unknown import path -> cannot attribute findings -> never clean.
+        return [
+            a for a in args
+            if ip_map.get(a) is not None and ip_map[a] not in dirty_ips
+        ]
     if r.exit_code == 0:
         return args
     return []
