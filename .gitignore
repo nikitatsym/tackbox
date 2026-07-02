@@ -16,3 +16,10 @@ coverage.txt
 node_modules/
 npm-debug.log*
 .npm
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/

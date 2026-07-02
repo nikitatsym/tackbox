@@ -10,7 +10,6 @@ import (
 )
 
 // version is injected at build time via -ldflags "-X main.version=...".
-// dev is the default for `go run` and unpinned builds.
 var version = "dev"
 
 func main() {
