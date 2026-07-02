@@ -54,9 +54,14 @@ jobs:
     permissions:
       contents: write
     steps:
+      # ssh-key = deploy key with write access. A tag pushed via the default
+      # GITHUB_TOKEN does not trigger downstream workflows (documented
+      # anti-recursion rule), so publish.yml would never wake on tag events
+      # produced by this job. Deploy key is scoped to this repo, no user PAT.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ssh-key: ${{ secrets.RELEASE_TAG_KEY }}
       - name: Bump and push tag
         env:
           BUMP: ${{ github.event.inputs.bump || 'patch' }}
