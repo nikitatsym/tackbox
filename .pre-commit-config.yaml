@@ -36,7 +36,7 @@ repos:
       - id: py-test
         name: py test
         entry: uv
-        args: [run, --directory, py, --with, pytest, pytest, -q]
+        args: [run, --directory, py, --with, pytest, --with, pyyaml, pytest, -q]
         language: system
         pass_filenames: false
         always_run: true

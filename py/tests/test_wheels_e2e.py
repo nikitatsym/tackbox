@@ -1,5 +1,10 @@
 """Session-scoped e2e: build thin/fat wheels, install into a fresh venv,
-run tackbox lint/doctor on an inline fixture repo."""
+run tackbox lint/doctor against the shared materialized fixture repo.
+
+Fixture materialization lives in `scripts/materialize_fixture.py` so the
+same seeded violations drive both this pytest session and the wheels CI
+matrix (per platform).
+"""
 
 from __future__ import annotations
 
@@ -14,42 +19,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 BUILD_SCRIPT = REPO / "scripts" / "build_wheels.py"
-
-_FIXTURE_GO_MOD = """module e2e-fixture
-
-go 1.21
-"""
-
-_FIXTURE_GO_ERC001 = """package pkga
-
-import "errors"
-
-func Do() {
-\terr := errors.New("bad")
-\tif err != nil {
-\t\treturn
-\t}
-}
-"""
-
-_FIXTURE_GO_ERC006 = """package pkgb
-
-import "context"
-
-func sentryErr(ctx context.Context, msg string, err error, tags map[string]string, key string) {}
-
-func Report(ctx context.Context, msg string, err error, tags map[string]string) {
-\tsentryErr(ctx, msg, err, tags, "user.token")
-}
-"""
-
-_FIXTURE_JS_SWALLOW = """try {
-  doSomething()
-} catch (e) {
-}
-"""
-
-_FIXTURE_MD = "# Title — dash goes here\n"
+MATERIALIZE_SCRIPT = REPO / "scripts" / "materialize_fixture.py"
 
 
 def _needs(cmd: str) -> None:
@@ -105,19 +75,11 @@ def hermetic_venv(tmp_path_factory, wheels) -> Path:
 
 @pytest.fixture(scope="session")
 def fixture_repo(tmp_path_factory) -> Path:
-    root = tmp_path_factory.mktemp("hermetic-fixture-repo")
-    (root / "go.mod").write_text(_FIXTURE_GO_MOD)
-    (root / "pkga").mkdir()
-    (root / "pkga" / "violate.go").write_text(_FIXTURE_GO_ERC001)
-    (root / "pkgb").mkdir()
-    (root / "pkgb" / "secret.go").write_text(_FIXTURE_GO_ERC006)
-    (root / "swallow.js").write_text(_FIXTURE_JS_SWALLOW)
-    (root / "notes.md").write_text(_FIXTURE_MD)
-    subprocess.run(["git", "init", "-b", "main"], cwd=root, check=True, capture_output=True)
-    subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
+    parent = tmp_path_factory.mktemp("hermetic-fixture-parent")
+    root = parent / "repo"
     subprocess.run(
-        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
-        cwd=root, check=True, capture_output=True,
+        [sys.executable, str(MATERIALIZE_SCRIPT), str(root)],
+        check=True, capture_output=True, text=True,
     )
     return root
 

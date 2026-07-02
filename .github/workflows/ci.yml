@@ -42,7 +42,7 @@ jobs:
       - run: npm ci --no-audit --no-fund
       # py e2e fixture tests drive every engine; keep after go/opengrep/node setup
       - uses: astral-sh/setup-uv@v5
-      - run: uv run --directory py --with pytest pytest -q
+      - run: uv run --directory py --with pytest --with pyyaml pytest -q
       - run: npm test
       - run: node ./bin/tackbox-eslint.js js/eslint-plugin.js js/report.js js/rules bin
       - run: node ./bin/tackbox-mdlint.js README.md go/README.md js/README.md

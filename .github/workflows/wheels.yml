@@ -1,0 +1,129 @@
+name: wheels
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  wheels:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-22.04
+          - platform: linux-aarch64
+            runner: ubuntu-22.04-arm
+          - platform: macos-x86_64
+            runner: macos-13
+          - platform: macos-aarch64
+            runner: macos-14
+          - platform: windows-x86_64
+            runner: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Build wheels for ${{ matrix.platform }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/build_wheels.py \
+            --outdir dist \
+            --version 0.0.0 \
+            --platform ${{ matrix.platform }}
+          ls -lh dist/
+
+      - name: Enforce PyPI 100 MiB per-file limit
+        shell: bash
+        run: |
+          set -euo pipefail
+          limit=$((100 * 1024 * 1024))
+          fail=0
+          for w in dist/*.whl; do
+            size=$(wc -c <"$w")
+            printf '%s\t%s bytes\n' "$w" "$size"
+            if [ "$size" -gt "$limit" ]; then
+              echo "wheel $w exceeds PyPI 100 MiB per-file limit: $size bytes" >&2
+              fail=1
+            fi
+          done
+          exit "$fail"
+
+      - name: Install thin+fat wheels into fresh venv
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv venv .wheels-venv
+          fat=$(ls dist/tackbox_engines-*.whl | head -n1)
+          thin=$(ls dist/tackbox-0.0.0-*.whl | grep -v tackbox_engines | head -n1)
+          echo "fat=$fat"
+          echo "thin=$thin"
+          uv pip install --python .wheels-venv "$fat" "$thin"
+
+      - name: Materialize fixture repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf fixture-repo
+          python scripts/materialize_fixture.py fixture-repo
+
+      - name: tackbox doctor (expect exit 0)
+        shell: bash
+        working-directory: fixture-repo
+        run: |
+          set -euo pipefail
+          if [ -f ../.wheels-venv/bin/tackbox ]; then
+            tackbox=../.wheels-venv/bin/tackbox
+          elif [ -f ../.wheels-venv/Scripts/tackbox.exe ]; then
+            tackbox=../.wheels-venv/Scripts/tackbox.exe
+          else
+            echo "no tackbox entrypoint found under .wheels-venv/" >&2
+            exit 1
+          fi
+          "$tackbox" doctor
+
+      - name: tackbox lint (expect exit 1 on planted violations)
+        shell: bash
+        working-directory: fixture-repo
+        run: |
+          set -eo pipefail
+          if [ -f ../.wheels-venv/bin/tackbox ]; then
+            tackbox=../.wheels-venv/bin/tackbox
+          elif [ -f ../.wheels-venv/Scripts/tackbox.exe ]; then
+            tackbox=../.wheels-venv/Scripts/tackbox.exe
+          else
+            echo "no tackbox entrypoint found under .wheels-venv/" >&2
+            exit 1
+          fi
+          set +e
+          "$tackbox" lint . --no-cache
+          rc=$?
+          set -e
+          echo "lint exit=$rc"
+          if [ "$rc" != "1" ]; then
+            echo "expected exit 1 (planted ERC001+no-swallow-catch+MD-ASCII), got $rc" >&2
+            exit 1
+          fi
+
+      - name: Upload wheels artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform }}
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 7
