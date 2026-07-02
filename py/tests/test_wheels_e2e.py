@@ -167,6 +167,39 @@ def test_hermetic_lint_finds_all_engine_violations(hermetic_venv, fixture_repo):
     assert "MD-ASCII" in result.stdout or "no-non-ascii" in result.stdout
 
 
+def test_doctor_fails_on_patched_vendored_transitive_dep(hermetic_venv, fixture_repo):
+    """A byte flipped anywhere in the vendored tree must turn doctor red.
+
+    Targets a transitive dep specifically: those are covered only by the
+    vendor-tree entry, which is exactly the hole this test pins shut.
+    """
+    tackbox = hermetic_venv / "bin" / "tackbox"
+    site = next((hermetic_venv / "lib").glob("python*/site-packages"))
+    engines_json = json.loads((site / "tackbox" / "engines.json").read_text())
+    top_level = {
+        e["path"].split("node_modules/")[-1].split("/")[0]
+        for e in engines_json["engines"]
+        if e.get("kind") == "npm"
+    }
+    vendor = site / "tackbox_engines" / "vendor" / "node_modules"
+    victim = next(
+        p for p in sorted(vendor.rglob("*.js"))
+        if p.is_file() and p.relative_to(vendor).parts[0] not in top_level
+    )
+    original = victim.read_bytes()
+    try:
+        victim.write_bytes(original + b"\n// locally patched\n")
+        result = _run([str(tackbox), "doctor"], cwd=fixture_repo)
+        assert result.returncode == 1, (
+            f"patched vendored dep must fail doctor\nSTDOUT:\n{result.stdout}"
+        )
+        assert "fail payload-checksums:" in result.stdout
+    finally:
+        victim.write_bytes(original)
+    result = _run([str(tackbox), "doctor"], cwd=fixture_repo)
+    assert result.returncode == 0, "doctor must recover after restore"
+
+
 def test_hermetic_banner_carries_engines_sha_and_versions(hermetic_venv, fixture_repo):
     tackbox = hermetic_venv / "bin" / "tackbox"
     result = _run(

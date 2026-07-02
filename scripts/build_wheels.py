@@ -26,6 +26,9 @@ from urllib.request import urlopen
 REPO = Path(__file__).resolve().parent.parent
 ENGINES_DIR = REPO / "engines"
 PY_DIR = REPO / "py"
+
+sys.path.insert(0, str(PY_DIR))
+from tackbox.cache import sha256_tree  # noqa: E402
 JS_ROOT = REPO
 CACHE_DIR = Path(os.environ.get("TACKBOX_BUILD_CACHE", str(Path.home() / ".cache" / "tackbox-build")))
 
@@ -188,21 +191,32 @@ def prepare_fat(pl: Platform, manifest: dict, engines_version: str) -> tuple[Pat
     })
 
     vendor_src = ENGINES_DIR / "vendor"
+    lock_src = vendor_src / "package-lock.json"
+    if not lock_src.is_file():
+        raise SystemExit(
+            "engines/vendor/package-lock.json missing; the vendored payload "
+            "must be reproducible. Generate with `npm install "
+            "--package-lock-only` in engines/vendor/ and commit."
+        )
     with tempfile.TemporaryDirectory() as td:
         td_path = Path(td)
         shutil.copyfile(vendor_src / "package.json", td_path / "package.json")
-        print("npm install (vendored deps)", file=sys.stderr)
+        shutil.copyfile(lock_src, td_path / "package-lock.json")
+        print("npm ci (vendored deps)", file=sys.stderr)
         subprocess.run(
-            ["npm", "install", "--omit=dev", "--no-audit", "--no-fund", "--loglevel=error"],
+            ["npm", "ci", "--omit=dev", "--no-audit", "--no-fund", "--loglevel=error"],
             cwd=td_path, check=True, stdout=sys.stderr,
         )
         dest_vendor = fat_root / "vendor"
         dest_vendor.mkdir(parents=True)
         shutil.copyfile(td_path / "package.json", dest_vendor / "package.json")
-        lock = td_path / "package-lock.json"
-        if lock.exists():
-            shutil.copyfile(lock, dest_vendor / "package-lock.json")
+        shutil.copyfile(td_path / "package-lock.json", dest_vendor / "package-lock.json")
         shutil.copytree(td_path / "node_modules", dest_vendor / "node_modules")
+
+    # setuptools package-data globs never match dot-prefixed path
+    # components, so anything dot-named would silently stay out of the
+    # wheel while still being part of the staged tree hashes.
+    prune_dot_paths(dest_vendor)
 
     for entry_name, meta in manifest["npm_deps"]["top_level"].items():
         pkg_dir = (fat_root / "vendor" / "node_modules" / entry_name).resolve()
@@ -216,11 +230,25 @@ def prepare_fat(pl: Platform, manifest: dict, engines_version: str) -> tuple[Pat
             "version": installed.get("version", ""),
             "source_url": f"https://registry.npmjs.org/{entry_name}/-/{entry_name.replace('@', '').replace('/', '-')}-{installed.get('version', '')}.tgz",
             "constraint": meta["constraint"],
+            "sha256": sha256_tree(pkg_dir),
             "license": meta["license"],
             "license_path": f"tackbox_engines/vendor/node_modules/{entry_name}/LICENSE"
                 if (pkg_dir / "LICENSE").exists() else "",
             "path": f"tackbox_engines/vendor/node_modules/{entry_name}",
         })
+
+    # Top-level npm entries cover their own dirs only; transitive deps are
+    # hoisted siblings. One tree entry makes the whole vendored payload
+    # verifiable and part of the cache key.
+    entries.append({
+        "id": "vendor-tree",
+        "kind": "vendor",
+        "version": engines_version,
+        "sha256": sha256_tree(fat_root / "vendor"),
+        "license": "various (see per-package entries)",
+        "license_path": "",
+        "path": "tackbox_engines/vendor",
+    })
 
     return fat_root, entries
 
@@ -330,6 +358,35 @@ def prepare_thin(pl: Platform, engines_entries: list[dict], version: str) -> tup
     return thin_root, thin_entries, payload_sha
 
 
+def prune_dot_paths(root: Path) -> None:
+    for p in sorted(root.rglob("*"), key=lambda x: len(x.parts), reverse=True):
+        if not p.exists():
+            continue
+        if any(part.startswith(".") for part in p.relative_to(root).parts):
+            if p.is_dir():
+                shutil.rmtree(p, ignore_errors=True)
+            else:
+                p.unlink(missing_ok=True)
+
+
+def verify_wheel_payload(wheel: Path, pkg_root: Path, pkg_name: str) -> None:
+    """Every staged payload file must land in the wheel - fail the build,
+    not the consumer's doctor, when packaging drops something."""
+    with zipfile.ZipFile(wheel) as zf:
+        packed = {n for n in zf.namelist() if n.startswith(f"{pkg_name}/")}
+    staged = {
+        f"{pkg_name}/{f.relative_to(pkg_root).as_posix()}"
+        for f in pkg_root.rglob("*")
+        if f.is_file() and "__pycache__" not in f.parts
+    }
+    missing = sorted(staged - packed)
+    if missing:
+        raise SystemExit(
+            f"wheel {wheel.name} is missing {len(missing)} staged files, "
+            f"first: {missing[:5]}"
+        )
+
+
 def compute_payload_sha(entries: list[dict]) -> str:
     h = hashlib.sha256()
     for entry in sorted(entries, key=lambda e: (e.get("id", ""), e.get("path", ""))):
@@ -397,6 +454,9 @@ def main() -> int:
         env_extras={"TACKBOX_ENGINES_VERSION": engines_version},
     )
     print(f"fat wheel: {fat_wheel.name}", file=sys.stderr)
+    verify_wheel_payload(
+        fat_wheel, ENGINES_DIR / "src" / "tackbox_engines", "tackbox_engines"
+    )
 
     prepare_thin(pl, engines_entries, version)
 
@@ -410,6 +470,7 @@ def main() -> int:
         },
     )
     print(f"thin wheel: {thin_wheel.name}", file=sys.stderr)
+    verify_wheel_payload(thin_wheel, PY_DIR / "tackbox", "tackbox")
 
     print(json.dumps({
         "platform": plat_key,
