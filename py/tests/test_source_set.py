@@ -78,6 +78,18 @@ def test_parse_stage_malformed_row_rejected():
         parse_ls_files_stage(b"garbage-no-tab\0")
 
 
+def test_parse_stage_missing_stage_field_rejected():
+    # Two fields (mode + sha) instead of three - reject before decoding.
+    with pytest.raises(ValueError):
+        parse_ls_files_stage(b"100644 " + b"0" * 40 + b"\tfoo\0")
+
+
+def test_parse_stage_extra_header_field_rejected():
+    # Four fields in the header - reject.
+    with pytest.raises(ValueError):
+        parse_ls_files_stage(b"100644 " + b"0" * 40 + b" 0 junk\tfoo\0")
+
+
 # -- parse_ls_files_untracked ---------------------------------------------
 
 
