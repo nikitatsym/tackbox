@@ -1,8 +1,8 @@
 """Engine registry, dispatch, and parallel subprocess runner.
 
 Dev mode: engines are locally-built binaries (Go) and Node scripts under
-the tackbox source tree. Step 5 will replace this registry with wheel-bundled
-binaries; the public shape of dispatch/run stays the same.
+the tackbox source tree. The hermetic-wheels step will replace this registry
+with wheel-bundled binaries; the public shape of dispatch/run stays the same.
 
 Exit-code semantics:
 - Each engine's subprocess return code is normalized: a negative value
