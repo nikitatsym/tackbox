@@ -62,13 +62,15 @@ MD_CLEAN = "# Notes\n\nAll ASCII here.\n"
 
 
 def _needs_go():
+    # Conventions: no test skips - a missing toolchain is an environment
+    # bug to fix, not a reason to silently shrink coverage.
     if shutil.which("go") is None:
-        pytest.skip("go toolchain not installed")
+        pytest.fail("go toolchain not installed; install it, do not skip")
 
 
 def _needs_node():
     if shutil.which("node") is None:
-        pytest.skip("node not installed")
+        pytest.fail("node not installed; install it, do not skip")
 
 
 def _git(root: Path, *args: str) -> None:

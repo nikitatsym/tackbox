@@ -243,8 +243,10 @@ func Ping() int { return 42 }
 
 
 def _needs_go():
+    # Conventions: no test skips - a missing toolchain is an environment
+    # bug to fix, not a reason to silently shrink coverage.
     if shutil.which("go") is None:
-        pytest.skip("go toolchain not installed")
+        pytest.fail("go toolchain not installed; install it, do not skip")
 
 
 def _init_repo(root: Path) -> None:
