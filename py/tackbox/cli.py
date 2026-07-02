@@ -1,8 +1,9 @@
 """tackbox lint CLI entry point.
 
 Dev mode: locates its own source tree relative to __file__ to find
-the Go binaries and Node scripts. Step 5 will swap this for wheel-
-bundled resources; the CLI shape (argv, exit codes, banner) stays.
+the Go binaries and Node scripts. The hermetic-wheels step swaps this
+for wheel-bundled resources; the CLI shape (argv, exit codes, banner)
+stays.
 """
 
 from __future__ import annotations
