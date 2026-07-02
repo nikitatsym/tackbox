@@ -23,9 +23,14 @@ from .engines import (
 from .source_set import (
     PathspecMagicError,
     filter_source_set,
+    parse_git_diff_names,
     parse_ls_files_stage,
     parse_ls_files_untracked,
 )
+
+
+class ChangedScopeError(ValueError):
+    """Raised when the git commands backing --changed / --since fail."""
 
 _BANNER_ORDER = ("erclint", "opengrep", "node", "eslint", "markdownlint")
 
@@ -34,8 +39,13 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_argv(sys.argv[1:] if argv is None else argv)
     if args.command == "lint":
         try:
-            return _run_lint(args.path, no_cache=args.no_cache)
-        except PathspecMagicError as e:
+            return _run_lint(
+                args.path,
+                no_cache=args.no_cache,
+                changed=args.changed,
+                since=args.since,
+            )
+        except (PathspecMagicError, ChangedScopeError) as e:
             print(f"tackbox: {e}", file=sys.stderr)
             return 2
     if args.command == "doctor":
@@ -55,6 +65,17 @@ def _parse_argv(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="ignore and do not write the (unit, engine) cache",
     )
+    lint.add_argument(
+        "--changed",
+        action="store_true",
+        help="restrict to dirty tree (staged + unstaged + untracked)",
+    )
+    lint.add_argument(
+        "--since",
+        metavar="<ref>",
+        default=None,
+        help="restrict to three-dot diff <ref>...HEAD unioned with dirty tree",
+    )
     sub.add_parser("doctor", help="verify the hermetic install is functional")
     return parser.parse_args(argv)
 
@@ -63,11 +84,15 @@ def _tackbox_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def _run_lint(scope: str, no_cache: bool) -> int:
+def _run_lint(scope: str, no_cache: bool, changed: bool, since: str | None) -> int:
     repo_root = _find_repo_root()
     tackbox_root = _tackbox_root()
 
-    files, warnings = _collect_source_set(repo_root, scope)
+    changed_scope: set[str] | None = None
+    if changed or since is not None:
+        changed_scope = _compute_changed_scope(repo_root, since)
+
+    files, warnings = _collect_source_set(repo_root, scope, changed_scope)
     for w in warnings:
         print(f"tackbox: warning: {w.reason}: {w.path}", file=sys.stderr)
 
@@ -232,7 +257,9 @@ def _erclint_has_findings(stdout: str) -> bool:
         return True
 
 
-def _collect_source_set(repo_root: Path, scope: str):
+def _collect_source_set(
+    repo_root: Path, scope: str, changed_scope: set[str] | None = None
+):
     stage_raw = subprocess.run(
         ["git", "ls-files", "-s", "-z"],
         cwd=repo_root,
@@ -251,7 +278,51 @@ def _collect_source_set(repo_root: Path, scope: str):
         scope,
         exists=lambda p: (repo_root / p).exists(),
         is_symlink=lambda p: (repo_root / p).is_symlink(),
+        changed_scope=changed_scope,
     )
+
+
+def _compute_changed_scope(repo_root: Path, since: str | None) -> set[str]:
+    """Union of dirty tree with (optional) three-dot diff against <since>.
+
+    Dirty tree = files that differ from HEAD in the index or worktree,
+    plus untracked. Three-dot diff = files changed on this branch since
+    the merge-base with <since>; matches the PR-style question "what did
+    I change on my branch." A two-dot diff would leak reverse-changes
+    when <since> progresses after fork.
+    """
+    scope: set[str] = set()
+    completed = subprocess.run(
+        ["git", "diff", "--name-only", "-z", "HEAD"],
+        cwd=repo_root,
+        capture_output=True,
+    )
+    if completed.returncode != 0:
+        # Fresh repo without any commits: HEAD does not resolve. Fail with a
+        # clean tackbox message instead of a Python traceback on onboarding.
+        err = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise ChangedScopeError(
+            f"--changed / --since requires at least one commit ({err})"
+        )
+    scope.update(parse_git_diff_names(completed.stdout))
+    untracked = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+        cwd=repo_root,
+        capture_output=True,
+        check=True,
+    ).stdout
+    scope.update(parse_ls_files_untracked(untracked))
+    if since is not None:
+        completed = subprocess.run(
+            ["git", "diff", "--name-only", "-z", f"{since}...HEAD"],
+            cwd=repo_root,
+            capture_output=True,
+        )
+        if completed.returncode != 0:
+            err = completed.stderr.decode("utf-8", errors="replace").strip()
+            raise ChangedScopeError(f"--since={since}: {err or 'git diff failed'}")
+        scope.update(parse_git_diff_names(completed.stdout))
+    return scope
 
 
 def _find_repo_root() -> Path:

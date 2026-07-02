@@ -17,6 +17,7 @@ from tackbox.source_set import (
     files_to_go_packages,
     filter_source_set,
     narrow_by_path,
+    parse_git_diff_names,
     parse_ls_files_stage,
     parse_ls_files_untracked,
     validate_path,
@@ -314,6 +315,141 @@ def test_filter_dedup_when_untracked_shadows_tracked():
 def test_filter_rejects_pathspec_magic_scope():
     with pytest.raises(PathspecMagicError):
         filter_source_set([], [], "*.go", _always, _never)
+
+
+# -- parse_git_diff_names --------------------------------------------------
+
+
+def test_parse_diff_names_empty():
+    assert parse_git_diff_names(b"") == []
+
+
+def test_parse_diff_names_single():
+    assert parse_git_diff_names(b"a.go\0") == ["a.go"]
+
+
+def test_parse_diff_names_multiple():
+    assert parse_git_diff_names(b"a.go\0src/b.go\0") == ["a.go", "src/b.go"]
+
+
+def test_parse_diff_names_utf8():
+    raw = "docs/план.md\0".encode("utf-8")
+    assert parse_git_diff_names(raw) == ["docs/план.md"]
+
+
+def test_parse_diff_names_path_with_space():
+    assert parse_git_diff_names(b"dir with space/b.go\0") == ["dir with space/b.go"]
+
+
+# -- filter_source_set with changed_scope ---------------------------------
+
+
+def test_filter_changed_scope_none_returns_full_source_set():
+    stage = [IndexEntry("a.go", 0o100644), IndexEntry("b.go", 0o100644)]
+    files, _ = filter_source_set(
+        stage, [], ".", _always, _never, changed_scope=None
+    )
+    assert files == ["a.go", "b.go"]
+
+
+def test_filter_changed_scope_narrows_to_intersection():
+    stage = [
+        IndexEntry("src/a.go", 0o100644),
+        IndexEntry("src/b.go", 0o100644),
+        IndexEntry("src/c.go", 0o100644),
+    ]
+    files, _ = filter_source_set(
+        stage, [], ".", _always, _never,
+        changed_scope={"src/a.go", "src/c.go"},
+    )
+    assert files == ["src/a.go", "src/c.go"]
+
+
+def test_filter_empty_changed_scope_returns_no_files():
+    stage = [IndexEntry("a.go", 0o100644)]
+    files, warnings = filter_source_set(
+        stage, [], ".", _always, _never, changed_scope=set()
+    )
+    assert files == []
+    assert warnings == []
+
+
+def test_filter_changed_scope_includes_untracked():
+    stage = [IndexEntry("a.go", 0o100644)]
+    files, _ = filter_source_set(
+        stage, ["b.go"], ".", _always, _never,
+        changed_scope={"a.go", "b.go"},
+    )
+    assert files == ["a.go", "b.go"]
+
+
+def test_filter_changed_scope_composes_with_path_narrowing():
+    stage = [
+        IndexEntry("src/foo/a.go", 0o100644),
+        IndexEntry("src/foo/b.go", 0o100644),
+        IndexEntry("src/other/c.go", 0o100644),
+    ]
+    # Both a.go and c.go are in changed_scope; path filter restricts to src/foo.
+    files, _ = filter_source_set(
+        stage, [], "src/foo", _always, _never,
+        changed_scope={"src/foo/a.go", "src/other/c.go"},
+    )
+    assert files == ["src/foo/a.go"]
+
+
+def test_filter_changed_scope_still_excludes_gitlink():
+    stage = [
+        IndexEntry("a.go", 0o100644),
+        IndexEntry("vendor/sub", GITLINK_MODE),
+    ]
+    # Submodule pointer in a diff (e.g., updated ref) is not lintable content.
+    files, _ = filter_source_set(
+        stage, [], ".", _always, _never,
+        changed_scope={"a.go", "vendor/sub"},
+    )
+    assert files == ["a.go"]
+
+
+def test_filter_changed_scope_still_excludes_symlink():
+    stage = [
+        IndexEntry("a.go", 0o100644),
+        IndexEntry("link", SYMLINK_MODE),
+    ]
+    files, _ = filter_source_set(
+        stage, [], ".", _always, _never,
+        changed_scope={"a.go", "link"},
+    )
+    assert files == ["a.go"]
+
+
+def test_filter_changed_scope_missing_worktree_file_warns_and_drops():
+    stage = [
+        IndexEntry("a.go", 0o100644),
+        IndexEntry("gone.go", 0o100644),
+    ]
+    # `rm gone.go` (no `git rm`) leaves it staged and in a diff; worktree
+    # missing -> same warning path as full-scan mode.
+    files, warnings = filter_source_set(
+        stage, [], ".", _in({"a.go"}), _never,
+        changed_scope={"a.go", "gone.go"},
+    )
+    assert files == ["a.go"]
+    assert warnings == [
+        SourceWarning(path="gone.go", reason="tracked file missing from worktree"),
+    ]
+
+
+def test_filter_changed_scope_of_nonexistent_source_paths_drops_silently():
+    """A file appearing only in `<ref>...HEAD` (later deleted from index and
+    worktree) intersects to nothing and does not warn - it is not a
+    tracked source anymore."""
+    stage = [IndexEntry("a.go", 0o100644)]
+    files, warnings = filter_source_set(
+        stage, [], ".", _always, _never,
+        changed_scope={"a.go", "removed.go"},
+    )
+    assert files == ["a.go"]
+    assert warnings == []
 
 
 # -- files_to_go_packages --------------------------------------------------
