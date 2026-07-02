@@ -1,0 +1,324 @@
+name: publish
+
+on:
+  push:
+    tags: ['v*']
+
+# Two rapid tag pushes must serialize on the Trusted Publisher: PyPI OIDC
+# issuance is per-workflow-run, and cancel-in-progress would abort a live
+# upload and leak a half-published fat with no matching thin.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  lock-check:
+    name: engines/lock.json drift check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify engines/lock.json matches sources
+        run: python scripts/lock_engines.py --check
+
+  build:
+    name: build ${{ matrix.platform }}
+    needs: lock-check
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-22.04
+          - platform: linux-aarch64
+            runner: ubuntu-22.04-arm
+          - platform: macos-x86_64
+            runner: macos-13
+          - platform: macos-aarch64
+            runner: macos-14
+          - platform: windows-x86_64
+            runner: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Resolve versions from tag and engines/VERSION
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          thin_version="${tag#v}"
+          engines_version="$(cat engines/VERSION | tr -d '[:space:]')"
+          echo "thin=$thin_version"        >> "$GITHUB_OUTPUT"
+          echo "engines=$engines_version"  >> "$GITHUB_OUTPUT"
+          echo "thin version=$thin_version, engines version=$engines_version"
+
+      - name: Build wheels for ${{ matrix.platform }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/build_wheels.py \
+            --outdir dist \
+            --version "${{ steps.ver.outputs.thin }}" \
+            --engines-version "${{ steps.ver.outputs.engines }}" \
+            --platform ${{ matrix.platform }}
+          ls -lh dist/
+
+      - name: Enforce PyPI 100 MiB per-file limit
+        shell: bash
+        run: |
+          set -euo pipefail
+          limit=$((100 * 1024 * 1024))
+          fail=0
+          for w in dist/*.whl; do
+            size=$(wc -c <"$w")
+            printf '%s\t%s bytes\n' "$w" "$size"
+            if [ "$size" -gt "$limit" ]; then
+              echo "wheel $w exceeds PyPI 100 MiB per-file limit: $size bytes" >&2
+              fail=1
+            fi
+          done
+          exit "$fail"
+
+      - name: Upload wheels artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform }}
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 7
+
+  smoke:
+    name: smoke ${{ matrix.platform }}
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-22.04
+          - platform: linux-aarch64
+            runner: ubuntu-22.04-arm
+          - platform: macos-x86_64
+            runner: macos-13
+          - platform: macos-aarch64
+            runner: macos-14
+          - platform: windows-x86_64
+            runner: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Download platform wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform }}
+          path: dist
+
+      - name: Install thin+fat wheels into fresh venv
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv venv .smoke-venv
+          fat=$(ls dist/tackbox_engines-*.whl | head -n1)
+          thin=$(ls dist/tackbox-*.whl | grep -v tackbox_engines | head -n1)
+          echo "fat=$fat"
+          echo "thin=$thin"
+          uv pip install --python .smoke-venv "$fat" "$thin"
+
+      - name: Materialize fixture repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf fixture-repo
+          python scripts/materialize_fixture.py fixture-repo
+
+      - name: tackbox doctor (expect exit 0)
+        shell: bash
+        working-directory: fixture-repo
+        run: |
+          set -euo pipefail
+          if [ -f ../.smoke-venv/bin/tackbox ]; then
+            tackbox=../.smoke-venv/bin/tackbox
+          elif [ -f ../.smoke-venv/Scripts/tackbox.exe ]; then
+            tackbox=../.smoke-venv/Scripts/tackbox.exe
+          else
+            echo "no tackbox entrypoint found under .smoke-venv/" >&2
+            exit 1
+          fi
+          "$tackbox" doctor
+
+      - name: tackbox lint (expect exit 1 on planted violations)
+        shell: bash
+        working-directory: fixture-repo
+        run: |
+          set -eo pipefail
+          if [ -f ../.smoke-venv/bin/tackbox ]; then
+            tackbox=../.smoke-venv/bin/tackbox
+          elif [ -f ../.smoke-venv/Scripts/tackbox.exe ]; then
+            tackbox=../.smoke-venv/Scripts/tackbox.exe
+          else
+            echo "no tackbox entrypoint found under .smoke-venv/" >&2
+            exit 1
+          fi
+          set +e
+          "$tackbox" lint . --no-cache
+          rc=$?
+          set -e
+          echo "lint exit=$rc"
+          if [ "$rc" != "1" ]; then
+            echo "expected exit 1 (planted ERC001+no-swallow-catch+MD-ASCII), got $rc" >&2
+            exit 1
+          fi
+
+  publish-fat:
+    name: publish tackbox_engines to PyPI
+    needs: smoke
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all fat wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+
+      - name: Isolate fat wheels
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir fat
+          for w in dist/tackbox_engines-*.whl; do
+            mv "$w" fat/
+          done
+          ls -lh fat/
+
+      # A thin-only patch bump reuploads the same fat version; PyPI 409s
+      # on identical version, and skip-existing turns that 409 into success.
+      - name: Publish tackbox-engines via Trusted Publisher (OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: fat
+          skip-existing: true
+
+  publish-thin:
+    name: publish tackbox to PyPI
+    needs: publish-fat
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all thin wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+
+      - name: Isolate thin wheels
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir thin
+          # dist/tackbox-*.whl does not match tackbox_engines-*.whl (underscore
+          # separator after the package name), so no fat filter is needed.
+          for w in dist/tackbox-*.whl; do
+            mv "$w" thin/
+          done
+          ls -lh thin/
+
+      - name: Publish tackbox via Trusted Publisher (OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: thin
+
+  post-publish-smoke:
+    name: fresh-runner smoke ${{ matrix.platform }}
+    needs: publish-thin
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-22.04
+          - platform: linux-aarch64
+            runner: ubuntu-22.04-arm
+          - platform: macos-x86_64
+            runner: macos-13
+          - platform: macos-aarch64
+            runner: macos-14
+          - platform: windows-x86_64
+            runner: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      # 60s is conservative for PyPI CDN edge propagation on a fresh publish;
+      # any retry loop would mask real download failures behind flake tolerance.
+      - name: Wait for PyPI index to propagate
+        shell: bash
+        run: sleep 60
+
+      - name: Materialize fixture repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf fixture-repo
+          python scripts/materialize_fixture.py fixture-repo
+
+      - name: Resolve just-published version from tag
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          thin_version="${tag#v}"
+          echo "thin=$thin_version" >> "$GITHUB_OUTPUT"
+
+      # `uvx --refresh` bypasses any cached tool install, so this genuinely
+      # exercises the fresh-PyPI-download path the plan asks for even on
+      # the rare case of a re-run.
+      - name: uvx tackbox@<version> doctor
+        shell: bash
+        working-directory: fixture-repo
+        run: |
+          set -euo pipefail
+          uvx --refresh tackbox@${{ steps.ver.outputs.thin }} doctor
+
+      - name: uvx tackbox@<version> lint (expect exit 1)
+        shell: bash
+        working-directory: fixture-repo
+        run: |
+          set -eo pipefail
+          set +e
+          uvx --refresh tackbox@${{ steps.ver.outputs.thin }} lint . --no-cache
+          rc=$?
+          set -e
+          echo "lint exit=$rc"
+          if [ "$rc" != "1" ]; then
+            echo "expected exit 1 on fixture violations, got $rc" >&2
+            exit 1
+          fi
