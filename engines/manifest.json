@@ -33,22 +33,6 @@
         "bin_name": "opengrep"
       }
     },
-    "macos-x86_64": {
-      "wheel_plat": "macosx_11_0_x86_64",
-      "node": {
-        "version": "22.18.0",
-        "source_url": "https://nodejs.org/dist/v22.18.0/node-v22.18.0-darwin-x64.tar.xz",
-        "archive_sha256": "76e4a1997da953dbf8e21f6ed1c4dd7eceb39deb96defe3b3e9d8f786ee287a8",
-        "archive_member": "node-v22.18.0-darwin-x64/bin/node",
-        "bin_name": "node"
-      },
-      "opengrep": {
-        "version": "1.25.0",
-        "source_url": "https://github.com/opengrep/opengrep/releases/download/v1.25.0/opengrep_osx_x86",
-        "archive_sha256": "fa2487b75527be1cc9ae4f9b0cb09a340454e7973c76785568285cbbcd977cb4",
-        "bin_name": "opengrep"
-      }
-    },
     "macos-aarch64": {
       "wheel_plat": "macosx_11_0_arm64",
       "node": {

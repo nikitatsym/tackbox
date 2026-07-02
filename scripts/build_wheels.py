@@ -47,8 +47,6 @@ def detect_platform_key() -> str:
     if system == "darwin":
         if machine in ("arm64", "aarch64"):
             return "macos-aarch64"
-        if machine in ("x86_64", "amd64"):
-            return "macos-x86_64"
     if system.startswith("linux"):
         if machine in ("aarch64", "arm64"):
             return "linux-aarch64"
@@ -269,14 +267,12 @@ def prepare_thin(pl: Platform, engines_entries: list[dict], version: str) -> tup
     goos = {
         "linux-x86_64": "linux",
         "linux-aarch64": "linux",
-        "macos-x86_64": "darwin",
         "macos-aarch64": "darwin",
         "windows-x86_64": "windows",
     }[pl.key]
     goarch = {
         "linux-x86_64": "amd64",
         "linux-aarch64": "arm64",
-        "macos-x86_64": "amd64",
         "macos-aarch64": "arm64",
         "windows-x86_64": "amd64",
     }[pl.key]
@@ -434,7 +430,7 @@ def main() -> int:
                     help="fat wheel version (defaults to --version)")
     ap.add_argument("--outdir", default=str(REPO / "dist"))
     ap.add_argument("--platform", default=None,
-                    help="platform key override (linux-x86_64|linux-aarch64|macos-x86_64|macos-aarch64|windows-x86_64)")
+                    help="platform key override (linux-x86_64|linux-aarch64|macos-aarch64|windows-x86_64)")
     args = ap.parse_args()
 
     plat_key = args.platform or detect_platform_key()

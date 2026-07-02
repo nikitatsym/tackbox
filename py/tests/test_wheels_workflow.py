@@ -21,7 +21,6 @@ WORKFLOW = REPO / ".github" / "workflows" / "wheels.yml"
 REQUIRED_PLATFORMS = {
     "linux-x86_64",
     "linux-aarch64",
-    "macos-x86_64",
     "macos-aarch64",
     "windows-x86_64",
 }
@@ -29,7 +28,6 @@ REQUIRED_PLATFORMS = {
 RUNNER_OS = {
     "linux-x86_64": "linux",
     "linux-aarch64": "linux",
-    "macos-x86_64": "macos",
     "macos-aarch64": "macos",
     "windows-x86_64": "windows",
 }
@@ -37,7 +35,6 @@ RUNNER_OS = {
 ALLOWED_RUNNERS = {
     "linux-x86_64": {"ubuntu-22.04", "ubuntu-24.04"},
     "linux-aarch64": {"ubuntu-22.04-arm", "ubuntu-24.04-arm"},
-    "macos-x86_64": {"macos-13"},
     "macos-aarch64": {"macos-14", "macos-15"},
     "windows-x86_64": {"windows-2022", "windows-2019"},
 }
