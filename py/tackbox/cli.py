@@ -23,6 +23,7 @@ from .engines import (
 from .source_set import (
     PathspecMagicError,
     filter_source_set,
+    group_go_packages_by_module,
     parse_git_diff_names,
     parse_ls_files_stage,
     parse_ls_files_untracked,
@@ -45,7 +46,7 @@ def main(argv: list[str] | None = None) -> int:
                 changed=args.changed,
                 since=args.since,
             )
-        except (PathspecMagicError, ChangedScopeError) as e:
+        except (PathspecMagicError, ChangedScopeError, cache.GoListError) as e:
             print(f"tackbox: {e}", file=sys.stderr)
             return 2
     if args.command == "doctor":
@@ -106,6 +107,12 @@ def _run_lint(scope: str, no_cache: bool, changed: bool, since: str | None) -> i
     _print_banner(tackbox_root)
 
     plan = dispatch(files, active_engines())
+    plan, go_orphans = _drop_go_orphans(plan, repo_root)
+    for pkg in go_orphans:
+        print(
+            f"tackbox: warning: no enclosing go.mod, skipped: {pkg}",
+            file=sys.stderr,
+        )
     if not plan:
         return 0
 
@@ -138,6 +145,29 @@ def _run_lint(scope: str, no_cache: bool, changed: bool, since: str | None) -> i
                 sys.stderr.write("\n")
 
     return _aggregate_exit(results)
+
+
+def _drop_go_orphans(
+    plan: list[tuple[EngineSpec, list[str]]], repo_root: Path
+) -> tuple[list[tuple[EngineSpec, list[str]]], list[str]]:
+    """Drop package-mode args with no enclosing go.mod - loudly, upstream.
+
+    erclint cannot lint a package outside any module; filtering here keeps
+    the warning in one place and the engine/digest layers orphan-free.
+    """
+    filtered: list[tuple[EngineSpec, list[str]]] = []
+    orphans: set[str] = set()
+    for engine, args in plan:
+        if engine.package_mode:
+            groups, orphan = group_go_packages_by_module(
+                args, lambda d: (repo_root / d / "go.mod").is_file()
+            )
+            orphans.update(orphan)
+            args = sorted(p for pkgs in groups.values() for p in pkgs)
+            if not args:
+                continue
+        filtered.append((engine, args))
+    return filtered, sorted(orphans)
 
 
 # -- Cache wiring ---------------------------------------------------------

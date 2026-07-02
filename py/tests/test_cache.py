@@ -314,3 +314,93 @@ def test_erclint_digest_changes_when_go_mod_changes(tmp_path):
     (tmp_path / "go.mod").write_text(_GO_MOD_DIGEST + "\n// tail\n")
     after = cache.erclint_package_digests(tmp_path, ["pkg_a"])["pkg_a"]
     assert before != after
+
+
+# -- nested / multi-module repos -------------------------------------------
+
+_GOMOD_NESTED = """module cachenested
+
+go 1.24
+"""
+
+_GOMOD_OTHER = """module cacheother
+
+go 1.24
+"""
+
+_PKG_C_OTHER = """package pkg_c
+
+func Pong() int { return 7 }
+"""
+
+
+def _make_nested_go_repo(root: Path) -> None:
+    """Two Go modules in subdirs, no go.mod at the repo root."""
+    (root / "gomod").mkdir()
+    (root / "gomod" / "go.mod").write_text(_GOMOD_NESTED)
+    (root / "gomod" / "pkg_b").mkdir()
+    (root / "gomod" / "pkg_b" / "b.go").write_text(_PKG_B_ADD2)
+    (root / "gomod" / "pkg_a").mkdir()
+    (root / "gomod" / "pkg_a" / "a.go").write_text(
+        _PKG_A_USES_B.replace("cachefixture", "cachenested")
+    )
+    (root / "other").mkdir()
+    (root / "other" / "go.mod").write_text(_GOMOD_OTHER)
+    (root / "other" / "pkg_c").mkdir()
+    (root / "other" / "pkg_c" / "c.go").write_text(_PKG_C_OTHER)
+    _init_repo(root)
+
+
+def test_erclint_digest_nested_modules_all_packages_digested(tmp_path):
+    _needs_go()
+    _make_nested_go_repo(tmp_path)
+    digests = cache.erclint_package_digests(
+        tmp_path, ["gomod/pkg_a", "gomod/pkg_b", "other/pkg_c"]
+    )
+    assert set(digests) == {"gomod/pkg_a", "gomod/pkg_b", "other/pkg_c"}
+
+
+def test_erclint_digest_does_not_cross_module_boundary(tmp_path):
+    _needs_go()
+    _make_nested_go_repo(tmp_path)
+    args = ["gomod/pkg_a", "gomod/pkg_b", "other/pkg_c"]
+    before = cache.erclint_package_digests(tmp_path, args)
+    (tmp_path / "other" / "pkg_c" / "c.go").write_text(
+        _PKG_C_OTHER + "\n// tail\n"
+    )
+    after = cache.erclint_package_digests(tmp_path, args)
+    assert before["other/pkg_c"] != after["other/pkg_c"]
+    assert before["gomod/pkg_a"] == after["gomod/pkg_a"]
+    assert before["gomod/pkg_b"] == after["gomod/pkg_b"]
+
+
+def test_erclint_digest_module_go_mod_scoped_to_its_module(tmp_path):
+    _needs_go()
+    _make_nested_go_repo(tmp_path)
+    args = ["gomod/pkg_a", "other/pkg_c"]
+    before = cache.erclint_package_digests(tmp_path, args)
+    (tmp_path / "gomod" / "go.mod").write_text(_GOMOD_NESTED + "\n// tail\n")
+    after = cache.erclint_package_digests(tmp_path, args)
+    assert before["gomod/pkg_a"] != after["gomod/pkg_a"]
+    assert before["other/pkg_c"] == after["other/pkg_c"]
+
+
+def test_erclint_import_paths_nested_modules(tmp_path):
+    _needs_go()
+    _make_nested_go_repo(tmp_path)
+    ips = cache.erclint_import_paths(
+        tmp_path, ["gomod/pkg_a", "other/pkg_c"]
+    )
+    assert ips == {
+        "gomod/pkg_a": "cachenested/pkg_a",
+        "other/pkg_c": "cacheother/pkg_c",
+    }
+
+
+def test_erclint_digest_broken_go_mod_raises_clean_error(tmp_path):
+    _needs_go()
+    _make_nested_go_repo(tmp_path)
+    (tmp_path / "gomod" / "go.mod").write_text("garbage directive\n")
+    with pytest.raises(cache.GoListError) as exc:
+        cache.erclint_package_digests(tmp_path, ["gomod/pkg_a"])
+    assert "gomod" in str(exc.value)
