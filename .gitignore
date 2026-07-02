@@ -27,6 +27,10 @@ __pycache__/
 # tackbox dev-mode binary cache
 .tackbox-dev/
 
+# wheels CI workflow local artifacts
+/.wheels-venv/
+/fixture-repo/
+
 # Wheel payload staging (populated by scripts/build_wheels.py)
 /engines/src/tackbox_engines/bin/
 /engines/src/tackbox_engines/vendor/
