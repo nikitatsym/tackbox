@@ -17,11 +17,11 @@ Unit granularity:
   in package B invalidates every in-module package that depends on B.
 
 engines-hash:
-- Dev mode returns the literal string "dev". The plan's real payload digest
-  arrives with hermetic wheels (step 6); until then all dev runs share a
-  single sub-directory. Modifying tackbox rules in dev mode does not
-  invalidate consumer caches by itself - developers use `--no-cache` (or
-  clear `~/.cache/tackbox`) when iterating on rules.
+- Dev mode digests the engine payload sources (go/, js/, bin/, the eslint
+  preset, npm manifest and lockfile), so editing any rule invalidates prior
+  markers and stale clean-results can never mask new findings. The
+  orchestrator under py/ is deliberately outside the payload. Hermetic
+  wheels (step 6) replace this with the bundled-payload digest.
 """
 
 from __future__ import annotations
@@ -58,8 +58,36 @@ class CacheKey:
         return root / self.engines_hash / f"{self.unit_digest}.{self.engine_id}"
 
 
-def engines_hash_dev() -> str:
-    return "dev"
+# Engine payload in dev mode: everything that shapes findings, nothing else.
+_DEV_PAYLOAD = (
+    "go",
+    "js",
+    "bin",
+    "eslint.config.preset.js",
+    "package.json",
+    "package-lock.json",
+)
+
+
+def engines_hash_dev(tackbox_root: Path) -> str:
+    h = hashlib.sha256()
+    h.update(b"dev-payload-v1\n")
+    for top in _DEV_PAYLOAD:
+        p = tackbox_root / top
+        if p.is_file():
+            _hash_payload_file(h, top, p)
+        elif p.is_dir():
+            for f in sorted(p.rglob("*")):
+                if f.is_file() and "__pycache__" not in f.parts:
+                    _hash_payload_file(h, f.relative_to(tackbox_root).as_posix(), f)
+    return h.hexdigest()
+
+
+def _hash_payload_file(h, rel: str, path: Path) -> None:
+    h.update(rel.encode())
+    h.update(b"\t")
+    h.update(sha256_file(path).encode())
+    h.update(b"\n")
 
 
 def is_cached(key: CacheKey, root: Path) -> bool:
@@ -113,7 +141,16 @@ def gc_soft_cap(engines_hash: str, cap: int, root: Path) -> None:
     markers = [p for p in d.iterdir() if p.is_file()]
     if len(markers) <= cap:
         return
-    markers.sort(key=lambda p: p.stat().st_mtime)
+
+    def _mtime(p: Path) -> float:
+        # A marker can vanish between iterdir and stat (concurrent run);
+        # treat it as oldest so unlink handles it, never raise.
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    markers.sort(key=_mtime)
     for m in markers[: len(markers) - cap]:
         try:
             m.unlink()

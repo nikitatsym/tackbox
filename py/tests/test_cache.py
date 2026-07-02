@@ -35,8 +35,37 @@ def test_cache_key_marker_layout(tmp_path):
     assert key.marker(tmp_path) == tmp_path / "e1" / "ab12.erclint"
 
 
-def test_engines_hash_dev_is_literal_dev():
-    assert cache.engines_hash_dev() == "dev"
+def _payload_tree(root: Path) -> None:
+    (root / "go" / "analyzers").mkdir(parents=True)
+    (root / "go" / "analyzers" / "a.go").write_text("package a\n")
+    (root / "js" / "rules").mkdir(parents=True)
+    (root / "js" / "rules" / "r.js").write_text("rule\n")
+    (root / "bin").mkdir()
+    (root / "bin" / "t.js").write_text("wrapper\n")
+    (root / "eslint.config.preset.js").write_text("preset\n")
+    (root / "package.json").write_text("{}\n")
+    (root / "package-lock.json").write_text("{}\n")
+    (root / "py").mkdir()
+    (root / "py" / "cli.py").write_text("orchestrator\n")
+
+
+def test_engines_hash_dev_is_deterministic(tmp_path):
+    _payload_tree(tmp_path)
+    assert cache.engines_hash_dev(tmp_path) == cache.engines_hash_dev(tmp_path)
+
+
+def test_engines_hash_dev_changes_when_rule_source_changes(tmp_path):
+    _payload_tree(tmp_path)
+    before = cache.engines_hash_dev(tmp_path)
+    (tmp_path / "js" / "rules" / "r.js").write_text("edited rule\n")
+    assert cache.engines_hash_dev(tmp_path) != before
+
+
+def test_engines_hash_dev_ignores_orchestrator_sources(tmp_path):
+    _payload_tree(tmp_path)
+    before = cache.engines_hash_dev(tmp_path)
+    (tmp_path / "py" / "cli.py").write_text("edited orchestrator\n")
+    assert cache.engines_hash_dev(tmp_path) == before
 
 
 # -- is_cached / mark_clean ------------------------------------------------
@@ -139,6 +168,30 @@ def test_gc_soft_cap_no_op_under_cap(tmp_path):
 
 def test_gc_soft_cap_no_op_when_dir_missing(tmp_path):
     cache.gc_soft_cap("nope", cap=5, root=tmp_path)  # must not raise
+
+
+def test_gc_soft_cap_survives_files_vanishing_mid_scan(monkeypatch, tmp_path):
+    d = tmp_path / "dev"
+    d.mkdir()
+    for i in range(3):
+        (d / f"m{i}.eng").touch()
+    victim = "m1.eng"
+    real_stat = Path.stat
+    calls = {"n": 0}
+
+    def flaky_stat(self, **kwargs):
+        # First stat (iterdir/is_file) sees the file; the sort-key stat
+        # simulates a concurrent run unlinking it mid-scan.
+        if self.name == victim:
+            calls["n"] += 1
+            if calls["n"] > 1:
+                raise FileNotFoundError(victim)
+        return real_stat(self, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", flaky_stat)
+    cache.gc_soft_cap("dev", cap=1, root=tmp_path)  # must not raise
+    monkeypatch.undo()
+    assert len([p for p in d.iterdir() if p.is_file()]) == 1
 
 
 # -- File digest -----------------------------------------------------------
