@@ -26,3 +26,20 @@ __pycache__/
 
 # tackbox dev-mode binary cache
 .tackbox-dev/
+
+# Wheel payload staging (populated by scripts/build_wheels.py)
+/engines/src/tackbox_engines/bin/
+/engines/src/tackbox_engines/vendor/
+/engines/src/tackbox_engines/third_party/
+/engines/src/tackbox_engines/engines.json
+/engines/build/
+/engines/dist/
+/engines/*.egg-info/
+/py/tackbox/bin/
+/py/tackbox/rules/
+/py/tackbox/third_party/
+/py/tackbox/engines.json
+/py/build/
+/py/dist/
+/py/*.egg-info/
+/dist/

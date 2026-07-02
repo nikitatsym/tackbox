@@ -1,0 +1,12 @@
+{
+  "name": "tackbox-engines-vendor",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "eslint": "^9.0.0",
+    "markdownlint": "0.40.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "svelte-eslint-parser": "^0.43.0",
+    "svelte": "^5.0.0"
+  }
+}
