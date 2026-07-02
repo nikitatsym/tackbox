@@ -15,6 +15,8 @@ Edge cases pinned by the plan:
 - Pathspec magic (`:(exclude)`, `:!path`), glob metacharacters, absolute
   paths and parent traversals are refused - callers get no back door for
   configurable excludes.
+- Non-canonical scopes (`./src`, `src//foo`, `.` segments) are refused:
+  they would never match git index paths and silently narrow to nothing.
 """
 
 from __future__ import annotations
@@ -83,6 +85,12 @@ def validate_path(path: str) -> None:
         raise PathspecMagicError(f"absolute path not allowed: {path!r}")
     if ".." in path.split("/"):
         raise PathspecMagicError(f"parent traversal not allowed: {path!r}")
+    if path != ".":
+        core = path[:-1] if path.endswith("/") else path
+        if any(seg in ("", ".") for seg in core.split("/")):
+            raise PathspecMagicError(
+                f"non-canonical path never matches the git index: {path!r}"
+            )
 
 
 def narrow_by_path(paths: Iterable[str], scope: str) -> list[str]:
