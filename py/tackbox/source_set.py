@@ -176,3 +176,46 @@ def files_to_go_packages(paths: Iterable[str]) -> list[str]:
         parent = p.rsplit("/", 1)[0] if "/" in p else "."
         pkgs.add(parent)
     return sorted(pkgs)
+
+
+def group_go_packages_by_module(
+    pkg_dirs: Iterable[str], is_module_root: Callable[[str], bool]
+) -> tuple[dict[str, list[str]], list[str]]:
+    """Group package dirs by their nearest enclosing Go module root.
+
+    Walks each dir upward (inclusive) to the repo root looking for a dir
+    satisfying `is_module_root`; nested modules resolve to the innermost
+    one. All paths are repo-relative, the repo root itself is `.`.
+    Returns ({module_root: sorted package dirs}, sorted orphans) where
+    orphans have no enclosing module; callers warn and skip them.
+    """
+    groups: dict[str, list[str]] = {}
+    orphans: list[str] = []
+    for pkg in pkg_dirs:
+        module = _nearest_module_root(pkg, is_module_root)
+        if module is None:
+            orphans.append(pkg)
+        else:
+            groups.setdefault(module, []).append(pkg)
+    return {m: sorted(pkgs) for m, pkgs in groups.items()}, sorted(orphans)
+
+
+def module_relative(module: str, pkg_dir: str) -> str:
+    """Rebase a repo-relative package dir onto its module root."""
+    if module == ".":
+        return pkg_dir
+    if pkg_dir == module:
+        return "."
+    return pkg_dir[len(module) + 1:]
+
+
+def _nearest_module_root(
+    pkg_dir: str, is_module_root: Callable[[str], bool]
+) -> str | None:
+    cur = pkg_dir
+    while True:
+        if is_module_root(cur):
+            return cur
+        if cur == ".":
+            return None
+        cur = cur.rsplit("/", 1)[0] if "/" in cur else "."

@@ -18,7 +18,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .source_set import files_to_go_packages
+from .source_set import (
+    files_to_go_packages,
+    group_go_packages_by_module,
+    module_relative,
+)
 
 ArgvBuilder = Callable[[Path, Path, list[str]], list[str]]
 
@@ -128,6 +132,8 @@ def _run_one(
     repo_root: Path,
     tackbox_root: Path,
 ) -> EngineResult:
+    if engine.package_mode:
+        return _run_per_module(engine, args, repo_root, tackbox_root)
     argv = engine.build_argv(repo_root, tackbox_root, args)
     env = hermetic_env() if is_hermetic() else None
     completed = subprocess.run(
@@ -145,28 +151,86 @@ def _run_one(
     )
 
 
+def _run_per_module(
+    engine: EngineSpec,
+    args: list[str],
+    repo_root: Path,
+    tackbox_root: Path,
+) -> EngineResult:
+    """One subprocess per Go module, cwd at the module root.
+
+    `go list`-style patterns resolve against the module containing cwd,
+    so packages from different modules cannot share one invocation.
+    """
+    groups, orphans = group_go_packages_by_module(
+        args, lambda d: (repo_root / d / "go.mod").is_file()
+    )
+    env = hermetic_env() if is_hermetic() else None
+    max_code = 0
+    outs: list[str] = []
+    errs: list[str] = []
+    for module in sorted(groups):
+        rel = [module_relative(module, p) for p in groups[module]]
+        argv = engine.build_argv(repo_root, tackbox_root, rel)
+        completed = subprocess.run(
+            argv,
+            cwd=repo_root / module,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        max_code = max(max_code, normalize_exit_code(completed.returncode))
+        outs.append(completed.stdout.decode("utf-8", errors="replace"))
+        errs.append(completed.stderr.decode("utf-8", errors="replace"))
+    for pkg in orphans:
+        errs.append(f"no enclosing go.mod, skipped: {pkg}\n")
+    return EngineResult(
+        engine_id=engine.id,
+        exit_code=max_code,
+        stdout="".join(outs),
+        stderr="".join(errs),
+    )
+
+
 def parse_erclint_findings(raw: str) -> list[dict]:
     """Flatten erclint's -json output into a list of findings.
 
-    Empty input, blank input, or JSON `{}` yield an empty list. Analyzer
-    load errors (`{"error": "..."}` in place of a finding list) bubble up
-    as ValueError - dev mode never silently drops them.
+    Empty input, blank input, or JSON `{}` yield an empty list. Multiple
+    concatenated JSON objects (one per module run) are merged - import
+    paths are globally unique. Analyzer load errors (`{"error": "..."}`
+    in place of a finding list) bubble up as ValueError - dev mode never
+    silently drops them.
     """
     text = raw.strip()
     if not text:
         return []
-    doc = json.loads(text)
     findings: list[dict] = []
-    for pkg, analyzers in doc.items():
-        for analyzer, payload in analyzers.items():
-            if isinstance(payload, dict) and "error" in payload:
-                raise ValueError(
-                    f"erclint analyzer {analyzer!r} failed for {pkg!r}: "
-                    f"{payload['error']}"
-                )
-            for item in payload:
-                findings.append({"pkg": pkg, "analyzer": analyzer, **item})
+    for doc in iter_json_objects(text):
+        for pkg, analyzers in doc.items():
+            for analyzer, payload in analyzers.items():
+                if isinstance(payload, dict) and "error" in payload:
+                    raise ValueError(
+                        f"erclint analyzer {analyzer!r} failed for {pkg!r}: "
+                        f"{payload['error']}"
+                    )
+                for item in payload:
+                    findings.append({"pkg": pkg, "analyzer": analyzer, **item})
     return findings
+
+
+def iter_json_objects(text: str):
+    """Iterate over concatenated top-level JSON objects in `text`."""
+    decoder = json.JSONDecoder()
+    idx = 0
+    n = len(text)
+    while idx < n:
+        while idx < n and text[idx].isspace():
+            idx += 1
+        if idx >= n:
+            break
+        obj, end = decoder.raw_decode(text, idx)
+        yield obj
+        idx = end
 
 
 def _has_ext(path: str, exts: frozenset[str]) -> bool:

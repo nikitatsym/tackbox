@@ -16,6 +16,7 @@ from tackbox.source_set import (
     SourceWarning,
     files_to_go_packages,
     filter_source_set,
+    group_go_packages_by_module,
     narrow_by_path,
     parse_git_diff_names,
     parse_ls_files_stage,
@@ -485,3 +486,59 @@ def test_pkgs_non_go_files_ignored():
 
 def test_pkgs_test_files_included_as_go():
     assert files_to_go_packages(["pkg/foo_test.go"]) == ["pkg"]
+
+
+# -- group_go_packages_by_module -------------------------------------------
+
+
+def _roots(*dirs: str):
+    return lambda d: d in dirs
+
+
+def test_group_empty():
+    assert group_go_packages_by_module([], _roots(".")) == ({}, [])
+
+
+def test_group_root_module():
+    groups, orphans = group_go_packages_by_module(["pkg", "."], _roots("."))
+    assert groups == {".": [".", "pkg"]}
+    assert orphans == []
+
+
+def test_group_nested_module():
+    groups, orphans = group_go_packages_by_module(
+        ["go/a", "go/b/c"], _roots("go")
+    )
+    assert groups == {"go": ["go/a", "go/b/c"]}
+    assert orphans == []
+
+
+def test_group_module_root_is_its_own_package():
+    groups, orphans = group_go_packages_by_module(["go"], _roots("go"))
+    assert groups == {"go": ["go"]}
+    assert orphans == []
+
+
+def test_group_two_modules_and_orphan():
+    groups, orphans = group_go_packages_by_module(
+        ["alpha/pkg", "beta/lib", "scripts"], _roots("alpha", "beta")
+    )
+    assert groups == {"alpha": ["alpha/pkg"], "beta": ["beta/lib"]}
+    assert orphans == ["scripts"]
+
+
+def test_group_nearest_module_wins():
+    """Go allows nested modules; the innermost go.mod owns the package."""
+    groups, orphans = group_go_packages_by_module(
+        ["go/sub/pkg", "go/other"], _roots("go", "go/sub")
+    )
+    assert groups == {"go/sub": ["go/sub/pkg"], "go": ["go/other"]}
+    assert orphans == []
+
+
+def test_group_no_module_anywhere_all_orphans():
+    groups, orphans = group_go_packages_by_module(
+        ["a", "b/c"], _roots()
+    )
+    assert groups == {}
+    assert orphans == ["a", "b/c"]

@@ -27,12 +27,14 @@ engines-hash:
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+from .engines import iter_json_objects
+from .source_set import group_go_packages_by_module, module_relative
 
 
 CACHE_ROOT_ENV = "TACKBOX_CACHE_HOME"
@@ -178,30 +180,52 @@ def gc_soft_cap(engines_hash: str, cap: int, root: Path) -> None:
 # -- erclint package digest -----------------------------------------------
 
 
+class GoListError(RuntimeError):
+    """`go list` failed; message carries the module dir and go's stderr."""
+
+
 def erclint_package_digests(
     repo_root: Path, package_dirs: list[str]
 ) -> dict[str, str]:
     """Compute {package_dir: unit_digest} for erclint units.
 
-    Runs `go list -deps -json` once for all requested packages, filters to
-    same-module deps, then hashes each package's own .go files together with
-    the .go files of its transitive in-module deps plus go.mod / go.sum. A
-    change to any file that erclint would see for a package flips the digest.
+    Packages are grouped by their nearest enclosing go.mod and digested
+    per module: `go list -deps -json` runs with cwd at the module root,
+    and the module's own go.mod / go.sum enter the digest, so invalidation
+    never crosses a module boundary. Each package's own .go files hash
+    together with the .go files of its transitive in-module deps.
 
-    Missing / not-a-package entries are dropped from the returned map; the
-    caller decides what to do (usually: skip caching for that entry).
+    Missing / not-a-package / no-enclosing-module entries are dropped from
+    the returned map; the caller decides what to do (usually: skip caching
+    for that entry).
     """
     if not package_dirs:
         return {}
-    args = [f"./{p}" for p in package_dirs]
+    groups, _orphans = group_go_packages_by_module(
+        package_dirs, lambda d: (repo_root / d / "go.mod").is_file()
+    )
+    result: dict[str, str] = {}
+    for module in sorted(groups):
+        result.update(_module_digests(repo_root, module, groups[module]))
+    return result
+
+
+def _module_digests(
+    repo_root: Path, module: str, package_dirs: list[str]
+) -> dict[str, str]:
+    module_dir = repo_root / module
+    args = [f"./{module_relative(module, p)}" for p in package_dirs]
     completed = subprocess.run(
         ["go", "list", "-deps", "-json", *args],
-        cwd=repo_root,
+        cwd=module_dir,
         capture_output=True,
         text=True,
-        check=True,
     )
-    pkgs = list(_iter_json_objects(completed.stdout))
+    if completed.returncode != 0:
+        raise GoListError(
+            f"go list failed in {module}: {completed.stderr.strip()}"
+        )
+    pkgs = list(iter_json_objects(completed.stdout))
 
     our_module = _module_path_from_pkgs(pkgs)
     if our_module is None:
@@ -233,8 +257,8 @@ def erclint_package_digests(
             if f not in file_digest and f.is_file():
                 file_digest[f] = sha256_file(f)
 
-    go_mod_digest = _optional_file_digest(repo_root / "go.mod")
-    go_sum_digest = _optional_file_digest(repo_root / "go.sum")
+    go_mod_digest = _optional_file_digest(module_dir / "go.mod")
+    go_sum_digest = _optional_file_digest(module_dir / "go.sum")
 
     dir_to_import: dict[str, str] = {}
     repo_resolved = repo_root.resolve()
@@ -263,25 +287,32 @@ def erclint_import_paths(
     """Return {package_dir: import_path}. Used to interpret erclint findings."""
     if not package_dirs:
         return {}
-    args = [f"./{p}" for p in package_dirs]
-    completed = subprocess.run(
-        ["go", "list", "-json", *args],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=True,
+    groups, _orphans = group_go_packages_by_module(
+        package_dirs, lambda d: (repo_root / d / "go.mod").is_file()
     )
-    pkgs = list(_iter_json_objects(completed.stdout))
     repo_resolved = repo_root.resolve()
     result: dict[str, str] = {}
-    for p in pkgs:
-        try:
-            rel = Path(p["Dir"]).resolve().relative_to(repo_resolved)
-        except ValueError:
-            continue
-        key = str(rel) if str(rel) != "." else "."
-        if key in package_dirs:
-            result[key] = p["ImportPath"]
+    for module in sorted(groups):
+        module_pkgs = groups[module]
+        args = [f"./{module_relative(module, p)}" for p in module_pkgs]
+        completed = subprocess.run(
+            ["go", "list", "-json", *args],
+            cwd=repo_root / module,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise GoListError(
+                f"go list failed in {module}: {completed.stderr.strip()}"
+            )
+        for p in iter_json_objects(completed.stdout):
+            try:
+                rel = Path(p["Dir"]).resolve().relative_to(repo_resolved)
+            except ValueError:
+                continue
+            key = str(rel) if str(rel) != "." else "."
+            if key in module_pkgs:
+                result[key] = p["ImportPath"]
     return result
 
 
@@ -334,18 +365,3 @@ def _module_path_from_pkgs(pkgs: list[dict]) -> str | None:
         if path:
             return path
     return None
-
-
-def _iter_json_objects(text: str):
-    """Iterate over concatenated top-level JSON objects in `text`."""
-    decoder = json.JSONDecoder()
-    idx = 0
-    n = len(text)
-    while idx < n:
-        while idx < n and text[idx].isspace():
-            idx += 1
-        if idx >= n:
-            break
-        obj, end = decoder.raw_decode(text, idx)
-        yield obj
-        idx = end
