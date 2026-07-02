@@ -29,8 +29,6 @@ _SUPPORTED_PLATFORMS = {
     ("linux", "amd64"): "linux-x86_64",
     ("linux", "aarch64"): "linux-aarch64",
     ("linux", "arm64"): "linux-aarch64",
-    ("darwin", "x86_64"): "macos-x86_64",
-    ("darwin", "amd64"): "macos-x86_64",
     ("darwin", "arm64"): "macos-aarch64",
     ("darwin", "aarch64"): "macos-aarch64",
     ("windows", "x86_64"): "windows-x86_64",
