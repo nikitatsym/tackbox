@@ -23,3 +23,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 *.egg-info/
+
+# tackbox dev-mode binary cache
+.tackbox-dev/

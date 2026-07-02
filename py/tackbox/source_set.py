@@ -50,7 +50,8 @@ class SourceWarning:
 def parse_ls_files_stage(raw: bytes) -> list[IndexEntry]:
     """Parse `git ls-files -s -z`.
 
-    Row format: `<mode> <sha> <stage>\\t<path>\\0`.
+    Row format: `<mode> <sha> <stage>\\t<path>\\0`. Header must have
+    exactly three space-separated fields; anything else is malformed.
     """
     entries: list[IndexEntry] = []
     for row in raw.split(b"\0"):
@@ -59,7 +60,10 @@ def parse_ls_files_stage(raw: bytes) -> list[IndexEntry]:
         header, sep, path = row.partition(b"\t")
         if not sep:
             raise ValueError(f"malformed ls-files -s row: {row!r}")
-        mode_bytes = header.split(b" ", 1)[0]
+        header_fields = header.split(b" ")
+        if len(header_fields) != 3:
+            raise ValueError(f"malformed ls-files -s header: {header!r}")
+        mode_bytes = header_fields[0]
         entries.append(
             IndexEntry(path=path.decode("utf-8"), mode=int(mode_bytes, 8))
         )

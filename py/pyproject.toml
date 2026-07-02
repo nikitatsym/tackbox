@@ -8,6 +8,9 @@ version = "0.0.0"
 description = "Universal lints + capture helpers driven by a hermetic Python CLI."
 requires-python = ">=3.11"
 
+[project.scripts]
+tackbox = "tackbox.cli:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["tackbox"]
 
