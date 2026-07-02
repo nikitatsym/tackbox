@@ -75,6 +75,11 @@ def parse_ls_files_untracked(raw: bytes) -> list[str]:
     return [p.decode("utf-8") for p in raw.split(b"\0") if p]
 
 
+def parse_git_diff_names(raw: bytes) -> list[str]:
+    """Parse `git diff --name-only -z` output (NUL-separated paths)."""
+    return [p.decode("utf-8") for p in raw.split(b"\0") if p]
+
+
 def validate_path(path: str) -> None:
     if path == "":
         raise PathspecMagicError("empty path")
@@ -117,12 +122,19 @@ def filter_source_set(
     scope: str,
     exists: Callable[[str], bool],
     is_symlink: Callable[[str], bool],
+    changed_scope: set[str] | None = None,
 ) -> tuple[list[str], list[SourceWarning]]:
-    """Apply edge-case filtering, then narrow by scope.
+    """Apply edge-case filtering, then intersect with changed_scope, then
+    narrow by `scope`.
 
     `exists` and `is_symlink` are injected because pure logic must not
     touch the filesystem; production wiring passes os.path.exists /
     os.path.islink from the CLI layer.
+
+    `changed_scope=None` returns the full source set. A set (including
+    empty) restricts the result to files that also appear in it. Edge-case
+    pruning (gitlink / symlink / missing worktree) still runs first, so a
+    diff entry for e.g. a submodule pointer cannot sneak past.
     """
     validate_path(scope)
 
@@ -145,8 +157,10 @@ def filter_source_set(
 
     untracked: list[str] = [p for p in untracked_paths if not is_symlink(p)]
 
-    combined = sorted(set(tracked) | set(untracked))
-    return narrow_by_path(combined, scope), warnings
+    combined = set(tracked) | set(untracked)
+    if changed_scope is not None:
+        combined &= changed_scope
+    return narrow_by_path(sorted(combined), scope), warnings
 
 
 def files_to_go_packages(paths: Iterable[str]) -> list[str]:
