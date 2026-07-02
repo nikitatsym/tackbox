@@ -116,6 +116,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # macos-14 does not ship Go by default; the fixture repo has .go files,
+      # and `tackbox doctor` fails go-toolchain check without it.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
       - uses: astral-sh/setup-uv@v5
 
       - name: Download platform wheels
@@ -271,6 +277,12 @@ jobs:
             runner: windows-2022
     steps:
       - uses: actions/checkout@v4
+
+      # macos-14 does not ship Go by default; the fixture repo has .go files,
+      # and `tackbox doctor` fails go-toolchain check without it.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
 
       - uses: astral-sh/setup-uv@v5
 
