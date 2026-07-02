@@ -1,10 +1,4 @@
-"""tackbox lint CLI entry point.
-
-Dev mode: locates its own source tree relative to __file__ to find
-the Go binaries and Node scripts. The hermetic-wheels step swaps this
-for wheel-bundled resources; the CLI shape (argv, exit codes, banner)
-stays.
-"""
+"""tackbox lint / doctor CLI entry point."""
 
 from __future__ import annotations
 
@@ -13,14 +7,17 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import __version__, cache
+from . import __version__, cache, doctor
 from .engines import (
-    DEV_ENGINES,
     EngineResult,
     EngineSpec,
+    active_engines,
     dispatch,
+    engines_hash_hermetic,
+    is_hermetic,
     parse_erclint_findings,
     resolve_dev_versions,
+    resolve_hermetic_versions,
     run_engines,
 )
 from .source_set import (
@@ -35,14 +32,17 @@ _BANNER_ORDER = ("erclint", "opengrep", "node", "eslint", "markdownlint")
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_argv(sys.argv[1:] if argv is None else argv)
-    if args.command != "lint":
-        print(f"tackbox: unknown command {args.command!r}", file=sys.stderr)
-        return 2
-    try:
-        return _run_lint(args.path, no_cache=args.no_cache)
-    except PathspecMagicError as e:
-        print(f"tackbox: {e}", file=sys.stderr)
-        return 2
+    if args.command == "lint":
+        try:
+            return _run_lint(args.path, no_cache=args.no_cache)
+        except PathspecMagicError as e:
+            print(f"tackbox: {e}", file=sys.stderr)
+            return 2
+    if args.command == "doctor":
+        _print_banner(_tackbox_root())
+        return doctor.run(sys.stdout)
+    print(f"tackbox: unknown command {args.command!r}", file=sys.stderr)
+    return 2
 
 
 def _parse_argv(argv: list[str]) -> argparse.Namespace:
@@ -55,12 +55,17 @@ def _parse_argv(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="ignore and do not write the (unit, engine) cache",
     )
+    sub.add_parser("doctor", help="verify the hermetic install is functional")
     return parser.parse_args(argv)
+
+
+def _tackbox_root() -> Path:
+    return Path(__file__).resolve().parents[2]
 
 
 def _run_lint(scope: str, no_cache: bool) -> int:
     repo_root = _find_repo_root()
-    tackbox_root = Path(__file__).resolve().parents[2]
+    tackbox_root = _tackbox_root()
 
     files, warnings = _collect_source_set(repo_root, scope)
     for w in warnings:
@@ -75,7 +80,7 @@ def _run_lint(scope: str, no_cache: bool) -> int:
 
     _print_banner(tackbox_root)
 
-    plan = dispatch(files, DEV_ENGINES)
+    plan = dispatch(files, active_engines())
     if not plan:
         return 0
 
@@ -88,7 +93,7 @@ def _run_lint(scope: str, no_cache: bool) -> int:
         results = run_engines(plan, repo_root, tackbox_root)
     else:
         cache_root = cache.default_cache_root()
-        engines_hash = cache.engines_hash_dev(tackbox_root)
+        engines_hash = engines_hash_hermetic() if is_hermetic() else cache.engines_hash_dev(tackbox_root)
         cache.gc_stale_engines(engines_hash, cache_root)
 
         filtered_plan, pending = _apply_cache(plan, repo_root, engines_hash, cache_root)
@@ -259,9 +264,14 @@ def _find_repo_root() -> Path:
 
 
 def _print_banner(tackbox_root: Path) -> None:
-    versions = resolve_dev_versions(tackbox_root)
+    if is_hermetic():
+        versions = resolve_hermetic_versions()
+        engines_id = f"sha256:{engines_hash_hermetic()}"
+    else:
+        versions = resolve_dev_versions(tackbox_root)
+        engines_id = "dev"
     parts = " ".join(f"{k}={versions[k]}" for k in _BANNER_ORDER)
-    print(f"tackbox {__version__} engines=dev {parts}", file=sys.stderr)
+    print(f"tackbox {__version__} engines={engines_id} {parts}", file=sys.stderr)
 
 
 if __name__ == "__main__":

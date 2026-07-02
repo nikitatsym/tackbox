@@ -1,21 +1,19 @@
 """Engine registry, dispatch, and parallel subprocess runner.
 
-Dev mode: engines are locally-built binaries (Go) and Node scripts under
-the tackbox source tree. The hermetic-wheels step will replace this registry
-with wheel-bundled binaries; the public shape of dispatch/run stays the same.
+Two registries share the dispatch shape: DEV_ENGINES (source checkout)
+and HERMETIC_ENGINES (installed wheel with tackbox_engines).
 
-Exit-code semantics:
-- Each engine's subprocess return code is normalized: a negative value
-  (Python maps signal-kill to `-sig`) becomes `128 + sig`.
-- The aggregate CLI exit is `max` of the normalized codes; zero engines
-  dispatched is exit 0.
+Signal-killed subprocess exit code is normalized to `128 + sig`
+(Python maps signal-kill to `-sig`).
 """
 
 from __future__ import annotations
 
 import concurrent.futures
 import json
+import os
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -23,6 +21,38 @@ from typing import Callable
 from .source_set import files_to_go_packages
 
 ArgvBuilder = Callable[[Path, Path, list[str]], list[str]]
+
+_TACKBOX_PKG_ROOT = Path(__file__).parent
+
+
+def is_hermetic() -> bool:
+    if not (_TACKBOX_PKG_ROOT / "engines.json").is_file():
+        return False
+    try:
+        import tackbox_engines  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def hermetic_engines_root() -> Path:
+    import tackbox_engines
+
+    return tackbox_engines.root()
+
+
+def hermetic_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    env = dict(base if base is not None else os.environ)
+    er = hermetic_engines_root()
+    bin_dir = er / "bin"
+    node_modules = er / "vendor" / "node_modules"
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+    env["NODE_PATH"] = str(node_modules)
+    return env
+
+
+def exe_name(name: str) -> str:
+    return f"{name}.exe" if sys.platform.startswith("win") else name
 
 
 @dataclass(frozen=True)
@@ -99,9 +129,11 @@ def _run_one(
     tackbox_root: Path,
 ) -> EngineResult:
     argv = engine.build_argv(repo_root, tackbox_root, args)
+    env = hermetic_env() if is_hermetic() else None
     completed = subprocess.run(
         argv,
         cwd=repo_root,
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
@@ -278,3 +310,99 @@ DEV_ENGINES: list[EngineSpec] = [
         build_argv=_tackbox_mdlint_argv,
     ),
 ]
+
+
+# --- Hermetic-mode engine specs -------------------------------------------
+
+
+def _hermetic_erclint_bin(name: str) -> Path:
+    return _TACKBOX_PKG_ROOT / "bin" / exe_name(name)
+
+
+def _hermetic_node_bin() -> Path:
+    return hermetic_engines_root() / "bin" / exe_name("node")
+
+
+def _hermetic_rule_script(name: str) -> Path:
+    return _TACKBOX_PKG_ROOT / "rules" / "bin" / name
+
+
+def _erclint_argv_hermetic(_repo_root: Path, _tackbox_root: Path, pkgs: list[str]) -> list[str]:
+    return [str(_hermetic_erclint_bin("erclint")), "-json", *(f"./{p}" for p in pkgs)]
+
+
+def _erclint_opengrep_argv_hermetic(
+    _repo_root: Path, _tackbox_root: Path, files: list[str]
+) -> list[str]:
+    return [str(_hermetic_erclint_bin("erclint-opengrep")), *files]
+
+
+def _tackbox_eslint_argv_hermetic(
+    _repo_root: Path, _tackbox_root: Path, files: list[str]
+) -> list[str]:
+    return [
+        str(_hermetic_node_bin()),
+        str(_hermetic_rule_script("tackbox-eslint.js")),
+        *files,
+    ]
+
+
+def _tackbox_mdlint_argv_hermetic(
+    _repo_root: Path, _tackbox_root: Path, files: list[str]
+) -> list[str]:
+    return [
+        str(_hermetic_node_bin()),
+        str(_hermetic_rule_script("tackbox-mdlint.js")),
+        *files,
+    ]
+
+
+HERMETIC_ENGINES: list[EngineSpec] = [
+    EngineSpec(
+        id="erclint",
+        extensions=_GO_EXTS,
+        build_argv=_erclint_argv_hermetic,
+        package_mode=True,
+        path_filter=_drop_go_testdata,
+    ),
+    EngineSpec(
+        id="erclint-opengrep",
+        extensions=_OPENGREP_EXTS,
+        build_argv=_erclint_opengrep_argv_hermetic,
+        path_filter=_drop_go_testdata,
+    ),
+    EngineSpec(
+        id="tackbox-eslint",
+        extensions=_JS_EXTS,
+        build_argv=_tackbox_eslint_argv_hermetic,
+    ),
+    EngineSpec(
+        id="tackbox-mdlint",
+        extensions=_MD_EXTS,
+        build_argv=_tackbox_mdlint_argv_hermetic,
+    ),
+]
+
+
+def active_engines() -> list[EngineSpec]:
+    return HERMETIC_ENGINES if is_hermetic() else DEV_ENGINES
+
+
+def load_engines_json() -> dict:
+    return json.loads((_TACKBOX_PKG_ROOT / "engines.json").read_text())
+
+
+def resolve_hermetic_versions() -> dict[str, str]:
+    data = load_engines_json()
+    versions = {e["id"]: e.get("version", "?") for e in data.get("engines", [])}
+    return {
+        "erclint": versions.get("erclint", "?"),
+        "opengrep": versions.get("opengrep", "?"),
+        "node": versions.get("node", "?"),
+        "eslint": versions.get("eslint", "?"),
+        "markdownlint": versions.get("markdownlint", "?"),
+    }
+
+
+def engines_hash_hermetic() -> str:
+    return load_engines_json().get("payload_sha256", "?")

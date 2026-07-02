@@ -1,0 +1,130 @@
+{
+  "schema": 1,
+  "platforms": {
+    "linux-x86_64": {
+      "wheel_plat": "manylinux_2_28_x86_64",
+      "node": {
+        "version": "22.18.0",
+        "source_url": "https://nodejs.org/dist/v22.18.0/node-v22.18.0-linux-x64.tar.xz",
+        "archive_sha256": "c1bfeecf1d7404fa74728f9db72e697decbd8119ccc6f5a294d795756dfcfca7",
+        "archive_member": "node-v22.18.0-linux-x64/bin/node",
+        "bin_name": "node"
+      },
+      "opengrep": {
+        "version": "1.25.0",
+        "source_url": "https://github.com/opengrep/opengrep/releases/download/v1.25.0/opengrep_manylinux_x86",
+        "archive_sha256": "9ac4aebb47ba3f7b0d8fc641ac8749cb6c2f253f616131a67d9631e00d4bea33",
+        "bin_name": "opengrep"
+      }
+    },
+    "linux-aarch64": {
+      "wheel_plat": "manylinux_2_28_aarch64",
+      "node": {
+        "version": "22.18.0",
+        "source_url": "https://nodejs.org/dist/v22.18.0/node-v22.18.0-linux-arm64.tar.xz",
+        "archive_sha256": "04fca1b9afecf375f26b41d65d52aa1703a621abea5a8948c7d1e351e85edade",
+        "archive_member": "node-v22.18.0-linux-arm64/bin/node",
+        "bin_name": "node"
+      },
+      "opengrep": {
+        "version": "1.25.0",
+        "source_url": "https://github.com/opengrep/opengrep/releases/download/v1.25.0/opengrep_manylinux_aarch64",
+        "archive_sha256": "fd40124272d006082a5594b19aecee07b01dd50933d8add7a4fd5c557d2be5f6",
+        "bin_name": "opengrep"
+      }
+    },
+    "macos-x86_64": {
+      "wheel_plat": "macosx_11_0_x86_64",
+      "node": {
+        "version": "22.18.0",
+        "source_url": "https://nodejs.org/dist/v22.18.0/node-v22.18.0-darwin-x64.tar.xz",
+        "archive_sha256": "76e4a1997da953dbf8e21f6ed1c4dd7eceb39deb96defe3b3e9d8f786ee287a8",
+        "archive_member": "node-v22.18.0-darwin-x64/bin/node",
+        "bin_name": "node"
+      },
+      "opengrep": {
+        "version": "1.25.0",
+        "source_url": "https://github.com/opengrep/opengrep/releases/download/v1.25.0/opengrep_osx_x86",
+        "archive_sha256": "fa2487b75527be1cc9ae4f9b0cb09a340454e7973c76785568285cbbcd977cb4",
+        "bin_name": "opengrep"
+      }
+    },
+    "macos-aarch64": {
+      "wheel_plat": "macosx_11_0_arm64",
+      "node": {
+        "version": "22.18.0",
+        "source_url": "https://nodejs.org/dist/v22.18.0/node-v22.18.0-darwin-arm64.tar.xz",
+        "archive_sha256": "6616f388e127c858989fc7fa92879cdb20d2a5d446adbfdca6ee4feb385bfa8a",
+        "archive_member": "node-v22.18.0-darwin-arm64/bin/node",
+        "bin_name": "node"
+      },
+      "opengrep": {
+        "version": "1.25.0",
+        "source_url": "https://github.com/opengrep/opengrep/releases/download/v1.25.0/opengrep_osx_arm64",
+        "archive_sha256": "3543fcabae9db2ae5bc974a3b75426353f0a3e369181b2157ef27f46867996c8",
+        "bin_name": "opengrep"
+      }
+    },
+    "windows-x86_64": {
+      "wheel_plat": "win_amd64",
+      "node": {
+        "version": "22.18.0",
+        "source_url": "https://nodejs.org/dist/v22.18.0/node-v22.18.0-win-x64.zip",
+        "archive_sha256": "c95d8a7e1c99e669cc08c9f1176e068c1f50847c37908fcb8c35b62482366511",
+        "archive_member": "node-v22.18.0-win-x64/node.exe",
+        "bin_name": "node.exe"
+      },
+      "opengrep": {
+        "version": "1.25.0",
+        "source_url": "https://github.com/opengrep/opengrep/releases/download/v1.25.0/opengrep_windows_x86.exe",
+        "archive_sha256": "b010709bb790086083442eabe9a0b6bf48064ed87cdf808591baecdb60ccdf73",
+        "bin_name": "opengrep.exe"
+      }
+    }
+  },
+  "licenses": {
+    "node": {
+      "spdx": "MIT",
+      "notice": "Node.js is licensed under the MIT License. Copyright Node.js contributors. See https://github.com/nodejs/node/blob/main/LICENSE."
+    },
+    "opengrep": {
+      "spdx": "LGPL-2.1",
+      "notice": "opengrep is licensed under LGPL-2.1. Source: https://github.com/opengrep/opengrep."
+    }
+  },
+  "npm_deps": {
+    "manifest": "vendor/package.json",
+    "top_level": {
+      "eslint": {
+        "constraint": "^9.0.0",
+        "kind": "npm",
+        "license": "MIT",
+        "purpose": "JS/TS/Svelte linter runtime"
+      },
+      "markdownlint": {
+        "constraint": "0.40.0",
+        "kind": "npm",
+        "license": "MIT",
+        "purpose": "Markdown linter runtime"
+      },
+      "@typescript-eslint/parser": {
+        "constraint": "^8.0.0",
+        "kind": "npm",
+        "license": "MIT",
+        "purpose": "TypeScript ESLint parser"
+      },
+      "svelte-eslint-parser": {
+        "constraint": "^0.43.0",
+        "kind": "npm",
+        "license": "MIT",
+        "purpose": "Svelte ESLint parser"
+      },
+      "svelte": {
+        "constraint": "^5.0.0",
+        "kind": "npm",
+        "license": "MIT",
+        "purpose": "Svelte parser peer"
+      }
+    }
+  }
+}

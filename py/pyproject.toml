@@ -1,18 +1,31 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "tackbox"
-version = "0.0.0"
 description = "Universal lints + capture helpers driven by a hermetic Python CLI."
 requires-python = ">=3.11"
+license = { text = "MIT" }
+dynamic = ["version", "dependencies"]
 
 [project.scripts]
 tackbox = "tackbox.cli:main"
 
-[tool.hatch.build.targets.wheel]
-packages = ["tackbox"]
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["tackbox*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+"tackbox" = [
+    "bin/*",
+    "rules/**/*",
+    "third_party/**/*",
+    "engines.json",
+]
 
 [dependency-groups]
 dev = ["pytest>=8"]
