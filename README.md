@@ -88,10 +88,16 @@ lives outside this repo (private notes); the public summary:
 By design, the ruleset is a single non-negotiable bundle. There are
 no flags to disable individual rules. Suppressing a finding requires
 the explicit per-site marker (`// no-sentry`, `// parse-skip`,
-`// nil-return`) with a non-empty reason. Capture helpers are matched
-by the last identifier in the call (`sentryErr`, `SentryErr`, `Warn`,
-`Panic`), so both `sentryErr(...)` and `report.SentryErr(...)` are
-recognized.
+`// nil-return`) with a non-empty reason.
+
+Capture helpers are recognized by origin, not by name: a call counts
+only when its callee resolves (type info / import) to the
+`github.com/nikitatsym/tackbox/go/report` (Go) or `tackbox/report`
+(JS/TS) package, or to a function declared in a repo-root
+`.tackbox-reporters` file (`file#function: reason`). A declaration
+names a report sink - it is not an exclude: it disables no rule, and a
+declared call is honored only when the caught error flows into its
+arguments.
 
 ## Layout
 

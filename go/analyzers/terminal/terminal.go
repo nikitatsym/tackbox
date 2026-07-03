@@ -6,6 +6,7 @@ package terminal
 
 import (
 	"go/ast"
+	"go/types"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -36,11 +37,11 @@ func run(pass *analysis.Pass) (interface{}, error) {
 				if m, ok := idx.Above(st); ok && m.Kind == markers.NoSentry {
 					continue
 				}
-				if hasCaptureBefore(block.List[:i]) {
+				if hasCaptureBefore(pass.TypesInfo, block.List[:i]) {
 					continue
 				}
 				pass.Reportf(call.Pos(),
-					"ERC003: terminal exit `%s` must be preceded by sentryErr/Warn/Panic or carry `// no-sentry: <reason>`",
+					"ERC003: terminal exit `%s` must be preceded by a capture (go/report or declared sink) or carry `// no-sentry: <reason>`",
 					astutil.QualifiedName(call.Fun))
 			}
 			return true
@@ -67,10 +68,10 @@ func terminalCall(st ast.Stmt) (*ast.CallExpr, bool) {
 	return nil, false
 }
 
-func hasCaptureBefore(stmts []ast.Stmt) bool {
+func hasCaptureBefore(info *types.Info, stmts []ast.Stmt) bool {
 	for _, st := range stmts {
 		call, ok := callFromStmt(st)
-		if ok && astutil.IsCapture(call) {
+		if ok && astutil.IsCapture(info, call, "") {
 			return true
 		}
 	}

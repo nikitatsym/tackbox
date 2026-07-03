@@ -9,6 +9,7 @@ package parsenil
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -129,7 +130,7 @@ func handleErrParserAssign(pass *analysis.Pass, idx *markers.Index, assign *ast.
 			callee, errName)
 		return
 	}
-	if !hasCaptureInBody(ifst.Body) {
+	if !hasCaptureInBody(pass.TypesInfo, ifst.Body, errName) {
 		pass.Reportf(ifst.Pos(),
 			"ERC002: %s err-branch must capture or carry `// parse-skip: <reason>` (err=%s)",
 			callee, errName)
@@ -150,7 +151,7 @@ func handleErrParserShort(pass *analysis.Pass, idx *markers.Index, ifst *ast.IfS
 	if astutil.ErrIdentFromIfCond(ifst.Cond) != errName {
 		return
 	}
-	if !hasCaptureInBody(ifst.Body) {
+	if !hasCaptureInBody(pass.TypesInfo, ifst.Body, errName) {
 		pass.Reportf(ifst.Pos(),
 			"ERC002: %s err-branch must capture or carry `// parse-skip: <reason>` (err=%s)",
 			callee, errName)
@@ -174,7 +175,7 @@ func handleParseIPAssign(pass *analysis.Pass, idx *markers.Index, assign *ast.As
 			valName)
 		return
 	}
-	if !hasCaptureInBody(ifst.Body) {
+	if !hasCaptureInBody(pass.TypesInfo, ifst.Body, valName) {
 		pass.Reportf(ifst.Pos(),
 			"ERC002: net.ParseIP nil-branch must capture or carry `// parse-skip: <reason>` (val=%s)",
 			valName)
@@ -194,7 +195,7 @@ func handleParseIPShort(pass *analysis.Pass, idx *markers.Index, ifst *ast.IfStm
 	if !condIsValEqNil(ifst.Cond, valName) {
 		return
 	}
-	if !hasCaptureInBody(ifst.Body) {
+	if !hasCaptureInBody(pass.TypesInfo, ifst.Body, valName) {
 		pass.Reportf(ifst.Pos(),
 			"ERC002: net.ParseIP nil-branch must capture or carry `// parse-skip: <reason>` (val=%s)",
 			valName)
@@ -272,9 +273,9 @@ func matchIdentVsNil(side, other ast.Expr, name string) bool {
 	return ok && nilId.Name == "nil"
 }
 
-func hasCaptureInBody(body *ast.BlockStmt) bool {
+func hasCaptureInBody(info *types.Info, body *ast.BlockStmt, name string) bool {
 	for _, call := range astutil.BlockCalls(body) {
-		if astutil.IsCapture(call) {
+		if astutil.IsCapture(info, call, name) {
 			return true
 		}
 	}

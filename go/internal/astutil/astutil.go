@@ -4,34 +4,101 @@ package astutil
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
 )
 
-// CaptureNames are function names that count as a capture site.
-// Match is on the last identifier of the call expression, so both
-// bare `sentryErr(...)` and `report.SentryErr(...)` are matched.
-var CaptureNames = map[string]bool{
-	"sentryErr": true, // gmux-style unexported helper
-	"SentryErr": true, // exported (e.g. report.SentryErr)
-	"Warn":      true,
-	"Panic":     true,
+// reportPkgPath is the canonical capture-helper package. A call is a
+// capture only when its callee resolves (type info) into this package -
+// name-only matching is dead.
+const reportPkgPath = "github.com/nikitatsym/tackbox/go/report"
+
+// Capture tables are package-gated: an export of go/report counts only by
+// this explicit list, never by signature inference. error-capture conflicts
+// with `return err` (ERC005); panic-capture is terminal and does not.
+var reportErrCapture = map[string]bool{"SentryErr": true, "Warn": true}
+var reportPanicCapture = map[string]bool{"Panic": true}
+
+// DeclaredReporter is a `.tackbox-reporters` sink resolved to its package
+// path and function name. A call to it captures when the caught error flows
+// into the call's arguments (argument-flow).
+type DeclaredReporter struct {
+	PkgPath string
+	Name    string
 }
 
-// CaptureErrNames is CaptureNames minus Panic — used by
-// doublecapture to distinguish error-capture (which conflicts with
-// `return err`) from terminal panic-capture.
-var CaptureErrNames = map[string]bool{
-	"sentryErr": true,
-	"SentryErr": true,
-	"Warn":      true,
+var declaredReporters []DeclaredReporter
+
+// SetDeclaredReporters installs the resolved declaration set; called once at
+// startup before analysis.
+func SetDeclaredReporters(ds []DeclaredReporter) { declaredReporters = ds }
+
+type capKind int
+
+const (
+	capNone capKind = iota
+	capErr
+	capPanic
+)
+
+func captureKind(info *types.Info, call *ast.CallExpr, errName string) capKind {
+	fn, ok := calleeFunc(info, call)
+	if !ok || fn.Pkg() == nil {
+		return capNone
+	}
+	if fn.Pkg().Path() == reportPkgPath {
+		if reportErrCapture[fn.Name()] {
+			return capErr
+		}
+		if reportPanicCapture[fn.Name()] {
+			return capPanic
+		}
+		return capNone
+	}
+	for _, d := range declaredReporters {
+		if d.PkgPath == fn.Pkg().Path() && d.Name == fn.Name() && argFlows(call, errName) {
+			return capErr
+		}
+	}
+	return capNone
 }
 
-// IsCaptureErr reports whether call is an error-capture invocation
-// (SentryErr / sentryErr / Warn). Excludes Panic.
-func IsCaptureErr(call *ast.CallExpr) bool {
-	return CaptureErrNames[CalleeName(call.Fun)]
+// calleeFunc resolves call's callee to the *types.Func it denotes.
+func calleeFunc(info *types.Info, call *ast.CallExpr) (*types.Func, bool) {
+	if info == nil {
+		return nil, false
+	}
+	switch fun := call.Fun.(type) {
+	case *ast.Ident:
+		if fn, ok := info.Uses[fun].(*types.Func); ok {
+			return fn, true
+		}
+	case *ast.SelectorExpr:
+		if fn, ok := info.Uses[fun.Sel].(*types.Func); ok {
+			return fn, true
+		}
+	}
+	return nil, false
+}
+
+func argFlows(call *ast.CallExpr, errName string) bool {
+	if errName == "" {
+		return false
+	}
+	for _, arg := range call.Args {
+		if ContainsIdent(arg, errName) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsCaptureErr reports whether call is an error-capture (excludes terminal
+// panic-capture); doublecapture uses it to gate against `return err`.
+func IsCaptureErr(info *types.Info, call *ast.CallExpr, errName string) bool {
+	return captureKind(info, call, errName) == capErr
 }
 
 // CalleeName extracts the final identifier name of a call's Fun
@@ -62,9 +129,9 @@ func QualifiedName(e ast.Expr) string {
 	return ""
 }
 
-// IsCapture reports whether call is a capture invocation by name.
-func IsCapture(call *ast.CallExpr) bool {
-	return CaptureNames[CalleeName(call.Fun)]
+// IsCapture reports whether call is a capture (error or panic capture).
+func IsCapture(info *types.Info, call *ast.CallExpr, errName string) bool {
+	return captureKind(info, call, errName) != capNone
 }
 
 // IsTestFile reports whether the file lives in *_test.go.

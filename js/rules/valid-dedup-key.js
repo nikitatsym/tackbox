@@ -1,6 +1,6 @@
 const {
-  REPORTER_NAMES, REPORTER_FULL, REPORTER_SYNTH,
-  calleeName, isStaticString, staticStringValue, DEDUP_KEY_RE,
+  REPORTER_FULL, REPORTER_SYNTH,
+  tier1ReporterName, isStaticString, staticStringValue, DEDUP_KEY_RE,
 } = require('./_shared')
 
 module.exports = {
@@ -16,8 +16,8 @@ module.exports = {
   create(context) {
     return {
       CallExpression(node) {
-        const name = calleeName(node.callee)
-        if (!REPORTER_NAMES.has(name)) return
+        const name = tier1ReporterName(context, node)
+        if (!name) return
 
         let keyIdx = -1
         if (REPORTER_FULL.has(name)) keyIdx = 3

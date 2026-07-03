@@ -1,6 +1,6 @@
 const {
-  REPORTER_NAMES, REPORTER_FULL, REPORTER_SYNTH,
-  calleeName, isStaticString, staticStringValue,
+  REPORTER_FULL, REPORTER_SYNTH,
+  tier1ReporterName, isStaticString, staticStringValue,
 } = require('./_shared')
 
 const MIN = 15
@@ -24,8 +24,8 @@ module.exports = {
   create(context) {
     return {
       CallExpression(node) {
-        const name = calleeName(node.callee)
-        if (!REPORTER_NAMES.has(name)) return
+        const name = tier1ReporterName(context, node)
+        if (!name) return
 
         const args = node.arguments
         if (args.length < 1) {

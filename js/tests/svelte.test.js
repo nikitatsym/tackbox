@@ -7,11 +7,12 @@ const ruleTester = new RuleTester({
 })
 
 const svelteOpts = { languageOptions: { parser: svelteParser } }
+const IMP = "import { reportError } from 'tackbox/report'\n"
 
 test('no-swallow-catch (Svelte)', () => {
   ruleTester.run('no-swallow-catch', require('../rules/no-swallow-catch'), {
     valid: [
-      { code: '<script>\ntry { f() } catch (e) { reportError("connection lost mid-stream", e) }\n</script>', ...svelteOpts },
+      { code: '<script>\n' + IMP + 'try { f() } catch (e) { reportError("connection lost mid-stream", e) }\n</script>', ...svelteOpts },
     ],
     invalid: [
       { code: '<script>\ntry { f() } catch (e) {}\n</script>', ...svelteOpts, errors: [{ messageId: 'swallow' }] },
@@ -33,11 +34,11 @@ test('no-console-error (Svelte)', () => {
 test('valid-error-report (Svelte)', () => {
   ruleTester.run('valid-error-report', require('../rules/valid-error-report'), {
     valid: [
-      { code: '<script>\nreportError("connection lost mid-stream", err, null, "api.lost")\n</script>', ...svelteOpts },
+      { code: '<script>\n' + IMP + 'reportError("connection lost mid-stream", err, null, "api.lost")\n</script>', ...svelteOpts },
     ],
     invalid: [
       {
-        code: '<script>\nreportError(`oops ${x}`, err, null, "api.lost")\n</script>',
+        code: '<script>\n' + IMP + 'reportError(`oops ${x}`, err, null, "api.lost")\n</script>',
         ...svelteOpts,
         errors: [{ messageId: 'msgNotStatic' }],
       },

@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"net"
 	"strconv"
-)
 
-func sentryErr(area, msg string, err error, tags map[string]string, key string) {}
+	"github.com/nikitatsym/tackbox/go/report"
+)
 
 // --- error-returning parsers, block form ---
 
@@ -14,7 +14,7 @@ func okCapture(data []byte) {
 	var v map[string]any
 	err := json.Unmarshal(data, &v)
 	if err != nil {
-		sentryErr("parse", "config payload", err, nil, "parse.config")
+		report.SentryErr("parse", "config payload", err, nil, "parse.config")
 	}
 }
 
@@ -50,7 +50,7 @@ func violationSchemaDrift(data []byte) {
 
 func okShortFormCapture(s string) {
 	if _, err := strconv.Atoi(s); err != nil {
-		sentryErr("parse", "atoi", err, nil, "parse.atoi")
+		report.SentryErr("parse", "atoi", err, nil, "parse.atoi")
 	}
 }
 
@@ -73,7 +73,7 @@ func violationShortFormNoCapture(s string) error {
 func okParseIPCapture(s string) {
 	v := net.ParseIP(s)
 	if v == nil {
-		sentryErr("net", "bad ip", nil, nil, "net.parseip")
+		report.SentryErr("net", "bad ip", nil, nil, "net.parseip")
 	}
 	_ = v
 }
@@ -105,7 +105,7 @@ func violationParseIPNoCapture(s string) {
 
 func okParseIPShort(s string) {
 	if v := net.ParseIP(s); v == nil {
-		sentryErr("net", "bad ip", nil, nil, "net.parseip")
+		report.SentryErr("net", "bad ip", nil, nil, "net.parseip")
 		_ = v
 	}
 }

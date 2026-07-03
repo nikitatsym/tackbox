@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
 
-from . import __version__, cache, doctor
+from . import __version__, cache, doctor, reporters
 from .engines import (
     EngineResult,
     EngineSpec,
@@ -37,6 +38,20 @@ _BANNER_ORDER = ("erclint", "opengrep", "node", "eslint", "markdownlint")
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return _dispatch(argv)
+    except BrokenPipeError:
+        # Downstream reader closed the pipe (e.g. `tackbox lint | head`).
+        # Point stdout's fd at devnull so the interpreter's atexit flush does
+        # not re-raise, then exit 141 (128 + SIGPIPE) with no traceback.
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except OSError:
+            pass
+        return 141
+
+
+def _dispatch(argv: list[str] | None) -> int:
     args = _parse_argv(sys.argv[1:] if argv is None else argv)
     if args.command == "lint":
         try:
@@ -46,7 +61,12 @@ def main(argv: list[str] | None = None) -> int:
                 changed=args.changed,
                 since=args.since,
             )
-        except (PathspecMagicError, ChangedScopeError, cache.GoListError) as e:
+        except (
+            PathspecMagicError,
+            ChangedScopeError,
+            cache.GoListError,
+            reporters.ReportersError,
+        ) as e:
             print(f"tackbox: {e}", file=sys.stderr)
             return 2
     if args.command == "doctor":
@@ -88,6 +108,7 @@ def _tackbox_root() -> Path:
 def _run_lint(scope: str, no_cache: bool, changed: bool, since: str | None) -> int:
     repo_root = _find_repo_root()
     tackbox_root = _tackbox_root()
+    reporter_pairs = reporters.pairs(reporters.load(repo_root))
 
     changed_scope: set[str] | None = None
     if changed or since is not None:
@@ -122,14 +143,14 @@ def _run_lint(scope: str, no_cache: bool, changed: bool, since: str | None) -> i
         no_cache = True
 
     if no_cache:
-        results = run_engines(plan, repo_root, tackbox_root)
+        results = run_engines(plan, repo_root, tackbox_root, reporter_pairs)
     else:
         cache_root = cache.default_cache_root()
         engines_hash = engines_hash_hermetic() if is_hermetic() else cache.engines_hash_dev(tackbox_root)
         cache.gc_stale_engines(engines_hash, cache_root)
 
         filtered_plan, pending = _apply_cache(plan, repo_root, engines_hash, cache_root)
-        results = run_engines(filtered_plan, repo_root, tackbox_root)
+        results = run_engines(filtered_plan, repo_root, tackbox_root, reporter_pairs)
         _mark_clean_units(results, pending, engines_hash, cache_root)
         cache.gc_soft_cap(engines_hash, cache.SOFT_CAP, cache_root)
 
@@ -144,6 +165,9 @@ def _run_lint(scope: str, no_cache: bool, changed: bool, since: str | None) -> i
             if not r.stderr.endswith("\n"):
                 sys.stderr.write("\n")
 
+    # Flush inside the guarded region so a closed downstream pipe surfaces as
+    # a caught BrokenPipeError (exit 141), not an interpreter-shutdown crash.
+    sys.stdout.flush()
     return _aggregate_exit(results)
 
 

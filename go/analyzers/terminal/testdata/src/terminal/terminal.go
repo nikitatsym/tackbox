@@ -3,16 +3,16 @@ package terminal
 import (
 	"log"
 	"os"
-)
 
-func sentryErr(area, msg string, err error, tags map[string]string, key string) {}
+	"github.com/nikitatsym/tackbox/go/report"
+)
 
 func die(msg string) {}
 
 var bootErr = error(nil)
 
 func okCapture() {
-	sentryErr("boot", "config broken", bootErr, nil, "boot.fatal")
+	report.SentryErr("boot", "config broken", bootErr, nil, "boot.fatal")
 	log.Fatal("config broken")
 }
 

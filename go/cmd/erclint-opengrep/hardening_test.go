@@ -64,6 +64,31 @@ const javaSwallow = `class Handler {
 }
 `
 
+const pyDeclaredCapture = `def handler():
+    try:
+        do_work()
+    except ValueError as e:
+        report_it(e)
+`
+
+const pyDeclaredNoArgFlow = `def handler():
+    try:
+        do_work()
+    except ValueError as e:
+        report_it()
+`
+
+const javaDeclaredCapture = `class Handler {
+    void run() {
+        try {
+            doWork();
+        } catch (Exception e) {
+            reportIt(e);
+        }
+    }
+}
+`
+
 func TestExplicitTestsDirFileYieldsFinding(t *testing.T) {
 	requireOpengrepOnPath(t)
 	bin := buildOpengrepWrapper(t)
@@ -219,6 +244,70 @@ func TestJavaSwallowedExceptionYieldsFinding(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "java-swallowed-exception") {
 		t.Fatalf("expected java-swallowed-exception in stdout:\n%s", stdout)
+	}
+}
+
+func TestPythonDeclaredReporterSuppresses(t *testing.T) {
+	requireOpengrepOnPath(t)
+	bin := buildOpengrepWrapper(t)
+	repo := makeRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "handler.py"), []byte(pyDeclaredCapture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, runErr := runWrapper(t, bin, repo, "--reporters=handler.py#report_it", "handler.py")
+	if runErr != nil {
+		t.Fatalf("declared reporter with $E must suppress; got findings\nstdout=%s\nstderr=%s", stdout, stderr)
+	}
+	if strings.Contains(stdout, "python-swallowed-exception") {
+		t.Fatalf("declared reporter did not suppress the finding:\n%s", stdout)
+	}
+}
+
+func TestPythonDeclaredReporterNoArgFlowYieldsFinding(t *testing.T) {
+	requireOpengrepOnPath(t)
+	bin := buildOpengrepWrapper(t)
+	repo := makeRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "handler.py"), []byte(pyDeclaredNoArgFlow), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, runErr := runWrapper(t, bin, repo, "--reporters=handler.py#report_it", "handler.py")
+	if runErr == nil {
+		t.Fatalf("declared reporter without $E must still be a swallow; got clean\nstdout=%s\nstderr=%s", stdout, stderr)
+	}
+	if !strings.Contains(stdout, "python-swallowed-exception") {
+		t.Fatalf("expected python-swallowed-exception (no argument-flow):\n%s", stdout)
+	}
+}
+
+func TestPythonReporterWithoutDeclarationYieldsFinding(t *testing.T) {
+	requireOpengrepOnPath(t)
+	bin := buildOpengrepWrapper(t)
+	repo := makeRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "handler.py"), []byte(pyDeclaredCapture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, runErr := runWrapper(t, bin, repo, "handler.py")
+	if runErr == nil {
+		t.Fatalf("undeclared name must not suppress; got clean\nstdout=%s\nstderr=%s", stdout, stderr)
+	}
+	if !strings.Contains(stdout, "python-swallowed-exception") {
+		t.Fatalf("expected python-swallowed-exception (no declaration):\n%s", stdout)
+	}
+}
+
+func TestJavaDeclaredReporterSuppresses(t *testing.T) {
+	requireOpengrepOnPath(t)
+	bin := buildOpengrepWrapper(t)
+	repo := makeRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "Handler.java"), []byte(javaDeclaredCapture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, runErr := runWrapper(t, bin, repo, "--reporters=Handler.java#reportIt", "Handler.java")
+	if runErr != nil {
+		t.Fatalf("declared java reporter with $E must suppress; got findings\nstdout=%s\nstderr=%s", stdout, stderr)
+	}
+	if strings.Contains(stdout, "java-swallowed-exception") {
+		t.Fatalf("declared java reporter did not suppress the finding:\n%s", stdout)
 	}
 }
 

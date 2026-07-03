@@ -24,7 +24,11 @@ from .source_set import (
     module_relative,
 )
 
-ArgvBuilder = Callable[[Path, Path, list[str]], list[str]]
+# (repo_root, tackbox_root, args, reporters) -> argv.
+# reporters = (repo-relative-file, function) pairs from .tackbox-reporters.
+ArgvBuilder = Callable[
+    [Path, Path, list[str], "tuple[tuple[str, str], ...]"], list[str]
+]
 
 _TACKBOX_PKG_ROOT = Path(__file__).parent
 
@@ -113,13 +117,16 @@ def run_engines(
     plan: list[tuple[EngineSpec, list[str]]],
     repo_root: Path,
     tackbox_root: Path,
+    reporters: tuple[tuple[str, str], ...] = (),
 ) -> list[EngineResult]:
     """Run each dispatched engine as a subprocess in parallel."""
     if not plan:
         return []
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(plan)) as pool:
         futures = {
-            pool.submit(_run_one, engine, args, repo_root, tackbox_root): engine.id
+            pool.submit(
+                _run_one, engine, args, repo_root, tackbox_root, reporters
+            ): engine.id
             for engine, args in plan
         }
         results = [fut.result() for fut in concurrent.futures.as_completed(futures)]
@@ -131,10 +138,11 @@ def _run_one(
     args: list[str],
     repo_root: Path,
     tackbox_root: Path,
+    reporters: tuple[tuple[str, str], ...] = (),
 ) -> EngineResult:
     if engine.package_mode:
-        return _run_per_module(engine, args, repo_root, tackbox_root)
-    argv = engine.build_argv(repo_root, tackbox_root, args)
+        return _run_per_module(engine, args, repo_root, tackbox_root, reporters)
+    argv = engine.build_argv(repo_root, tackbox_root, args, reporters)
     env = hermetic_env() if is_hermetic() else None
     completed = subprocess.run(
         argv,
@@ -156,6 +164,7 @@ def _run_per_module(
     args: list[str],
     repo_root: Path,
     tackbox_root: Path,
+    reporters: tuple[tuple[str, str], ...] = (),
 ) -> EngineResult:
     """One subprocess per Go module, cwd at the module root.
 
@@ -171,7 +180,7 @@ def _run_per_module(
     errs: list[str] = []
     for module in sorted(groups):
         rel = [module_relative(module, p) for p in groups[module]]
-        argv = engine.build_argv(repo_root, tackbox_root, rel)
+        argv = engine.build_argv(repo_root, tackbox_root, rel, reporters)
         completed = subprocess.run(
             argv,
             cwd=repo_root / module,
@@ -240,6 +249,24 @@ def _has_ext(path: str, exts: frozenset[str]) -> bool:
     return path[dot:] in exts
 
 
+def _reporters_flag(
+    reporters: tuple[tuple[str, str], ...],
+    exts: frozenset[str],
+    transform: Callable[[str], str],
+) -> list[str]:
+    """Format `--reporters=<path>#<func>,...` for one engine's language.
+
+    Only declarations whose file matches `exts` are passed; each engine
+    self-filters so the same declaration set reaches every builder. erclint
+    gets absolute paths (its `file=` load is cwd-independent); the syntactic
+    engines get the paths as written.
+    """
+    picked = [
+        f"{transform(f)}#{fn}" for f, fn in reporters if _has_ext(f, exts)
+    ]
+    return [f"--reporters={','.join(picked)}"] if picked else []
+
+
 # --- Dev-mode engine specs ------------------------------------------------
 
 _JS_EXTS = frozenset(
@@ -251,6 +278,9 @@ _GO_EXTS = frozenset([".go"])
 _OPENGREP_EXTS = frozenset(
     [".go", ".py", ".java", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"]
 )
+# Reporter declarations the opengrep wrapper substitutes: only the syntactic
+# swallowed-exception tier (Go -> erclint, JS/TS -> eslint own their decls).
+_OPENGREP_DECL_EXTS = frozenset([".py", ".java"])
 
 
 def _built_go_binary(tackbox_root: Path, name: str) -> Path:
@@ -318,26 +348,31 @@ def _version_from_npm_manifest(tackbox_root: Path, pkg: str) -> str:
     return data.get("version") or "?"
 
 
-def _erclint_argv(_repo_root: Path, tackbox_root: Path, pkgs: list[str]) -> list[str]:
+def _erclint_argv(
+    repo_root: Path, tackbox_root: Path, pkgs: list[str], reporters=()
+) -> list[str]:
     bin_ = _built_go_binary(tackbox_root, "erclint")
-    return [str(bin_), "-json", *(f"./{p}" for p in pkgs)]
+    flag = _reporters_flag(reporters, _GO_EXTS, lambda f: str(repo_root / f))
+    return [str(bin_), "-json", *flag, *(f"./{p}" for p in pkgs)]
 
 
 def _erclint_opengrep_argv(
-    _repo_root: Path, tackbox_root: Path, files: list[str]
+    _repo_root: Path, tackbox_root: Path, files: list[str], reporters=()
 ) -> list[str]:
     bin_ = _built_go_binary(tackbox_root, "erclint-opengrep")
-    return [str(bin_), *files]
+    flag = _reporters_flag(reporters, _OPENGREP_DECL_EXTS, lambda f: f)
+    return [str(bin_), *flag, *files]
 
 
 def _tackbox_eslint_argv(
-    _repo_root: Path, tackbox_root: Path, files: list[str]
+    _repo_root: Path, tackbox_root: Path, files: list[str], reporters=()
 ) -> list[str]:
-    return ["node", str(tackbox_root / "bin" / "tackbox-eslint.js"), *files]
+    flag = _reporters_flag(reporters, _JS_EXTS, lambda f: f)
+    return ["node", str(tackbox_root / "bin" / "tackbox-eslint.js"), *flag, *files]
 
 
 def _tackbox_mdlint_argv(
-    _repo_root: Path, tackbox_root: Path, files: list[str]
+    _repo_root: Path, tackbox_root: Path, files: list[str], _reporters=()
 ) -> list[str]:
     return ["node", str(tackbox_root / "bin" / "tackbox-mdlint.js"), *files]
 
@@ -391,28 +426,39 @@ def _hermetic_rule_script(name: str) -> Path:
     return _TACKBOX_PKG_ROOT / "rules" / "bin" / name
 
 
-def _erclint_argv_hermetic(_repo_root: Path, _tackbox_root: Path, pkgs: list[str]) -> list[str]:
-    return [str(_hermetic_erclint_bin("erclint")), "-json", *(f"./{p}" for p in pkgs)]
+def _erclint_argv_hermetic(
+    repo_root: Path, _tackbox_root: Path, pkgs: list[str], reporters=()
+) -> list[str]:
+    flag = _reporters_flag(reporters, _GO_EXTS, lambda f: str(repo_root / f))
+    return [
+        str(_hermetic_erclint_bin("erclint")),
+        "-json",
+        *flag,
+        *(f"./{p}" for p in pkgs),
+    ]
 
 
 def _erclint_opengrep_argv_hermetic(
-    _repo_root: Path, _tackbox_root: Path, files: list[str]
+    _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=()
 ) -> list[str]:
-    return [str(_hermetic_erclint_bin("erclint-opengrep")), *files]
+    flag = _reporters_flag(reporters, _OPENGREP_DECL_EXTS, lambda f: f)
+    return [str(_hermetic_erclint_bin("erclint-opengrep")), *flag, *files]
 
 
 def _tackbox_eslint_argv_hermetic(
-    _repo_root: Path, _tackbox_root: Path, files: list[str]
+    _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=()
 ) -> list[str]:
+    flag = _reporters_flag(reporters, _JS_EXTS, lambda f: f)
     return [
         str(_hermetic_node_bin()),
         str(_hermetic_rule_script("tackbox-eslint.js")),
+        *flag,
         *files,
     ]
 
 
 def _tackbox_mdlint_argv_hermetic(
-    _repo_root: Path, _tackbox_root: Path, files: list[str]
+    _repo_root: Path, _tackbox_root: Path, files: list[str], _reporters=()
 ) -> list[str]:
     return [
         str(_hermetic_node_bin()),
