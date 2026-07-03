@@ -249,7 +249,7 @@ _MD_EXTS = frozenset([".md"])
 _GO_EXTS = frozenset([".go"])
 # Extensions matched by any bundled opengrep rule (svelte omitted - no parser).
 _OPENGREP_EXTS = frozenset(
-    [".go", ".py", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"]
+    [".go", ".py", ".java", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"]
 )
 
 

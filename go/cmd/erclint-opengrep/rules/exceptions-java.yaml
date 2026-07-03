@@ -1,0 +1,91 @@
+rules:
+  - id: java-swallowed-exception
+    languages: [java]
+    severity: ERROR
+    message: |
+      `catch` block has no `throw` - exception is silently swallowed.
+      Either let it propagate (remove the try/catch) or rethrow with
+      context via `throw new XException("msg", e)`.
+    patterns:
+      - pattern: |
+          try { ... } catch ($T $E) {
+            ...
+          }
+      - pattern-not: |
+          try { ... } catch ($T $E) {
+            ...
+            throw ...;
+            ...
+          }
+      # no-sentry escape; [ \t] not \s so an empty reason does not suppress.
+      - pattern-not-regex: '(?m)//[ \t]*no-sentry:[ \t]*\S'
+
+  - id: java-catch-throwable
+    languages: [java]
+    severity: ERROR
+    message: |
+      `catch (Throwable t)` catches Errors (OutOfMemoryError,
+      StackOverflowError, ThreadDeath...) - things you never want to
+      swallow. Catch `Exception` or a specific subtype.
+    pattern: |
+      try { ... } catch (Throwable $E) {
+          ...
+      }
+
+  - id: java-rethrow-without-cause
+    languages: [java]
+    severity: ERROR
+    message: |
+      Throwing a new exception in `catch` without passing the original
+      as cause discards the original stack trace. Use
+      `throw new XException("msg", $E)` so the chain is preserved.
+    patterns:
+      - pattern: |
+          try { ... } catch ($T $E) {
+            ...
+            throw new $X($MSG);
+            ...
+          }
+      - pattern-not: |
+          try { ... } catch ($T $E) {
+            ...
+            throw new $X($MSG, $E);
+            ...
+          }
+      - pattern-not: |
+          try { ... } catch ($T $E) {
+            ...
+            throw new $X($MSG, $E, ...);
+            ...
+          }
+      - pattern-not: |
+          try { ... } catch ($T $E) {
+            ...
+            throw new $X(..., $E);
+            ...
+          }
+
+  - id: java-useless-catch
+    languages: [java]
+    severity: ERROR
+    message: |
+      `catch` that only re-throws the caught exception is a no-op
+      wrapper. Remove the try/catch and let the exception propagate
+      naturally.
+    pattern: |
+      try { ... } catch ($T $E) {
+          throw $E;
+      }
+
+  - id: java-exit-in-catch
+    languages: [java]
+    severity: ERROR
+    message: |
+      `System.exit(...)` inside `catch` masks the exception. Let it
+      propagate.
+    pattern: |
+      try { ... } catch ($T $E) {
+          ...
+          System.exit(...);
+          ...
+      }

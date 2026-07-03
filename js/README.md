@@ -43,8 +43,10 @@ npx tackbox-eslint src/**/*.{ts,svelte}
 | `tackbox/valid-error-report`       | static msg + cause + tags + dedupKey |
 | `tackbox/valid-dedup-key`          | static `area.suffix[:identifier]`    |
 | `tackbox/no-secret-in-report`      | no secret-named args in reporter     |
-| `tackbox/valid-throw-error`        | `throw new Error(msg)` msg is static |
 | `tackbox/no-throw-and-report`      | catch may not both throw and report  |
+| `tackbox/ts-rethrow-without-cause` | `throw new` in catch needs `{cause}` |
+| `tackbox/ts-useless-catch`         | catch that only re-throws is a no-op |
+| `tackbox/ts-exit-in-catch`         | no `process.exit` inside catch       |
 
 Full constraints per rule:
 
@@ -59,9 +61,13 @@ Full constraints per rule:
   `area.suffix[:identifier]` form.
 - `no-secret-in-report` - reporter args must not reference
   `token` / `password` / `key` / `secret` / `cookie`.
-- `valid-throw-error` - `throw new Error(msg)` msg must be a static
-  15-200 char string.
 - `no-throw-and-report` - `catch` may not both throw and report.
+- `ts-rethrow-without-cause` - `throw new X(...)` in a `catch` must
+  pass `{ cause: <caught> }` to preserve the stack chain.
+- `ts-useless-catch` - a `catch` whose only statement re-throws the
+  caught error is a no-op wrapper; remove the try/catch.
+- `ts-exit-in-catch` - `process.exit(...)` inside a `catch` masks the
+  exception; let it propagate.
 
 Reporter names matched on the final identifier of the callee:
 `reportError`, `reportWarn`, `reportApiError`, `reportLayerError`

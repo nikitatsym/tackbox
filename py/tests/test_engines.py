@@ -231,9 +231,16 @@ def test_dev_engines_opengrep_covers_multi_language():
     og = next(e for e in DEV_ENGINES if e.id == "erclint-opengrep")
     assert ".go" in og.extensions
     assert ".py" in og.extensions
+    assert ".java" in og.extensions
     assert ".ts" in og.extensions
     # svelte parser not available in opengrep - excluded.
     assert ".svelte" not in og.extensions
+
+
+def test_dispatch_dev_engines_routes_java_to_opengrep():
+    opengrep = next(e for e in DEV_ENGINES if e.id == "erclint-opengrep")
+    plan = dispatch(["src/Main.java"], DEV_ENGINES)
+    assert plan == [(opengrep, ["src/Main.java"])]
 
 
 def test_dev_engines_eslint_covers_ts_and_svelte():

@@ -1,0 +1,206 @@
+rules:
+  - id: python-swallowed-exception
+    languages: [python]
+    severity: ERROR
+    message: |
+      `except` block has no `raise` - exception is silently swallowed.
+      Fail-fast: let it propagate (remove the except) or wrap+reraise
+      with context via `raise NewError(...) from e`.
+    patterns:
+      - pattern-either:
+          - pattern: |
+              try:
+                  ...
+              except $T as $E:
+                  ...
+          - pattern: |
+              try:
+                  ...
+              except $T:
+                  ...
+      - pattern-not: |
+          try:
+              ...
+          except $T as $E:
+              ...
+              raise
+      - pattern-not: |
+          try:
+              ...
+          except $T as $E:
+              ...
+              raise ...
+      - pattern-not: |
+          try:
+              ...
+          except $T as $E:
+              ...
+              raise ... from ...
+      - pattern-not: |
+          try:
+              ...
+          except $T:
+              ...
+              raise
+      - pattern-not: |
+          try:
+              ...
+          except $T:
+              ...
+              raise ...
+      - pattern-not: |
+          try:
+              ...
+          except $T:
+              ...
+              raise ... from ...
+      # no-sentry escape; [ \t] not \s so an empty reason does not suppress.
+      - pattern-not-regex: '(?m)#[ \t]*no-sentry:[ \t]*\S'
+
+  - id: python-suppress-exception
+    languages: [python]
+    severity: ERROR
+    message: |
+      `contextlib.suppress(...)` silently drops the exception - no log,
+      no record, no rethrow. By default this is a cosmetic dodge of the
+      python-swallowed-exception rule. Restructure the code so the
+      exception cannot raise (precondition guards, atomic state tracking,
+      narrower syscall sequence), or - if there is a legitimate
+      async/cleanup boundary - use try/except with a `# no-sentry:
+      <reason>` marker.
+
+      Narrowly allowlisted (documented control-flow signal, not a
+      dodge): asyncio.CancelledError around `await task` after
+      task.cancel() - the CancelledError on the await IS the
+      confirmation that cancel propagated, not an error to log.
+    patterns:
+      - pattern-either:
+          - pattern: contextlib.suppress(...)
+          - pattern: suppress(...)
+      # CancelledError on the await = the cancel handshake, not an error to log.
+      - pattern-not: contextlib.suppress(asyncio.CancelledError)
+      - pattern-not: suppress(asyncio.CancelledError)
+
+  - id: python-bare-except
+    languages: [python]
+    severity: ERROR
+    message: |
+      Bare `except:` / `except BaseException:` catches KeyboardInterrupt,
+      SystemExit, MemoryError - things you never want to swallow. Catch
+      a specific exception type.
+    pattern-either:
+      - pattern: |
+          try:
+              ...
+          except:
+              ...
+      - pattern: |
+          try:
+              ...
+          except BaseException:
+              ...
+      - pattern: |
+          try:
+              ...
+          except BaseException as $E:
+              ...
+
+  - id: python-reraise-without-cause
+    languages: [python]
+    severity: ERROR
+    message: |
+      Raising a new exception in `except` without `from $E` (or
+      `from None`) discards the original traceback. Use
+      `raise NewError(...) from $E` to preserve the chain.
+    patterns:
+      - pattern: |
+          try:
+              ...
+          except $T as $E:
+              ...
+              raise $X(...)
+              ...
+      - pattern-not: |
+          try:
+              ...
+          except $T as $E:
+              ...
+              raise $X(...) from ...
+              ...
+
+  - id: python-useless-except
+    languages: [python]
+    severity: ERROR
+    message: |
+      `except` that only re-raises the caught exception is a no-op
+      wrapper. Remove the try/except and let the exception propagate
+      naturally.
+    pattern-either:
+      - pattern: |
+          try:
+              ...
+          except $T as $E:
+              raise $E
+      - pattern: |
+          try:
+              ...
+          except $T:
+              raise
+
+  - id: python-import-inside-function
+    languages: [python]
+    severity: ERROR
+    message: |
+      Import inside a function/method. Imports must live at the top of
+      the file (after module docstring / `from __future__`). Move it
+      out - lazy imports hide dependencies and slow first call.
+    patterns:
+      - pattern-either:
+          - pattern: import $X
+          - pattern: import $X as $Y
+          - pattern: from $M import $X
+          - pattern: from $M import $X as $Y
+      - pattern-either:
+          - pattern-inside: |
+              def $F(...):
+                ...
+          - pattern-inside: |
+              async def $F(...):
+                ...
+
+  - id: python-exit-in-except
+    languages: [python]
+    severity: ERROR
+    message: |
+      `sys.exit` / `os._exit` inside `except` masks the original error.
+      Exit code tells nothing about what actually failed. Let the
+      exception propagate.
+    pattern-either:
+      - pattern: |
+          try:
+              ...
+          except $T:
+              ...
+              sys.exit(...)
+              ...
+      - pattern: |
+          try:
+              ...
+          except $T as $E:
+              ...
+              sys.exit(...)
+              ...
+      - pattern: |
+          try:
+              ...
+          except $T:
+              ...
+              os._exit(...)
+              ...
+      - pattern: |
+          try:
+              ...
+          except $T as $E:
+              ...
+              os._exit(...)
+              ...
