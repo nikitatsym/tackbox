@@ -134,7 +134,8 @@ JAVA_VIOLATIONS = """class Violations {
 }
 """
 
-# Only exit-in-recover is seeded; go-swallowed-panic is a B2 rule.
+# Swallows the recovered value: opengrep flags go-exit-in-recover, native
+# erclint flags ERC007 recover-swallow.
 GO_EXIT_IN_RECOVER = """package pkg
 
 import "os"
@@ -444,6 +445,13 @@ def test_opengrep_reports_every_java_rule(sections):
 def test_opengrep_reports_go_exit_in_recover(sections):
     og = _nows(sections["erclint-opengrep"])
     assert "go-exit-in-recover" in og, f"missing go-exit-in-recover:\n{og}"
+
+
+def test_erclint_reports_recover_swallow(sections):
+    # GO_EXIT_IN_RECOVER swallows the recovered value -> native ERC007.
+    section = sections["erclint"]
+    assert "ERC007" in section, f"missing ERC007:\n{section}"
+    assert "recover.go" in section, f"ERC007 not attributed to recover.go:\n{section}"
 
 
 def test_eslint_reports_every_new_ts_rule(sections):

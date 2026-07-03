@@ -1,5 +1,5 @@
-# go-swallowed-panic is deferred to B2: recover-and-report sites need reporter
-# recognition (report.Panic) that does not exist yet.
+# recover-swallow is enforced natively by ERC007 (analyzers/recoverswallow).
+# go-exit-in-recover below is the separate os.Exit-inside-recover guard.
 rules:
   - id: go-exit-in-recover
     languages: [go]

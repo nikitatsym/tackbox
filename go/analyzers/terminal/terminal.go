@@ -1,7 +1,9 @@
-// Package terminal implements ERC003: every terminal exit
-// (`log.Fatal*`, `os.Exit`, project-local `die`) must be preceded
-// by a capture call in the same block or carry an explicit
-// `// no-sentry: <reason>` marker directly above the call.
+// Package terminal implements ERC003: every terminal exit (`log.Fatal*`,
+// `os.Exit`, project-local `die`) must either be preceded by a capture in the
+// same block, carry the error into its own arguments (`log.Fatal(err)` - a
+// reported death), or carry a `// no-sentry: <reason>` marker directly above
+// the call. A silent exit (`os.Exit(1)` in an err-branch, `log.Fatal("msg")`
+// with the live error dropped) stays a finding.
 package terminal
 
 import (
@@ -17,13 +19,14 @@ import (
 
 var Analyzer = &analysis.Analyzer{
 	Name: "terminal",
-	Doc:  "ERC003: terminal exit must be preceded by capture or carry `// no-sentry:` marker",
+	Doc:  "ERC003: terminal exit must capture, carry the error, or carry `// no-sentry:` marker",
 	Run:  run,
 }
 
 func run(pass *analysis.Pass) (interface{}, error) {
 	astutil.EachFile(pass, func(f *ast.File) {
 		idx := markers.Build(pass.Fset, f)
+		branchErr := enclosingErrNames(f)
 		ast.Inspect(f, func(n ast.Node) bool {
 			block, ok := n.(*ast.BlockStmt)
 			if !ok {
@@ -40,14 +43,68 @@ func run(pass *analysis.Pass) (interface{}, error) {
 				if hasCaptureBefore(pass.TypesInfo, block.List[:i]) {
 					continue
 				}
+				if carriesErr(call, branchErr[call]) {
+					continue
+				}
 				pass.Reportf(call.Pos(),
-					"ERC003: terminal exit `%s` must be preceded by a capture (go/report or declared sink) or carry `// no-sentry: <reason>`",
+					"ERC003: terminal exit `%s` must be preceded by a capture, carry the error into its arguments, or carry `// no-sentry: <reason>`",
 					astutil.QualifiedName(call.Fun))
 			}
 			return true
 		})
 	})
 	return nil, nil
+}
+
+// enclosingErrNames maps each terminal call to the error identifiers of the
+// `if <e> != nil` branches lexically enclosing it (nested closures excluded).
+// A terminal carrying any such error in its own arguments is a reported death.
+func enclosingErrNames(f *ast.File) map[*ast.CallExpr][]string {
+	out := map[*ast.CallExpr][]string{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		ifst, ok := n.(*ast.IfStmt)
+		if !ok {
+			return true
+		}
+		e := astutil.ErrIdentFromIfCond(ifst.Cond)
+		if e == "" {
+			return true
+		}
+		for _, call := range terminalCallsIn(ifst.Body) {
+			out[call] = append(out[call], e)
+		}
+		return true
+	})
+	return out
+}
+
+// carriesErr reports whether one of the enclosing err-branch errors flows into
+// the terminal call's arguments. A declared die-helper (`die(err)`) is covered
+// here too: `die` is the only in-repo-declarable terminal name and the error
+// reaches its arguments, so option (c) collapses into this argument-flow check.
+func carriesErr(call *ast.CallExpr, errNames []string) bool {
+	for _, e := range errNames {
+		if astutil.ArgFlows(call, e) {
+			return true
+		}
+	}
+	return false
+}
+
+func terminalCallsIn(body *ast.BlockStmt) []*ast.CallExpr {
+	var out []*ast.CallExpr
+	ast.Inspect(body, func(n ast.Node) bool {
+		if _, ok := n.(*ast.FuncLit); ok {
+			return false
+		}
+		if st, ok := n.(*ast.ExprStmt); ok {
+			if call, ok := terminalCall(st); ok {
+				out = append(out, call)
+			}
+		}
+		return true
+	})
+	return out
 }
 
 func terminalCall(st ast.Stmt) (*ast.CallExpr, bool) {

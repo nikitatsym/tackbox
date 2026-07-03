@@ -81,14 +81,16 @@ jobs:
           python scripts/materialize_fixture.py fixture-repo
 
       # Only uv's own resolve proves visibility; HTML/JSON index variants drift.
+      # --python-version: runner's ambient python can sit below requires-python.
       - name: Wait until uv can resolve ${{ needs.target.outputs.pip }}
         shell: bash
         env:
           PIP_SPEC: ${{ needs.target.outputs.pip }}
         run: |
           set -euo pipefail
+          out=""
           for i in $(seq 1 360); do
-            if echo "${PIP_SPEC}" | uv pip compile --refresh --no-header -q - >/dev/null 2>&1; then
+            if out=$(echo "${PIP_SPEC}" | uv pip compile --refresh --no-header -q --python-version 3.11 - 2>&1); then
               echo "${PIP_SPEC} resolvable after $(((i - 1) * 10))s"
               exit 0
             fi
@@ -97,7 +99,8 @@ jobs:
             fi
             sleep 10
           done
-          echo "${PIP_SPEC} not resolvable after 3600s" >&2
+          echo "${PIP_SPEC} not resolvable after 3600s; last resolver error:" >&2
+          echo "$out" >&2
           exit 1
 
       # --refresh bypasses cached tool installs even on a re-run.
