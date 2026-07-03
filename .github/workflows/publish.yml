@@ -286,11 +286,29 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
 
-      # 60s is conservative for PyPI CDN edge propagation on a fresh publish;
-      # any retry loop would mask real download failures behind flake tolerance.
-      - name: Wait for PyPI index to propagate
+      # The smoke below still runs exactly once - retrying it would mask real
+      # download failures. Publish -> index is the one eventually-consistent
+      # hop, so gate on the resolver's own endpoint until both just-published
+      # versions are listed (v0.1.15: windows smoke raced a flat 60s sleep).
+      - name: Wait for PyPI index to list the published versions
         shell: bash
-        run: sleep 60
+        run: |
+          set -euo pipefail
+          thin="${GITHUB_REF_NAME#v}"
+          engines="$(tr -d '[:space:]' < engines/VERSION)"
+          for pkg_pat in "tackbox tackbox-${thin}-" "tackbox-engines tackbox_engines-${engines}-"; do
+            pkg="${pkg_pat%% *}"
+            pat="${pkg_pat##* }"
+            for i in $(seq 1 30); do
+              if curl -fsS "https://pypi.org/simple/${pkg}/" | grep -qF "$pat"; then
+                echo "${pkg}: ${pat} visible on attempt ${i}"
+                continue 2
+              fi
+              sleep 10
+            done
+            echo "${pkg}: ${pat} not in the simple index after 300s" >&2
+            exit 1
+          done
 
       - name: Materialize fixture repo
         shell: bash
