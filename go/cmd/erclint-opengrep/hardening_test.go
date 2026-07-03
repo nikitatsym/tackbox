@@ -24,6 +24,46 @@ func Good(ctx X, msg string, err error, tags T) {
 }
 `
 
+const pySwallow = `def handler():
+    try:
+        do_work()
+    except ValueError as e:
+        pass
+`
+
+const pySwallowMarked = `def handler():
+    try:
+        do_work()
+    except ValueError as e:
+        # no-sentry: boundary cleanup, nothing to propagate
+        pass
+`
+
+const pySwallowMarkedNoReason = `def handler():
+    try:
+        do_work()
+    except ValueError as e:
+        # no-sentry:
+        pass
+`
+
+const pyReraiseFromCause = `def handler():
+    try:
+        do_work()
+    except ValueError as e:
+        raise RuntimeError("work failed") from e
+`
+
+const javaSwallow = `class Handler {
+    void run() {
+        try {
+            doWork();
+        } catch (Exception e) {
+        }
+    }
+}
+`
+
 func TestExplicitTestsDirFileYieldsFinding(t *testing.T) {
 	requireOpengrepOnPath(t)
 	bin := buildOpengrepWrapper(t)
@@ -102,6 +142,83 @@ func TestPathsRewrittenToRepoRelative(t *testing.T) {
 	}
 	if !strings.Contains(stripWhitespace(stdout), "pkg/bad.go") {
 		t.Fatalf("expected repo-relative path pkg/bad.go in stdout:\n%s", stdout)
+	}
+}
+
+func TestPythonSwallowedExceptionYieldsFinding(t *testing.T) {
+	requireOpengrepOnPath(t)
+	bin := buildOpengrepWrapper(t)
+	repo := makeRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "handler.py"), []byte(pySwallow), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, runErr := runWrapper(t, bin, repo, "handler.py")
+	if runErr == nil {
+		t.Fatalf("expected finding for swallowed python except; got clean\nstdout=%s\nstderr=%s", stdout, stderr)
+	}
+	if !strings.Contains(stdout, "python-swallowed-exception") {
+		t.Fatalf("expected python-swallowed-exception in stdout:\n%s", stdout)
+	}
+}
+
+func TestPythonNoSentryMarkerSuppresses(t *testing.T) {
+	requireOpengrepOnPath(t)
+	bin := buildOpengrepWrapper(t)
+	repo := makeRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "handler.py"), []byte(pySwallowMarked), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, runErr := runWrapper(t, bin, repo, "handler.py")
+	if runErr != nil {
+		t.Fatalf("no-sentry marker must suppress python-swallowed-exception; got findings\nstdout=%s\nstderr=%s", stdout, stderr)
+	}
+	if strings.Contains(stdout, "python-swallowed-exception") {
+		t.Fatalf("no-sentry marker did not suppress the finding:\n%s", stdout)
+	}
+}
+
+func TestPythonNoSentryEmptyReasonDoesNotSuppress(t *testing.T) {
+	requireOpengrepOnPath(t)
+	bin := buildOpengrepWrapper(t)
+	repo := makeRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "handler.py"), []byte(pySwallowMarkedNoReason), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, runErr := runWrapper(t, bin, repo, "handler.py")
+	if runErr == nil {
+		t.Fatalf("empty-reason no-sentry must NOT suppress; got clean\nstdout=%s\nstderr=%s", stdout, stderr)
+	}
+	if !strings.Contains(stdout, "python-swallowed-exception") {
+		t.Fatalf("expected python-swallowed-exception (empty reason must not suppress):\n%s", stdout)
+	}
+}
+
+func TestPythonReraiseFromCausePasses(t *testing.T) {
+	requireOpengrepOnPath(t)
+	bin := buildOpengrepWrapper(t)
+	repo := makeRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "handler.py"), []byte(pyReraiseFromCause), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, runErr := runWrapper(t, bin, repo, "handler.py")
+	if runErr != nil {
+		t.Fatalf("reraise-from-cause must pass clean; got findings\nstdout=%s\nstderr=%s", stdout, stderr)
+	}
+}
+
+func TestJavaSwallowedExceptionYieldsFinding(t *testing.T) {
+	requireOpengrepOnPath(t)
+	bin := buildOpengrepWrapper(t)
+	repo := makeRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "Handler.java"), []byte(javaSwallow), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, runErr := runWrapper(t, bin, repo, "Handler.java")
+	if runErr == nil {
+		t.Fatalf("expected finding for swallowed java catch; got clean\nstdout=%s\nstderr=%s", stdout, stderr)
+	}
+	if !strings.Contains(stdout, "java-swallowed-exception") {
+		t.Fatalf("expected java-swallowed-exception in stdout:\n%s", stdout)
 	}
 }
 

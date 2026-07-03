@@ -60,6 +60,130 @@ MD_NON_ASCII = """# Notes
 Some line with an em-dash: hello - world.
 """
 
+# One violation per migrated python rule.
+PY_VIOLATIONS = """import sys
+import contextlib
+
+
+def swallowed():
+    try:
+        work()
+    except ValueError as e:
+        pass
+
+
+def bare():
+    try:
+        work()
+    except:
+        pass
+
+
+def reraise_no_cause():
+    try:
+        work()
+    except ValueError as e:
+        raise RuntimeError("wrapped")
+
+
+def useless():
+    try:
+        work()
+    except ValueError:
+        raise
+
+
+def exit_in_except():
+    try:
+        work()
+    except ValueError:
+        sys.exit(1)
+
+
+def suppressed():
+    with contextlib.suppress(Exception):
+        work()
+
+
+def import_inside():
+    import json
+    return json
+"""
+
+# One violation per migrated java rule; also pins .java dispatch.
+JAVA_VIOLATIONS = """class Violations {
+    void swallowed() {
+        try { work(); } catch (Exception e) {}
+    }
+
+    void catchThrowable() {
+        try { work(); } catch (Throwable t) {}
+    }
+
+    void rethrowNoCause() {
+        try { work(); } catch (Exception e) { throw new RuntimeException("wrapped call failed"); }
+    }
+
+    void useless() {
+        try { work(); } catch (Exception e) { throw e; }
+    }
+
+    void exitInCatch() {
+        try { work(); } catch (Exception e) { System.exit(1); }
+    }
+}
+"""
+
+# Only exit-in-recover is seeded; go-swallowed-panic is a B2 rule.
+GO_EXIT_IN_RECOVER = """package pkg
+
+import "os"
+
+func Recover() {
+\tdefer func() {
+\t\tif r := recover(); r != nil {
+\t\t\tos.Exit(1)
+\t\t}
+\t}()
+}
+"""
+
+# One violation per new eslint rule; short throw proves valid-throw-error is gone.
+JS_VIOLATIONS = """function rethrow() {
+  try { work() } catch (e) { throw new Error("connection dropped mid-call") }
+}
+
+function useless() {
+  try { work() } catch (e) { throw e }
+}
+
+function exitInCatch() {
+  try { work() } catch (e) { process.exit(1) }
+}
+
+function shortThrow() {
+  throw new Error("x")
+}
+"""
+
+# Negative: `# no-sentry: <reason>` with a reason suppresses the finding.
+PY_SUPPRESSED_OK = """def cleanup():
+    try:
+        work()
+    except ValueError as e:
+        # no-sentry: boundary cleanup, nothing to propagate
+        pass
+"""
+
+# Negative: `# no-sentry:` with an empty reason must NOT suppress.
+PY_MARKER_NO_REASON = """def cleanup():
+    try:
+        work()
+    except ValueError as e:
+        # no-sentry:
+        pass
+"""
+
 FIXTURE_MARKER = "<FIXTURE>"
 
 
@@ -75,6 +199,15 @@ def fixture_repo(tmp_path_factory) -> Path:
     (root / "docs").mkdir()
     # em-dash (U+2014) triggers no-non-ascii
     (root / "docs" / "notes.md").write_text("# Notes\n\nSome text — dash.\n")
+    (root / "pkg" / "recover.go").write_text(GO_EXIT_IN_RECOVER)
+    (root / "py").mkdir()
+    (root / "py" / "violations.py").write_text(PY_VIOLATIONS)
+    (root / "java").mkdir()
+    (root / "java" / "Violations.java").write_text(JAVA_VIOLATIONS)
+    (root / "src" / "violations.js").write_text(JS_VIOLATIONS)
+    (root / "neg").mkdir()
+    (root / "neg" / "suppressed_ok.py").write_text(PY_SUPPRESSED_OK)
+    (root / "neg" / "marker_no_reason.py").write_text(PY_MARKER_NO_REASON)
 
     _git(root, "init", "-q", "-b", "main")
     _git(root, "config", "user.email", "t@t")
@@ -265,3 +398,77 @@ def test_scoped_go_only_run_promotes_erclint_findings(fixture_repo):
         f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
     )
     assert "ERC001" in sections["erclint"]
+
+
+# --------- Migrated / new rules (step B1) --------------------------------
+
+
+def _nows(text: str) -> str:
+    # Opengrep wraps long finding paths / rule ids across lines; collapse
+    # whitespace so they still match (cf. stripWhitespace in the go wrapper test).
+    return "".join(text.split())
+
+
+@pytest.fixture(scope="module")
+def sections(fixture_repo) -> dict[str, str]:
+    return _split_engine_sections(_run_tackbox(fixture_repo).stdout)
+
+
+def test_opengrep_reports_every_python_rule(sections):
+    og = _nows(sections["erclint-opengrep"])
+    for rule in (
+        "python-swallowed-exception",
+        "python-bare-except",
+        "python-reraise-without-cause",
+        "python-useless-except",
+        "python-exit-in-except",
+        "python-suppress-exception",
+        "python-import-inside-function",
+    ):
+        assert rule in og, f"missing {rule} in opengrep section:\n{og}"
+
+
+def test_opengrep_reports_every_java_rule(sections):
+    og = _nows(sections["erclint-opengrep"])
+    assert "Violations.java" in og, f".java not dispatched:\n{og}"
+    for rule in (
+        "java-swallowed-exception",
+        "java-catch-throwable",
+        "java-rethrow-without-cause",
+        "java-useless-catch",
+        "java-exit-in-catch",
+    ):
+        assert rule in og, f"missing {rule} in opengrep section:\n{og}"
+
+
+def test_opengrep_reports_go_exit_in_recover(sections):
+    og = _nows(sections["erclint-opengrep"])
+    assert "go-exit-in-recover" in og, f"missing go-exit-in-recover:\n{og}"
+
+
+def test_eslint_reports_every_new_ts_rule(sections):
+    es = sections["tackbox-eslint"]
+    for rule in (
+        "ts-rethrow-without-cause",
+        "ts-useless-catch",
+        "ts-exit-in-catch",
+    ):
+        assert rule in es, f"missing {rule} in eslint section:\n{es}"
+
+
+def test_valid_throw_error_no_longer_fires(sections):
+    # short `throw new Error("x")` - the removed rule would have flagged it.
+    es = sections["tackbox-eslint"]
+    assert "valid-throw-error" not in es
+
+
+def test_no_sentry_marker_with_reason_suppresses(sections):
+    # marker + reason -> suppressed -> file absent from findings.
+    og = _nows(sections["erclint-opengrep"])
+    assert "suppressed_ok.py" not in og, f"marked-with-reason not suppressed:\n{og}"
+
+
+def test_no_sentry_marker_without_reason_does_not_suppress(sections):
+    # empty reason -> not suppressed -> file present in findings.
+    og = _nows(sections["erclint-opengrep"])
+    assert "marker_no_reason.py" in og, f"empty-reason marker wrongly suppressed:\n{og}"

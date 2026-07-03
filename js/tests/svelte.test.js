@@ -44,14 +44,3 @@ test('valid-error-report (Svelte)', () => {
     ],
   })
 })
-
-test('valid-throw-error (Svelte)', () => {
-  ruleTester.run('valid-throw-error', require('../rules/valid-throw-error'), {
-    valid: [
-      { code: '<script>\nthrow new Error("connection lost mid-stream")\n</script>', ...svelteOpts },
-    ],
-    invalid: [
-      { code: '<script>\nthrow new Error("short")\n</script>', ...svelteOpts, errors: [{ messageId: 'tooShort' }] },
-    ],
-  })
-})

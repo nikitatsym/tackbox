@@ -108,19 +108,6 @@ test('no-secret-in-report', () => {
   })
 })
 
-test('valid-throw-error', () => {
-  ruleTester.run('valid-throw-error', require('../rules/valid-throw-error'), {
-    valid: [
-      'throw new Error("connection lost mid-stream")',
-      'throw e',
-    ],
-    invalid: [
-      { code: 'throw new Error(`oops ${x}`)', errors: [{ messageId: 'notStatic' }] },
-      { code: 'throw new Error("short")', errors: [{ messageId: 'tooShort' }] },
-    ],
-  })
-})
-
 test('no-throw-and-report', () => {
   ruleTester.run('no-throw-and-report', require('../rules/no-throw-and-report'), {
     valid: [
@@ -132,6 +119,51 @@ test('no-throw-and-report', () => {
         code: 'try { f() } catch (e) { reportError("api call failed mid-flight", e, null, "api.fail"); throw e }',
         errors: [{ messageId: 'both' }],
       },
+    ],
+  })
+})
+
+test('ts-rethrow-without-cause', () => {
+  ruleTester.run('ts-rethrow-without-cause', require('../rules/ts-rethrow-without-cause'), {
+    valid: [
+      'try { f() } catch (e) { throw new Error("wrap failed", { cause: e }) }',
+      'try { f() } catch (e) { throw new WrapError("bad gateway", { status: 502, cause: e }) }',
+      'try { f() } catch (e) { throw e }',
+      'try { f() } catch { throw new Error("no binding to chain") }',
+      'throw new Error("not inside a catch")',
+    ],
+    invalid: [
+      { code: 'try { f() } catch (e) { throw new Error("connection dropped") }', errors: [{ messageId: 'noCause' }] },
+      { code: 'try { f() } catch (e) { throw new HttpError("bad gateway", { status: 502 }) }', errors: [{ messageId: 'noCause' }] },
+      { code: 'try { f() } catch (e) { throw new Error("wrong cause", { cause: other }) }', errors: [{ messageId: 'noCause' }] },
+    ],
+  })
+})
+
+test('ts-useless-catch', () => {
+  ruleTester.run('ts-useless-catch', require('../rules/ts-useless-catch'), {
+    valid: [
+      'try { f() } catch (e) { throw new Error("wrap failed", { cause: e }) }',
+      'try { f() } catch (e) { log(e); throw e }',
+      'try { f() } catch (e) { throw other }',
+      'try { f() } catch {}',
+    ],
+    invalid: [
+      { code: 'try { f() } catch (e) { throw e }', errors: [{ messageId: 'useless' }] },
+    ],
+  })
+})
+
+test('ts-exit-in-catch', () => {
+  ruleTester.run('ts-exit-in-catch', require('../rules/ts-exit-in-catch'), {
+    valid: [
+      'try { f() } catch (e) { throw e }',
+      'try { f() } catch (e) { cleanup() }',
+      'process.exit(1)',
+    ],
+    invalid: [
+      { code: 'try { f() } catch (e) { process.exit(1) }', errors: [{ messageId: 'exit' }] },
+      { code: 'try { f() } catch { process.exit(2) }', errors: [{ messageId: 'exit' }] },
     ],
   })
 })

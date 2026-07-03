@@ -1,0 +1,15 @@
+# go-swallowed-panic is deferred to B2: recover-and-report sites need reporter
+# recognition (report.Panic) that does not exist yet.
+rules:
+  - id: go-exit-in-recover
+    languages: [go]
+    severity: ERROR
+    message: |
+      `os.Exit(...)` inside `recover` masks the panic. Re-`panic($R)`
+      so the original stack is visible.
+    pattern: |
+      if $R := recover(); $R != nil {
+        ...
+        os.Exit(...)
+        ...
+      }
