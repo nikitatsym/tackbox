@@ -1,5 +1,5 @@
 """Publish workflow spec: OIDC, fat->thin sequential, skip-fat-if-unchanged,
-non-cancelling concurrency, post-publish fresh-runner smoke on all 5 platforms.
+non-cancelling concurrency; the fresh-runner canary lives in verify-release.yml.
 
 Structural fixtures for `.github/workflows/publish.yml`. The workflow can
 only be end-to-end exercised on a tag push into origin main (PyPI needs
@@ -17,6 +17,7 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO / ".github" / "workflows" / "publish.yml"
+VERIFY_WORKFLOW = REPO / ".github" / "workflows" / "verify-release.yml"
 
 REQUIRED_PLATFORMS = {
     "linux-x86_64",
@@ -30,6 +31,12 @@ REQUIRED_PLATFORMS = {
 def workflow() -> dict:
     assert WORKFLOW.is_file(), f"missing {WORKFLOW.relative_to(REPO)}"
     return yaml.safe_load(WORKFLOW.read_text())
+
+
+@pytest.fixture(scope="module")
+def verify_workflow() -> dict:
+    assert VERIFY_WORKFLOW.is_file(), f"missing {VERIFY_WORKFLOW.relative_to(REPO)}"
+    return yaml.safe_load(VERIFY_WORKFLOW.read_text())
 
 
 def _steps_text(steps: list) -> str:
@@ -273,43 +280,59 @@ def test_publish_thin_does_not_set_skip_existing(workflow):
     raise AssertionError("no pypa/gh-action-pypi-publish step found in publish-thin")
 
 
-def test_post_publish_smoke_matrix_covers_all_five_platforms(workflow):
-    smoke = _post_publish_smoke_job(workflow["jobs"])
-    assert smoke is not None, (
-        "publish.yml must run a fresh-runner smoke on all 5 platforms after publish"
+def test_canary_matrix_covers_required_platforms(verify_workflow):
+    canary = _canary_job(verify_workflow["jobs"])
+    assert canary is not None, (
+        "verify-release.yml must run a fresh-runner canary on all platforms"
     )
-    include = smoke["strategy"]["matrix"]["include"]
+    include = canary["strategy"]["matrix"]["include"]
     platforms = {e["platform"] for e in include}
     assert platforms == REQUIRED_PLATFORMS, (
-        f"post-publish smoke must cover all 5 platforms, got {sorted(platforms)}"
+        f"canary must cover {sorted(REQUIRED_PLATFORMS)}, got {sorted(platforms)}"
     )
 
 
-def test_post_publish_smoke_uses_uvx_from_pypi(workflow):
-    """The step-6c acceptance is that a fresh runner with an empty uv cache
-    can `uvx tackbox@<VERSION> lint .` and get the same behavior as the local
-    dev build. This test pins the invocation shape - not a checkout-and-run."""
-    smoke = _post_publish_smoke_job(workflow["jobs"])
-    text = _steps_text(smoke["steps"])
-    assert "uvx" in text, "post-publish smoke must use uvx to install from PyPI"
-    assert "tackbox@" in text, (
-        "post-publish smoke must pin the just-published version via uvx tackbox@<ver>"
-    )
+def test_canary_uses_uvx_from_pypi(verify_workflow):
+    """Step-6c acceptance, relocated: a fresh runner with an empty uv cache
+    can `uvx tackbox@<VERSION> lint .` and match the local dev build."""
+    canary = _canary_job(verify_workflow["jobs"])
+    text = _steps_text(canary["steps"])
+    assert "uvx --refresh" in text, "canary must uvx-install from PyPI"
     assert "materialize_fixture.py" in text, (
-        "post-publish smoke must materialize the shared fixture on the fresh runner"
+        "canary must materialize the shared fixture on the fresh runner"
+    )
+    target_text = _steps_text(verify_workflow["jobs"]["target"]["steps"])
+    assert "tackbox@" in target_text, (
+        "target job must build the uvx tackbox@<ver|latest> spec"
     )
 
 
-def test_post_publish_smoke_depends_on_publish(workflow):
-    smoke = _post_publish_smoke_job(workflow["jobs"])
-    thin_name = _publish_thin_job_name(workflow["jobs"])
-    transitive = _collect_transitive_needs(
-        workflow["jobs"], _post_publish_smoke_job_name(workflow["jobs"])
+def test_canary_runs_after_publish_and_on_schedule(verify_workflow):
+    """Ordering vs publish comes from the workflow_run trigger; the cron leg
+    keeps @latest verified between releases."""
+    on = _on(verify_workflow)
+    wr = on.get("workflow_run") or {}
+    assert "publish" in (wr.get("workflows") or []), (
+        "verify-release must trigger on completion of the publish workflow"
     )
-    assert thin_name in transitive, (
-        f"post-publish smoke must depend on publish-thin (name {thin_name!r}); "
-        f"otherwise the smoke can race publish and pull the previous release"
+    assert "completed" in (wr.get("types") or []), (
+        "verify-release workflow_run trigger must fire on completed runs"
     )
+    assert "schedule" in on, "verify-release must also run on a cron schedule"
+    assert "workflow_dispatch" in on, (
+        "verify-release must be manually dispatchable for reruns"
+    )
+
+
+def test_publish_has_no_pypi_smoke(workflow):
+    """The canary moved to verify-release.yml; publish must not wait on PyPI
+    CDN convergence."""
+    for name, job in workflow["jobs"].items():
+        text = _steps_text((job or {}).get("steps", []))
+        assert not ("uvx" in text and "tackbox@" in text), (
+            f"publish job {name!r} installs from PyPI - that belongs to "
+            f"verify-release.yml"
+        )
 
 
 def _find_matrix_job(jobs: dict, required_platforms: set) -> dict | None:
@@ -397,20 +420,12 @@ def _smoke_job_name(jobs: dict) -> str:
     raise AssertionError("no pre-publish smoke job found")
 
 
-def _post_publish_smoke_job(jobs: dict) -> dict | None:
+def _canary_job(jobs: dict) -> dict | None:
     for name, job in jobs.items():
         text = _steps_text((job or {}).get("steps", []))
-        if "uvx" in text and "tackbox@" in text:
+        if "uvx --refresh" in text:
             return job
     return None
-
-
-def _post_publish_smoke_job_name(jobs: dict) -> str:
-    for name, job in jobs.items():
-        text = _steps_text((job or {}).get("steps", []))
-        if "uvx" in text and "tackbox@" in text:
-            return name
-    raise AssertionError("no post-publish smoke job found")
 
 
 def _collect_transitive_needs(jobs: dict, root: str) -> set:
