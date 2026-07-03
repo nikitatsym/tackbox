@@ -1,0 +1,128 @@
+name: verify-release
+
+# Canary against live PyPI, split out so CDN convergence never colors publish.
+on:
+  workflow_run:
+    workflows: [publish]
+    types: [completed]
+  schedule:
+    - cron: "30 6 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "version to verify (empty = latest)"
+        required: false
+        default: ""
+
+concurrency:
+  group: verify-release
+  cancel-in-progress: true
+
+jobs:
+  target:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-22.04
+    outputs:
+      uvx: ${{ steps.pick.outputs.uvx }}
+      pip: ${{ steps.pick.outputs.pip }}
+    steps:
+      - id: pick
+        shell: bash
+        env:
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version=""
+          case "${GITHUB_EVENT_NAME}" in
+            workflow_run) version="${HEAD_BRANCH#v}" ;;
+            workflow_dispatch) version="${INPUT_VERSION}" ;;
+          esac
+          if [ -n "$version" ]; then
+            echo "uvx=tackbox@${version}" >> "$GITHUB_OUTPUT"
+            echo "pip=tackbox==${version}" >> "$GITHUB_OUTPUT"
+          else
+            echo "uvx=tackbox@latest" >> "$GITHUB_OUTPUT"
+            echo "pip=tackbox" >> "$GITHUB_OUTPUT"
+          fi
+
+  canary:
+    name: canary ${{ matrix.platform }}
+    needs: target
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 80
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-22.04
+          - platform: linux-aarch64
+            runner: ubuntu-22.04-arm
+          - platform: macos-aarch64
+            runner: macos-14
+          - platform: windows-x86_64
+            runner: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      # macos-14 ships no Go; doctor's go-toolchain check needs it.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Materialize fixture repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf fixture-repo
+          python scripts/materialize_fixture.py fixture-repo
+
+      # Only uv's own resolve proves visibility; HTML/JSON index variants drift.
+      - name: Wait until uv can resolve ${{ needs.target.outputs.pip }}
+        shell: bash
+        env:
+          PIP_SPEC: ${{ needs.target.outputs.pip }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 360); do
+            if echo "${PIP_SPEC}" | uv pip compile --refresh --no-header -q - >/dev/null 2>&1; then
+              echo "${PIP_SPEC} resolvable after $(((i - 1) * 10))s"
+              exit 0
+            fi
+            if [ $((i % 30)) -eq 0 ]; then
+              echo "still not visible after $((i * 10))s"
+            fi
+            sleep 10
+          done
+          echo "${PIP_SPEC} not resolvable after 3600s" >&2
+          exit 1
+
+      # --refresh bypasses cached tool installs even on a re-run.
+      - name: uvx doctor
+        shell: bash
+        working-directory: fixture-repo
+        env:
+          UVX_SPEC: ${{ needs.target.outputs.uvx }}
+        run: |
+          set -euo pipefail
+          uvx --refresh "${UVX_SPEC}" doctor
+
+      - name: uvx lint (expect exit 1)
+        shell: bash
+        working-directory: fixture-repo
+        env:
+          UVX_SPEC: ${{ needs.target.outputs.uvx }}
+        run: |
+          set -eo pipefail
+          set +e
+          uvx --refresh "${UVX_SPEC}" lint . --no-cache
+          rc=$?
+          set -e
+          echo "lint exit=$rc"
+          if [ "$rc" != "1" ]; then
+            echo "expected exit 1 on fixture violations, got $rc" >&2
+            exit 1
+          fi
