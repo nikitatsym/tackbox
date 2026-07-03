@@ -294,14 +294,17 @@ jobs:
         run: |
           set -euo pipefail
           thin="${GITHUB_REF_NAME#v}"
-          for i in $(seq 1 30); do
+          for i in $(seq 1 90); do
             if echo "tackbox==${thin}" | uv pip compile --refresh --no-header -q - >/dev/null 2>&1; then
               echo "tackbox==${thin} resolvable by uv on attempt ${i}"
               exit 0
             fi
+            if [ $((i % 6)) -eq 0 ]; then
+              echo "attempt ${i}: tackbox==${thin} not yet visible"
+            fi
             sleep 10
           done
-          echo "tackbox==${thin} not resolvable by uv after 300s" >&2
+          echo "tackbox==${thin} not resolvable by uv after 900s" >&2
           exit 1
 
       - name: Materialize fixture repo
