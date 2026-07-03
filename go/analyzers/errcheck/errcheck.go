@@ -1,10 +1,12 @@
 // Package errcheck implements ERC001: every `err != nil` branch must
-// propagate the error, capture it (sentryErr/Warn/Panic), or carry a
-// `// no-sentry: <reason>` marker on the line directly above the if.
+// propagate the error, capture it (a go/report call or a `.tackbox-reporters`
+// sink), or carry a `// no-sentry: <reason>` marker on the line directly
+// above the if.
 package errcheck
 
 import (
 	"go/ast"
+	"go/types"
 
 	"golang.org/x/tools/go/analysis"
 
@@ -36,7 +38,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			if propagates(ifst.Body, errName) {
 				return true
 			}
-			if captures(ifst.Body) {
+			if captures(pass.TypesInfo, ifst.Body, errName) {
 				return true
 			}
 			pass.Reportf(ifst.Pos(),
@@ -70,9 +72,9 @@ func propagates(body *ast.BlockStmt, errName string) bool {
 	return false
 }
 
-func captures(body *ast.BlockStmt) bool {
+func captures(info *types.Info, body *ast.BlockStmt, errName string) bool {
 	for _, call := range astutil.BlockCalls(body) {
-		if astutil.IsCapture(call) {
+		if astutil.IsCapture(info, call, errName) {
 			return true
 		}
 	}

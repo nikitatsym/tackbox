@@ -69,11 +69,29 @@ Full constraints per rule:
 - `ts-exit-in-catch` - `process.exit(...)` inside a `catch` masks the
   exception; let it propagate.
 
-Reporter names matched on the final identifier of the callee:
-`reportError`, `reportWarn`, `reportApiError`, `reportLayerError`
+## Reporter recognition
+
+A call counts as a reporter only when its callee resolves to one of the
+reporter names imported from `tackbox` / `tackbox/report` (tier-1), or
+to a function declared in a repo-root `.tackbox-reporters` file
+(tier-2). A bare identifier that merely shares the name is not trusted.
+
+Names: `reportError`, `reportWarn`, `reportApiError`, `reportLayerError`
 (4-arg form: msg, cause, tags, dedupKey) and `reportSynth`,
-`reportSynthError` (3-arg form: msg, tags, dedupKey). Both bare
-`reportError(...)` and `report.reportError(...)` are recognized.
+`reportSynthError` (3-arg form: msg, tags, dedupKey).
+
+Tier-1 covers named, renamed, default- or namespace-member, and CJS
+`require('tackbox/report')` forms. The strict argument contracts
+(`valid-error-report`, `valid-dedup-key`, `no-secret-in-report`) apply
+to tier-1 calls; declared sinks carry only the argument-flow contract
+(the caught error must flow into the call).
+
+`.tackbox-reporters` lines are `file#function: reason`. The `tackbox`
+CLI parses and validates the file. When you consume this ESLint plugin
+directly (without the CLI), populate `settings.tackbox.reporters` (a
+list of `"file#function"` strings) in your own config; symbol
+validation is the CLI's responsibility and is not performed in that
+mode.
 
 ## Report helper
 

@@ -1,5 +1,5 @@
 const {
-  REPORTER_NAMES, calleeName, exprIsSecretRef, matchesSecret,
+  tier1ReporterName, exprIsSecretRef, matchesSecret,
   isStaticString, staticStringValue,
 } = require('./_shared')
 
@@ -33,8 +33,8 @@ module.exports = {
 
     return {
       CallExpression(node) {
-        const name = calleeName(node.callee)
-        if (!REPORTER_NAMES.has(name)) return
+        const name = tier1ReporterName(context, node)
+        if (!name) return
         for (const arg of node.arguments) {
           if (checkExpr(arg, name)) continue
           if (arg.type === 'ObjectExpression') {

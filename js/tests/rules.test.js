@@ -5,11 +5,17 @@ const ruleTester = new RuleTester({
   languageOptions: { ecmaVersion: 2022, sourceType: 'module' },
 })
 
+// Reporter calls are recognized only through a tackbox/report import (tier-1)
+// or a .tackbox-reporters declaration (tier-2); a bare name is not trusted.
+// These rule tests import the canonical reporters so the calls resolve.
+const R =
+  "import { reportError, reportSynth, reportSynthError, reportApiError, reportWarn, reportLayerError } from 'tackbox/report'\n"
+
 test('no-swallow-catch', () => {
   ruleTester.run('no-swallow-catch', require('../rules/no-swallow-catch'), {
     valid: [
       'try { f() } catch (e) { throw e }',
-      'try { f() } catch (e) { reportError("connection lost mid-stream", e) }',
+      R + 'try { f() } catch (e) { reportError("connection lost mid-stream", e) }',
       '// no-sentry: bootstrap-only, no Sentry stack yet\ntry { f() } catch (e) {}',
     ],
     invalid: [
@@ -23,7 +29,7 @@ test('no-swallow-promise-catch', () => {
   ruleTester.run('no-swallow-promise-catch', require('../rules/no-swallow-promise-catch'), {
     valid: [
       'p.catch(e => { throw e })',
-      'p.catch(e => { reportError("api call failed mid-flight", e) })',
+      R + 'p.catch(e => { reportError("api call failed mid-flight", e) })',
     ],
     invalid: [
       { code: 'p.catch(e => {})', errors: [{ messageId: 'swallow' }] },
@@ -37,7 +43,7 @@ test('no-console-error', () => {
   ruleTester.run('no-console-error', require('../rules/no-console-error'), {
     valid: [
       'console.log("hi")',
-      'reportError("connection lost mid-stream", err)',
+      'foo("connection lost mid-stream", err)',
     ],
     invalid: [
       { code: 'console.error("boom")', errors: [{ messageId: 'use' }] },
@@ -48,17 +54,17 @@ test('no-console-error', () => {
 test('valid-error-report', () => {
   ruleTester.run('valid-error-report', require('../rules/valid-error-report'), {
     valid: [
-      'reportError("connection lost mid-stream", err, null, "api.lost")',
-      'reportError("connection lost mid-stream", err, { area: "api" }, "api.lost")',
-      'reportSynthError("retry budget exhausted at boot stage", null, "boot.retry")',
+      R + 'reportError("connection lost mid-stream", err, null, "api.lost")',
+      R + 'reportError("connection lost mid-stream", err, { area: "api" }, "api.lost")',
+      R + 'reportSynthError("retry budget exhausted at boot stage", null, "boot.retry")',
     ],
     invalid: [
-      { code: 'reportError(`oops ${x}`, err, null, "api.lost")', errors: [{ messageId: 'msgNotStatic' }] },
-      { code: 'reportError("short", err, null, "api.lost")', errors: [{ messageId: 'msgTooShort' }] },
-      { code: 'reportError("connection lost mid-stream", null, null, "api.lost")', errors: [{ messageId: 'causeMissing' }] },
-      { code: 'reportError("connection lost mid-stream", err, {}, "api.lost")', errors: [{ messageId: 'tagsEmpty' }] },
-      { code: 'reportError("connection lost mid-stream", err)', errors: [{ messageId: 'dedupMissing' }] },
-      { code: 'reportError()', errors: [{ messageId: 'noArgs' }] },
+      { code: R + 'reportError(`oops ${x}`, err, null, "api.lost")', errors: [{ messageId: 'msgNotStatic' }] },
+      { code: R + 'reportError("short", err, null, "api.lost")', errors: [{ messageId: 'msgTooShort' }] },
+      { code: R + 'reportError("connection lost mid-stream", null, null, "api.lost")', errors: [{ messageId: 'causeMissing' }] },
+      { code: R + 'reportError("connection lost mid-stream", err, {}, "api.lost")', errors: [{ messageId: 'tagsEmpty' }] },
+      { code: R + 'reportError("connection lost mid-stream", err)', errors: [{ messageId: 'dedupMissing' }] },
+      { code: R + 'reportError()', errors: [{ messageId: 'noArgs' }] },
     ],
   })
 })
@@ -66,14 +72,14 @@ test('valid-error-report', () => {
 test('valid-dedup-key', () => {
   ruleTester.run('valid-dedup-key', require('../rules/valid-dedup-key'), {
     valid: [
-      'reportError("connection lost mid-stream", err, null, "api.lost")',
-      'reportError("connection lost mid-stream", err, null, "api.lost:user_42")',
-      'reportSynthError("retry budget exhausted at boot stage", null, "boot.retry")',
+      R + 'reportError("connection lost mid-stream", err, null, "api.lost")',
+      R + 'reportError("connection lost mid-stream", err, null, "api.lost:user_42")',
+      R + 'reportSynthError("retry budget exhausted at boot stage", null, "boot.retry")',
     ],
     invalid: [
-      { code: 'reportError("connection lost mid-stream", err, null, key)', errors: [{ messageId: 'notLiteral' }] },
-      { code: 'reportError("connection lost mid-stream", err, null, "BadFormat")', errors: [{ messageId: 'badFormat' }] },
-      { code: 'reportError("connection lost mid-stream", err, null, "no_dot")', errors: [{ messageId: 'badFormat' }] },
+      { code: R + 'reportError("connection lost mid-stream", err, null, key)', errors: [{ messageId: 'notLiteral' }] },
+      { code: R + 'reportError("connection lost mid-stream", err, null, "BadFormat")', errors: [{ messageId: 'badFormat' }] },
+      { code: R + 'reportError("connection lost mid-stream", err, null, "no_dot")', errors: [{ messageId: 'badFormat' }] },
     ],
   })
 })
@@ -81,27 +87,27 @@ test('valid-dedup-key', () => {
 test('no-secret-in-report', () => {
   ruleTester.run('no-secret-in-report', require('../rules/no-secret-in-report'), {
     valid: [
-      'reportError("connection lost mid-stream", err, { area: "api" }, "api.lost")',
-      'reportSynth("retry budget exhausted at boot stage", { area: "api" }, "boot.retry")',
+      R + 'reportError("connection lost mid-stream", err, { area: "api" }, "api.lost")',
+      R + 'reportSynth("retry budget exhausted at boot stage", { area: "api" }, "boot.retry")',
     ],
     invalid: [
       {
-        code: 'reportError("connection lost mid-stream", err, { area: "api" }, token)',
+        code: R + 'reportError("connection lost mid-stream", err, { area: "api" }, token)',
         errors: [{ messageId: 'secretIdent' }],
       },
       {
-        code: 'reportError("connection lost mid-stream", err, { sessionToken: x }, "api.lost")',
+        code: R + 'reportError("connection lost mid-stream", err, { sessionToken: x }, "api.lost")',
         errors: [{ messageId: 'secretIdent' }],
       },
       {
-        code: 'reportSynth("password token leaked from cookie", null, "auth.password")',
+        code: R + 'reportSynth("password token leaked from cookie", null, "auth.password")',
         errors: [
           { messageId: 'secretString' },
           { messageId: 'secretString' },
         ],
       },
       {
-        code: 'reportLayerError("processing request failed at gateway", err, { auth: "bearer token here" }, "api.auth")',
+        code: R + 'reportLayerError("processing request failed at gateway", err, { auth: "bearer token here" }, "api.auth")',
         errors: [{ messageId: 'secretString' }],
       },
     ],
@@ -112,11 +118,11 @@ test('no-throw-and-report', () => {
   ruleTester.run('no-throw-and-report', require('../rules/no-throw-and-report'), {
     valid: [
       'try { f() } catch (e) { throw e }',
-      'try { f() } catch (e) { reportError("api call failed mid-flight", e, null, "api.fail") }',
+      R + 'try { f() } catch (e) { reportError("api call failed mid-flight", e, null, "api.fail") }',
     ],
     invalid: [
       {
-        code: 'try { f() } catch (e) { reportError("api call failed mid-flight", e, null, "api.fail"); throw e }',
+        code: R + 'try { f() } catch (e) { reportError("api call failed mid-flight", e, null, "api.fail"); throw e }',
         errors: [{ messageId: 'both' }],
       },
     ],
