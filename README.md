@@ -1,5 +1,9 @@
 # tackbox
 
+[![publish](https://github.com/nikitatsym/tackbox/actions/workflows/publish.yml/badge.svg)](https://github.com/nikitatsym/tackbox/actions/workflows/publish.yml)
+[![verify-release](https://github.com/nikitatsym/tackbox/actions/workflows/verify-release.yml/badge.svg)](https://github.com/nikitatsym/tackbox/actions/workflows/verify-release.yml)
+[![pypi](https://img.shields.io/pypi/v/tackbox)](https://pypi.org/project/tackbox/)
+
 Universal lint rules that enforce the `error-reporting-and-coverage`
 spec across languages. Drop the repo into `.pre-commit-config.yaml`
 and the rules apply uniformly.
