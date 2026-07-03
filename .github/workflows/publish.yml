@@ -258,3 +258,24 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: thin
+
+  github-release:
+    name: GitHub release for the tag
+    needs: publish-thin
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Idempotent: a re-run of later jobs must not fail on the existing release.
+      - name: Create release if absent
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "release $tag already exists"
+            exit 0
+          fi
+          gh release create "$tag" --repo "${GITHUB_REPOSITORY}" --title "$tag" \
+            --notes "PyPI: https://pypi.org/project/tackbox/${tag#v}/"
