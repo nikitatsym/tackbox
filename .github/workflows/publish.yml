@@ -288,27 +288,24 @@ jobs:
 
       # The smoke below still runs exactly once - retrying it would mask real
       # download failures. Publish -> index is the one eventually-consistent
-      # hop, so gate on the resolver's own endpoint until both just-published
-      # versions are listed (v0.1.15: windows smoke raced a flat 60s sleep).
-      - name: Wait for PyPI index to list the published versions
+      # hop, and PyPI's HTML and JSON simple-index variants propagate
+      # independently (v0.1.17: a curl/HTML probe passed while uv's JSON
+      # request still 404'd), so the probe must be uv itself: a pure resolve
+      # of the thin pin, which also transitively covers tackbox-engines.
+      - name: Wait until uv can resolve the published version
         shell: bash
         run: |
           set -euo pipefail
           thin="${GITHUB_REF_NAME#v}"
-          engines="$(tr -d '[:space:]' < engines/VERSION)"
-          for pkg_pat in "tackbox tackbox-${thin}-" "tackbox-engines tackbox_engines-${engines}-"; do
-            pkg="${pkg_pat%% *}"
-            pat="${pkg_pat##* }"
-            for i in $(seq 1 30); do
-              if curl -fsS "https://pypi.org/simple/${pkg}/" | grep -qF "$pat"; then
-                echo "${pkg}: ${pat} visible on attempt ${i}"
-                continue 2
-              fi
-              sleep 10
-            done
-            echo "${pkg}: ${pat} not in the simple index after 300s" >&2
-            exit 1
+          for i in $(seq 1 30); do
+            if echo "tackbox==${thin}" | uv pip compile --refresh --no-header -q - >/dev/null 2>&1; then
+              echo "tackbox==${thin} resolvable by uv on attempt ${i}"
+              exit 0
+            fi
+            sleep 10
           done
+          echo "tackbox==${thin} not resolvable by uv after 300s" >&2
+          exit 1
 
       - name: Materialize fixture repo
         shell: bash
