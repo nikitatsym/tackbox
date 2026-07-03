@@ -95,6 +95,11 @@ func argFlows(call *ast.CallExpr, errName string) bool {
 	return false
 }
 
+// ArgFlows reports whether name appears anywhere in call's arguments - the
+// argument-flow primitive: a reported death (ERC003) or reported recover
+// (ERC007) requires the caught value to reach the call.
+func ArgFlows(call *ast.CallExpr, name string) bool { return argFlows(call, name) }
+
 // IsCaptureErr reports whether call is an error-capture (excludes terminal
 // panic-capture); doublecapture uses it to gate against `return err`.
 func IsCaptureErr(info *types.Info, call *ast.CallExpr, errName string) bool {
