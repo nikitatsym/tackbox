@@ -1,11 +1,11 @@
-const { blockHasThrow, blockHasReport, hasMarkerAbove } = require('./_shared')
+const { hasMarkerAbove, makeHandledAnalysis } = require('./_shared')
 
 module.exports = {
   meta: {
     type: 'problem',
-    docs: { description: 'promise.catch(handler) must throw, call a reporter, or carry // no-report: marker' },
+    docs: { description: 'every path out of a promise.catch(handler) must throw or call a reporter, or the .catch must carry a // no-report: marker. Result-boundary conversion is not accepted in promise handlers.' },
     messages: {
-      swallow: 'promise .catch handler swallows the error: must throw, call a reporter (tackbox/report import or .tackbox-reporters declaration), or carry `// no-report: <reason>` above',
+      swallow: 'promise .catch handler has a path that swallows the error: every path must throw or call a reporter (tackbox/report import or .tackbox-reporters declaration), or carry `// no-report: <reason>` above',
     },
     schema: [],
   },
@@ -18,19 +18,9 @@ module.exports = {
         if (node.arguments.length === 0) return
         const handler = node.arguments[0]
         if (handler.type !== 'ArrowFunctionExpression' && handler.type !== 'FunctionExpression') return
-        const errName = handler.params[0] && handler.params[0].type === 'Identifier' ? handler.params[0].name : null
-        const body = handler.body
-        if (!body) return
-        if (body.type !== 'BlockStatement') {
-          const synthetic = { type: 'BlockStatement', body: [{ type: 'ExpressionStatement', expression: body }] }
-          if (blockHasReport(context, synthetic, errName)) return
-          if (hasMarkerAbove(context, node, 'no-report')) return
-          context.report({ node, messageId: 'swallow' })
-          return
-        }
-        if (blockHasThrow(body)) return
-        if (blockHasReport(context, body, errName)) return
         if (hasMarkerAbove(context, node, 'no-report')) return
+        const errName = handler.params[0] && handler.params[0].type === 'Identifier' ? handler.params[0].name : null
+        if (makeHandledAnalysis({ context, errName, allowBoundary: false }).handled(handler.body)) return
         context.report({ node, messageId: 'swallow' })
       },
     }
