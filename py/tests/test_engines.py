@@ -216,6 +216,18 @@ def test_dev_engines_registry_order_locked():
     ]
 
 
+def test_pyrules_invocation_neutralizes_ambient_channels_structurally():
+    # --select=TBX gates out a consumer's own flake8 plugin - too costly to pin
+    # behaviorally; --isolated / --disable-noqa are pinned in the hardening test.
+    pyrules = next(e for e in DEV_ENGINES if e.id == "pyrules")
+    argv = pyrules.build_argv(None, None, ["a.py"], ())
+    assert "flake8" in argv
+    assert "--isolated" in argv
+    assert "--disable-noqa" in argv
+    assert "--select=TBX" in argv
+    assert argv[-1] == "a.py"
+
+
 def test_dev_engines_erclint_is_package_mode():
     erclint = next(e for e in DEV_ENGINES if e.id == "erclint")
     assert erclint.package_mode is True
