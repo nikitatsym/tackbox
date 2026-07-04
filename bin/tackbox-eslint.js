@@ -136,7 +136,7 @@ async function main() {
   process.exit(fail ? 1 : 0)
 }
 
-// no-sentry: CLI bootstrap, no reporter wired before main() runs
+// no-report: CLI bootstrap, no reporter wired before main() runs
 main().catch(err => {
   process.stderr.write('tackbox-eslint: ' + (err && err.stack || err) + '\n')
   process.exit(2)

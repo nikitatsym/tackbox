@@ -42,6 +42,17 @@ try {
 }
 """
 
+PY_DECLARED = """def report_it(e):
+    print(e)
+
+
+def handler():
+    try:
+        work()
+    except ValueError as e:
+        report_it(e)
+"""
+
 
 def _git(cwd: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
@@ -116,6 +127,23 @@ def test_js_dead_symbol_scope_independent(tmp_path):
     _init(tmp_path)
     r = _lint(tmp_path, "app.js")
     assert r.returncode == 2, f"scoped run must still validate out-of-scope declarations:\n{r.stdout}\n{r.stderr}"
+    assert "no top-level function nope" in r.stderr, r.stderr
+
+
+def test_py_declaration_recognized(tmp_path):
+    (tmp_path / "rep.py").write_text(PY_DECLARED)
+    (tmp_path / ".tackbox-reporters").write_text("rep.py#report_it: local py sink\n")
+    _init(tmp_path)
+    r = _lint(tmp_path)
+    assert r.returncode == 0, f"declared py sink should make the except clean:\n{r.stdout}\n{r.stderr}"
+
+
+def test_py_dead_symbol_exit_2(tmp_path):
+    (tmp_path / "rep.py").write_text(PY_DECLARED)
+    (tmp_path / ".tackbox-reporters").write_text("rep.py#nope: dead\n")
+    _init(tmp_path)
+    r = _lint(tmp_path)
+    assert r.returncode == 2, f"dead py symbol must exit 2:\n{r.stdout}\n{r.stderr}"
     assert "no top-level function nope" in r.stderr, r.stderr
 
 

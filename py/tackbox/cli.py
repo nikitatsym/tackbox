@@ -46,12 +46,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return _dispatch(argv)
     except BrokenPipeError:
-        # no-sentry: downstream pipe closed (lint | head) - exit 141, no traceback
+        # no-report: downstream pipe closed (lint | head) - exit 141, no traceback
         # dup2 to devnull so the interpreter's atexit flush does not re-raise.
         try:
             os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         except OSError:
-            # no-sentry: best-effort devnull redirect for the atexit flush; nothing to report
+            # no-report: best-effort devnull redirect for the atexit flush; nothing to report
             pass
         return 141
 
@@ -72,7 +72,7 @@ def _dispatch(argv: list[str] | None) -> int:
             cache.GoListError,
             reporters.ReportersError,
         ) as e:
-            # no-sentry: CLI boundary: surface as message + exit 2; a traceback here is the bug
+            # no-report: CLI boundary: surface as message + exit 2; a traceback here is the bug
             print(f"tackbox: {e}", file=sys.stderr)
             return 2
     if args.command == "doctor":
@@ -309,7 +309,7 @@ def _clean_args(r: EngineResult, info: dict) -> list[str]:
         try:
             findings = parse_erclint_findings(r.stdout)
         except ValueError:
-            # no-sentry: unparseable erclint json -> attribute nothing, never a false clean
+            # no-report: unparseable erclint json -> attribute nothing, never a false clean
             return []
         dirty_ips = {f.get("pkg") for f in findings}
         ip_map = info.get("arg_ip", {})
@@ -344,7 +344,7 @@ def _erclint_has_findings(stdout: str) -> bool:
     try:
         return bool(parse_erclint_findings(stdout))
     except ValueError:
-        # no-sentry: unparseable erclint output -> failing aggregate, never a false clean
+        # no-report: unparseable erclint output -> failing aggregate, never a false clean
         return True
 
 
@@ -439,7 +439,7 @@ def _print_banner(tackbox_root: Path) -> None:
 # -- Claude Code hook -----------------------------------------------------
 
 _HOOK_TOOLS = frozenset({"Edit", "Write", "MultiEdit"})
-_MARKER_RE = re.compile(r"(?:no-sentry|parse-skip|nil-return|long-comment):")
+_MARKER_RE = re.compile(r"(?:no-report|parse-skip|nil-return|long-comment):")
 
 
 def _run_hook() -> int:
@@ -454,7 +454,7 @@ def _run_hook() -> int:
         if not isinstance(event, dict):
             raise ValueError("hook event is not a JSON object")
     except (json.JSONDecodeError, ValueError, OSError) as e:
-        # no-sentry: hook contract: bad stdin -> exit 1 + one stderr line, non-blocking
+        # no-report: hook contract: bad stdin -> exit 1 + one stderr line, non-blocking
         print(f"tackbox hook: unreadable stdin: {e}", file=sys.stderr)
         return 1
     name = event.get("hook_event_name")
@@ -482,6 +482,7 @@ def _hook_repo_root(event: dict) -> Path | None:
             text=True,
         )
     except (OSError, subprocess.SubprocessError):
+        # no-report: git rev-parse cannot run here - not a git repo, the hook is a deliberate no-op
         return None
     if r.returncode != 0:
         return None
@@ -513,7 +514,8 @@ def _hook_post(event: dict) -> int:
     try:
         rel = str(target.resolve().relative_to(root.resolve()))
     except (ValueError, OSError):
-        return 0  # edited file outside the repo -> nothing to lint
+        # no-report: edited file resolves outside the repo - nothing in scope to lint
+        return 0
 
     try:
         results, _warnings, _orphans = _lint_results(
@@ -537,7 +539,7 @@ def _hook_post(event: dict) -> int:
         subprocess.CalledProcessError,
         ValueError,  # a non-compile erclint analyzer-load error
     ) as e:
-        # no-sentry: hook contract: infra error -> exit 1 + stderr, non-blocking
+        # no-report: hook contract: infra error -> exit 1 + stderr, non-blocking
         print(f"tackbox hook: {e}", file=sys.stderr)
         return 1
 
@@ -753,7 +755,7 @@ def _same_path(a: Path, b: Path) -> bool:
     try:
         return a.resolve() == b.resolve()
     except OSError:
-        # no-sentry: unresolvable path is simply not the reporters file - guard
+        # no-report: unresolvable path is simply not the reporters file - guard
         return False
 
 
@@ -761,6 +763,7 @@ def _hook_rel(target: Path, root: Path) -> str:
     try:
         return str(target.resolve().relative_to(root.resolve()))
     except (ValueError, OSError):
+        # no-report: unresolvable path - fall back to the raw target for the message
         return str(target)
 
 

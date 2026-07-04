@@ -2,7 +2,7 @@
 // reported - the recovered value flows into a go/report capture or a
 // `.tackbox-reporters` sink - or re-panicked so the original stack survives.
 // A bare recover that swallows the value is a finding unless it carries a
-// `// no-sentry: <reason>` marker.
+// `// no-report: <reason>` marker.
 package recoverswallow
 
 import (
@@ -17,11 +17,11 @@ import (
 
 var Analyzer = &analysis.Analyzer{
 	Name: "recoverswallow",
-	Doc:  "ERC007: recovered panic must be reported or re-panicked, or carry `// no-sentry:` marker",
+	Doc:  "ERC007: recovered panic must be reported or re-panicked, or carry `// no-report:` marker",
 	Run:  run,
 }
 
-const msg = "ERC007: recovered panic must be reported (go/report or declared sink receiving it) or re-panicked, or carry `// no-sentry: <reason>`"
+const msg = "ERC007: recovered panic must be reported (go/report or declared sink receiving it) or re-panicked, or carry `// no-report: <reason>`"
 
 func run(pass *analysis.Pass) (interface{}, error) {
 	astutil.EachFile(pass, func(f *ast.File) {
@@ -144,5 +144,5 @@ func callsIn(stmts []ast.Stmt) []*ast.CallExpr {
 
 func markerAbove(idx *markers.Index, node ast.Node) bool {
 	m, ok := idx.Above(node)
-	return ok && m.Kind == markers.NoSentry
+	return ok && m.Kind == markers.NoReport
 }

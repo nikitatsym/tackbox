@@ -89,7 +89,7 @@ def cmd_check() -> int:
     try:
         current = json.loads(LOCK_FILE.read_text())
     except json.JSONDecodeError as e:
-        # no-sentry: prints the parse error and fails the gate (exit 1)
+        # no-report: prints the parse error and fails the gate (exit 1)
         print(f"engines/lock.json is not valid JSON: {e}", file=sys.stderr)
         return 1
     fails: list[str] = []

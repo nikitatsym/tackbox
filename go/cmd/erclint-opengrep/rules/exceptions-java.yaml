@@ -17,8 +17,8 @@ rules:
             throw ...;
             ...
           }
-      # no-sentry escape; [ \t] not \s so an empty reason does not suppress.
-      - pattern-not-regex: '(?m)//[ \t]*no-sentry:[ \t]*\S'
+      # no-report escape; [ \t] not \s so an empty reason does not suppress.
+      - pattern-not-regex: '(?m)//[ \t]*no-report:[ \t]*\S'
 
   - id: java-catch-throwable
     languages: [java]

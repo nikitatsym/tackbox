@@ -73,11 +73,11 @@ See `go/README.md` for the Go ruleset. The spec these rules implement
 lives outside this repo (private notes); the public summary:
 
 - Every `err != nil` branch must propagate, capture, or carry an
-  explicit `// no-sentry: <reason>` marker.
+  explicit `// no-report: <reason>` marker.
 - Common parser results that fall through to `nil` must capture or
   carry `// parse-skip: <reason>`.
 - Terminal exits (`log.Fatal*`, `os.Exit`, project-local `die`) must
-  be preceded by a capture call or carry a `// no-sentry: <reason>`
+  be preceded by a capture call or carry a `// no-report: <reason>`
   marker (e.g. for the normal `os.Exit(0)` at the end of main).
 - Bare `return nil` from a single-result function must carry
   `// nil-return: <reason>` or use `(val, ok)` / `(val, err)`.
@@ -89,7 +89,7 @@ lives outside this repo (private notes); the public summary:
 
 By design, the ruleset is a single non-negotiable bundle. There are
 no flags to disable individual rules. Suppressing a finding requires
-the explicit per-site marker (`// no-sentry`, `// parse-skip`,
+the explicit per-site marker (`// no-report`, `// parse-skip`,
 `// nil-return`) with a non-empty reason.
 
 Capture helpers are recognized by origin, not by name: a call counts
@@ -110,7 +110,7 @@ Claude Code hook event on stdin and dispatches by `hook_event_name`:
   finding it exits 2 with the finding on stderr, so the model sees it
   and fixes it in-loop. The authoritative gate stays pre-commit / CI.
 - **PreToolUse** asks for approval before a new suppression marker
-  (`// no-sentry`, `// parse-skip`, `// nil-return`, `// long-comment`)
+  (`// no-report`, `// parse-skip`, `// nil-return`, `// long-comment`)
   or a new `.tackbox-reporters` line lands; removing one is free.
 
 The hook is a no-op unless the edit's `cwd` is a git repo with a

@@ -2,7 +2,7 @@
 // propagate the error, capture it (a go/report call or a `.tackbox-reporters`
 // sink), report it via a printing terminal exit (`log.Fatal*`/`die` carrying
 // the error - a reported death; `os.Exit` prints nothing and is excluded), or
-// carry a `// no-sentry: <reason>` marker on the line directly above the if.
+// carry a `// no-report: <reason>` marker on the line directly above the if.
 package errcheck
 
 import (
@@ -18,7 +18,7 @@ import (
 
 var Analyzer = &analysis.Analyzer{
 	Name: "errcheck",
-	Doc:  "ERC001: err-branches must propagate, capture, report via terminal exit, or carry `// no-sentry:` marker",
+	Doc:  "ERC001: err-branches must propagate, capture, report via terminal exit, or carry `// no-report:` marker",
 	Run:  run,
 }
 
@@ -34,7 +34,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			if errName == "" {
 				return true
 			}
-			if m, ok := idx.Above(ifst); ok && m.Kind == markers.NoSentry {
+			if m, ok := idx.Above(ifst); ok && m.Kind == markers.NoReport {
 				return true
 			}
 			if propagates(ifst.Body, errName) {
@@ -47,7 +47,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 				return true
 			}
 			pass.Reportf(ifst.Pos(),
-				"ERC001: err-branch must propagate, capture, carry the error into a terminal exit, or carry `// no-sentry: <reason>` (err=%s)",
+				"ERC001: err-branch must propagate, capture, carry the error into a terminal exit, or carry `// no-report: <reason>` (err=%s)",
 				errName)
 			return true
 		})

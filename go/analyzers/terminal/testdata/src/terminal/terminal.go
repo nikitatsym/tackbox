@@ -19,12 +19,12 @@ func okCapture() {
 }
 
 func okMarker() {
-	// no-sentry: bootstrap-only, no Sentry stack yet
+	// no-report: bootstrap-only, no Sentry stack yet
 	log.Fatal("standalone boot failure")
 }
 
 func okExitMarker() {
-	// no-sentry: normal exit
+	// no-report: normal exit
 	os.Exit(0)
 }
 

@@ -37,7 +37,7 @@ async function run() {
   process.exit(count > 0 ? 1 : 0)
 }
 
-// no-sentry: CLI bootstrap, no reporter wired before run() executes
+// no-report: CLI bootstrap, no reporter wired before run() executes
 run().catch(err => {
   process.stderr.write('tackbox-mdlint: ' + (err && err.stack || err) + '\n')
   process.exit(2)

@@ -166,7 +166,7 @@ def _check_binaries_start() -> CheckResult:
                 argv, capture_output=True, timeout=15, env=env
             )
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as e:
-            # no-sentry: doctor collects every failure to report them all (no short-circuit)
+            # no-report: doctor collects every failure to report them all (no short-circuit)
             failures.append(f"{name}({type(e).__name__})")
             continue
         rc = completed.returncode
@@ -212,6 +212,7 @@ def _source_set_has_go() -> bool:
             ).stdout.strip()
         )
     except (FileNotFoundError, subprocess.CalledProcessError):
+        # no-report: git absent or failed - treat as no go sources; the go-toolchain probe surfaces it
         return False
     try:
         stage_raw = subprocess.run(
@@ -223,6 +224,7 @@ def _source_set_has_go() -> bool:
             cwd=repo_root, capture_output=True, check=True,
         ).stdout
     except (FileNotFoundError, subprocess.CalledProcessError):
+        # no-report: git ls-files failed - doctor degrades to "no go sources", not a run failure
         return False
     files, _ = filter_source_set(
         parse_ls_files_stage(stage_raw),

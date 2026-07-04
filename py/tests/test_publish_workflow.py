@@ -349,6 +349,7 @@ def _find_matrix_job(jobs: dict, required_platforms: set) -> dict | None:
         try:
             platforms = {e["platform"] for e in include}
         except (KeyError, TypeError):
+            # no-report: malformed matrix entry in the scanned workflow yaml - skip it
             continue
         if platforms != required_platforms:
             continue

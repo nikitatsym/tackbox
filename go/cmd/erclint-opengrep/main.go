@@ -35,7 +35,7 @@ func main() {
 		}
 	}
 	if dsn := report.DSNFromEnv(); dsn != "" {
-		// no-sentry: report itself failed, capture would be a no-op
+		// no-report: report itself failed, capture would be a no-op
 		if err := report.Init(report.Options{
 			DSN:           dsn,
 			Release:       "erclint-opengrep",
@@ -53,7 +53,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "erclint-opengrep:", err)
 		os.Exit(2)
 	}
-	// no-sentry: normal exit
+	// no-report: normal exit
 	os.Exit(code)
 }
 
@@ -66,7 +66,7 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 		return 0, err
 	}
 
-	scanArgs, pyNames, javaNames := splitReporters(args)
+	scanArgs, javaNames := splitReporters(args)
 	machine, scanArgs := splitMachine(scanArgs)
 
 	rulesDir, err := os.MkdirTemp("", "erclint-rules-*")
@@ -74,7 +74,7 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 		return 0, fmt.Errorf("create rules dir: %w", err)
 	}
 	defer os.RemoveAll(rulesDir)
-	if err := extractRules(rulesDir, pyNames, javaNames); err != nil {
+	if err := extractRules(rulesDir, javaNames); err != nil {
 		return 0, fmt.Errorf("extract rules: %w", err)
 	}
 
@@ -142,7 +142,7 @@ func rejectSemgrepignore(dir string) error {
 	return fmt.Errorf(
 		".semgrepignore in %s is not supported: tackbox does not allow "+
 			"configurable engine excludes; use suppression markers "+
-			"(// no-sentry: ..., // parse-skip: ..., // nil-return: ...) instead",
+			"(// no-report: ..., // parse-skip: ..., // nil-return: ...) instead",
 		dir,
 	)
 }
@@ -166,7 +166,7 @@ func rewritePaths(s, cwd string) string {
 	return strings.ReplaceAll(s, cwd+string(os.PathSeparator), "")
 }
 
-func extractRules(dst string, pyNames, javaNames []string) error {
+func extractRules(dst string, javaNames []string) error {
 	return fs.WalkDir(rulesFS, "rules", func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -183,10 +183,7 @@ func extractRules(dst string, pyNames, javaNames []string) error {
 		if err != nil {
 			return err
 		}
-		switch d.Name() {
-		case "exceptions-python.yaml":
-			data = injectReporters(data, pyNames, pythonReporterBlock)
-		case "exceptions-java.yaml":
+		if d.Name() == "exceptions-java.yaml" {
 			data = injectReporters(data, javaNames, javaReporterBlock)
 		}
 		return os.WriteFile(target, data, 0o644)
@@ -196,10 +193,10 @@ func extractRules(dst string, pyNames, javaNames []string) error {
 const reportersFlag = "--reporters="
 
 // splitReporters strips `--reporters=file#func,...` out of the scan args and
-// buckets the declared function names by source language. opengrep is the
-// syntactic tier: the file is only used to pick python vs java, the symbol is
-// not resolved.
-func splitReporters(args []string) (scan, py, java []string) {
+// buckets the declared java function names. opengrep is the syntactic tier for
+// java: the file only picks the language, the symbol is not resolved. Python
+// reporters are owned by the pyrules engine, not opengrep.
+func splitReporters(args []string) (scan, java []string) {
 	for _, a := range args {
 		if !strings.HasPrefix(a, reportersFlag) {
 			scan = append(scan, a)
@@ -210,15 +207,12 @@ func splitReporters(args []string) (scan, py, java []string) {
 			if hash <= 0 {
 				continue
 			}
-			switch filepath.Ext(d[:hash]) {
-			case ".py":
-				py = append(py, d[hash+1:])
-			case ".java":
+			if filepath.Ext(d[:hash]) == ".java" {
 				java = append(java, d[hash+1:])
 			}
 		}
 	}
-	return scan, py, java
+	return scan, java
 }
 
 // splitMachine strips the internal --machine flag (opengrep JSON translated to
@@ -285,13 +279,13 @@ func emitMachine(w io.Writer, jsonOut []byte, cwd string) error {
 }
 
 // injectReporters splices a pattern-not per declared name into the swallowed
-// rule, just before the no-sentry escape. A declared reporter that the caught
+// rule, just before the no-report escape. A declared reporter that the caught
 // error flows into ($E in its args) is then not a swallow.
 func injectReporters(data []byte, names []string, block func(string) string) []byte {
 	if len(names) == 0 {
 		return data
 	}
-	const anchor = "      # no-sentry escape;"
+	const anchor = "      # no-report escape;"
 	idx := strings.Index(string(data), anchor)
 	if idx < 0 {
 		return data
@@ -301,15 +295,6 @@ func injectReporters(data []byte, names []string, block func(string) string) []b
 		b.WriteString(block(n))
 	}
 	return []byte(string(data[:idx]) + b.String() + string(data[idx:]))
-}
-
-func pythonReporterBlock(name string) string {
-	return "      - pattern-not: |\n" +
-		"          try:\n" +
-		"              ...\n" +
-		"          except $T as $E:\n" +
-		"              ...\n" +
-		"              " + name + "(..., $E, ...)\n"
 }
 
 func javaReporterBlock(name string) string {

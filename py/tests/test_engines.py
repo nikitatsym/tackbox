@@ -212,6 +212,7 @@ def test_dev_engines_registry_order_locked():
         "erclint-opengrep",
         "tackbox-eslint",
         "tackbox-mdlint",
+        "pyrules",
     ]
 
 

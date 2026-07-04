@@ -27,7 +27,7 @@ func okRepanic() {
 // clean: marker with a reason suppresses.
 func okMarker() {
 	defer func() {
-		// no-sentry: shutdown path, nothing left to report
+		// no-report: shutdown path, nothing left to report
 		if r := recover(); r != nil {
 			log.Println("recovered", r)
 		}
@@ -64,7 +64,7 @@ func discard() {
 // finding: marker without a reason does not suppress.
 func markerNoReason() {
 	defer func() {
-		// no-sentry:
+		// no-report:
 		if r := recover(); r != nil { // want `ERC007:.*recovered`
 			log.Println("recovered")
 		}

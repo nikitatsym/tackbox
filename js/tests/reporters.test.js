@@ -93,7 +93,7 @@ test('no-console-error exempts declared reporter bodies', () => {
   })
 })
 
-// report.js self-lints clean under imports-only: its catches carry no-sentry
+// report.js self-lints clean under imports-only: its catches carry no-report
 // markers and its reportError calls sit in event callbacks, not catches. This
 // is an acceptance assert, not a resolution branch.
 test('report.js self-lint is clean under imports-only', async () => {
