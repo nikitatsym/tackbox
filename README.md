@@ -49,24 +49,23 @@ repos:
         always_run: true
 ```
 
-## Quick start (Go CLI, no pre-commit)
+## Distribution
 
-```bash
-go install github.com/nikitatsym/tackbox/go/cmd/erclint@latest
-erclint ./...
-```
+tackbox ships as two PyPI wheels, so `uvx tackbox@latest` brings the
+whole stack with no other install step:
 
-## Quick start (opengrep wrapper, no pre-commit)
+- `tackbox` (thin) - the Python CLI, the `erclint` /
+  `erclint-opengrep` binaries, the opengrep rule yamls, and the
+  ESLint and markdownlint plugins and presets. Bumped on every push.
+- `tackbox-engines` (fat) - the bundled Node runtime, the `opengrep`
+  binary, and the vendored third-party `node_modules`. Bumped only
+  when an engine changes; the thin wheel pins it exactly.
 
-```bash
-go install github.com/nikitatsym/tackbox/go/cmd/erclint-opengrep@latest
-erclint-opengrep path/to/sources
-```
-
-`erclint-opengrep` is a thin Go wrapper: it embeds the rule yamls
-and shells out to `opengrep scan`. Opengrep itself must be on PATH
-(install from <https://github.com/opengrep/opengrep/releases> or via
-Homebrew).
+Platform wheels cover Linux x86_64/arm64 (manylinux), macOS
+x86_64/arm64, and Windows x86_64. `engines.json` in the thin wheel
+records the source, version, sha256, and license of every bundled
+binary and dependency; `tackbox doctor` verifies the payload against
+it.
 
 ## What the rules enforce
 
@@ -140,6 +139,7 @@ fast in-loop feedback, not the authoritative gate.
 
 ```text
 dev.py                                 # lint / test / e2e / check (dev-script)
+hygiene.py                             # dev.py lint hygiene (conflict/yaml/ws/newline)
 go.mod                                 # Go module
 package.json                           # npm package (ESLint plugin + report helper)
 eslint.config.preset.js                # default config used by tackbox-eslint bin
@@ -168,4 +168,6 @@ later version, next to `go.mod`, `package.json`, and `py/`.
 
 ## Repo conventions
 
-- Versioned via git tags (`vMAJOR.MINOR.PATCH`). Consumers pin `rev`.
+- Versioned via git tags (`vMAJOR.MINOR.PATCH`); CI auto-bumps the
+  patch tag on every green push to `main` and publishes the wheels.
+  Consumers track `@latest`, never a pinned version.

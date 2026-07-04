@@ -3,11 +3,13 @@
 Error reporting coverage analyzer for Go. Implements the rules
 described in the parent README and the source spec.
 
-## Install
+## Usage
+
+erclint ships inside the `tackbox` wheel and is run by the CLI - there
+is no separate install:
 
 ```bash
-go install github.com/nikitatsym/tackbox/go/cmd/erclint@latest
-erclint ./...
+uvx tackbox@latest lint .
 ```
 
 ## Rules
@@ -16,10 +18,11 @@ erclint ./...
 |--------|---------------|--------------------------------------|
 | ERC001 | errcheck      | err branch must propagate or capture |
 | ERC002 | parsenil      | parser err must capture or mark      |
-| ERC003 | terminal      | Fatal/Exit/die need capture above    |
+| ERC003 | terminal      | Fatal/Exit/die must capture or report|
 | ERC004 | returnnil     | bare nil return needs marker or pair |
 | ERC005 | doublecapture | no capture and `return err` together |
 | ERC006 | fingerprint   | capture args may not name secrets    |
+| ERC007 | recoverswallow| recover must report or re-panic      |
 
 Details per rule:
 
@@ -27,15 +30,20 @@ Details per rule:
   capture, or carry `// no-sentry: <reason>`.
 - ERC002 `parsenil` - parser results that fall through to nil must
   capture or carry `// parse-skip: <reason>`.
-- ERC003 `terminal` - `log.Fatal*`, `os.Exit`, project-local `die`:
-  must be preceded by a capture call or carry `// no-sentry: <reason>`
-  (e.g. for normal `os.Exit(0)` at the end of `main`).
+- ERC003 `terminal` - `log.Fatal*`, `os.Exit`, project-local `die`
+  must be preceded by a capture, carry the error into their own
+  arguments (`log.Fatal(err)`, a reported death), resolve to a declared
+  sink, or carry `// no-sentry: <reason>` (e.g. the normal `os.Exit(0)`
+  at the end of `main`).
 - ERC004 `returnnil` - bare `return nil` on `*T`/`[]T`/`map` needs
   `// nil-return: <reason>` or use `(val, ok)` / `(val, err)`.
 - ERC005 `doublecapture` - a single err-branch may not both capture
   and `return err`.
 - ERC006 `fingerprint` - capture-call fingerprint args may not name
   secrets or carry raw user input.
+- ERC007 `recoverswallow` - a `recover()` must report the recovered
+  value (to `go/report` or a declared sink that receives it) or
+  re-panic; a bare recover-and-continue needs `// no-sentry: <reason>`.
 
 `_test.go` files are skipped by every analyzer.
 
@@ -62,10 +70,19 @@ return nil
 
 ## Capture and propagation
 
-Capture call names matched on the last identifier of the call
-expression: `sentryErr`, `SentryErr`, `Warn`, `Panic`. So both bare
-`sentryErr(...)` (gmux-style local helper) and `report.SentryErr(...)`
-(from `github.com/nikitatsym/tackbox/go/report`) are recognized.
+A call counts as a capture by origin, never by name. erclint uses type
+information: the callee must resolve to
+`github.com/nikitatsym/tackbox/go/report` and be a recognized export -
+`SentryErr` / `Warn` (error-capture) or `Panic` (panic-capture). Other
+exports of that package (`Init`, `Flush`, `Crumb`, ...) are not
+captures, and a bare local `sentryErr(...)` that merely shares the name
+is not trusted.
+
+A repo may also declare its own sinks in a root `.tackbox-reporters`
+file (`file#function: reason`); a declared call counts only when the
+caught error flows into its arguments. Declarations are validated every
+run - a dead file or symbol is a hard error.
+
 Propagation means `return ..., err`, `return err`, or `panic(err)`
 referencing the err identifier.
 
