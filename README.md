@@ -103,6 +103,40 @@ names a report sink - it is not an exclude: it disables no rule, and a
 declared call is honored only when the caught error flows into its
 arguments.
 
+## Agent hook (Claude Code)
+
+`tackbox hook` wires the rules into an agent's edit loop. It reads a
+Claude Code hook event on stdin and dispatches by `hook_event_name`:
+
+- **PostToolUse** re-lints the edited file (Go: its package). On a
+  finding it exits 2 with the finding on stderr, so the model sees it
+  and fixes it in-loop. The authoritative gate stays pre-commit / CI.
+- **PreToolUse** asks for approval before a new suppression marker
+  (`// no-sentry`, `// parse-skip`, `// nil-return`, `// long-comment`)
+  or a new `.tackbox-reporters` line lands; removing one is free.
+
+The hook is a no-op unless the edit's `cwd` is a git repo with a
+`dev.py` at its root. Wire it once, globally, in
+`~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Edit|Write|MultiEdit",
+       "hooks": [{"type": "command", "command": "uvx tackbox hook"}]}
+    ],
+    "PostToolUse": [
+      {"matcher": "Edit|Write|MultiEdit",
+       "hooks": [{"type": "command", "command": "uvx tackbox hook", "timeout": 120}]}
+    ]
+  }
+}
+```
+
+`uvx tackbox hook` runs the cached tackbox (no `@latest`): the hook is
+fast in-loop feedback, not the authoritative gate.
+
 ## Layout
 
 ```text

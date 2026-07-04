@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 from . import __version__, cache, doctor, reporters
@@ -72,6 +75,8 @@ def _dispatch(argv: list[str] | None) -> int:
     if args.command == "doctor":
         _print_banner(_tackbox_root())
         return doctor.run(sys.stdout)
+    if args.command == "hook":
+        return _run_hook()
     print(f"tackbox: unknown command {args.command!r}", file=sys.stderr)
     return 2
 
@@ -98,6 +103,9 @@ def _parse_argv(argv: list[str]) -> argparse.Namespace:
         help="restrict to three-dot diff <ref>...HEAD unioned with dirty tree",
     )
     sub.add_parser("doctor", help="verify the hermetic install is functional")
+    sub.add_parser(
+        "hook", help="Claude Code hook: PostToolUse lint + PreToolUse marker gate"
+    )
     return parser.parse_args(argv)
 
 
@@ -105,37 +113,30 @@ def _tackbox_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def _run_lint(scope: str, no_cache: bool, changed: bool, since: str | None) -> int:
-    repo_root = _find_repo_root()
-    tackbox_root = _tackbox_root()
+def _lint_results(
+    repo_root: Path,
+    tackbox_root: Path,
+    scope: str,
+    no_cache: bool,
+    changed_scope: set[str] | None,
+):
+    """Run the lint pipeline for `scope`; return (results, warnings, orphans).
+
+    results is None when the scope matched no files (nothing to lint), []
+    when files matched but no engine applies, else the EngineResult list.
+    Prints nothing - callers own the banner / warning / findings output.
+    Infra failures (PathspecMagicError, GoListError, ReportersError, git)
+    propagate to the caller.
+    """
     reporter_pairs = reporters.pairs(reporters.load(repo_root))
-
-    changed_scope: set[str] | None = None
-    if changed or since is not None:
-        changed_scope = _compute_changed_scope(repo_root, since)
-
     files, warnings = _collect_source_set(repo_root, scope, changed_scope)
-    for w in warnings:
-        print(f"tackbox: warning: {w.reason}: {w.path}", file=sys.stderr)
-
     if not files:
-        print(
-            f"tackbox: scope {scope!r} matched no files in the source set",
-            file=sys.stderr,
-        )
-        return 2
-
-    _print_banner(tackbox_root)
+        return None, warnings, []
 
     plan = dispatch(files, active_engines())
     plan, go_orphans = _drop_go_orphans(plan, repo_root)
-    for pkg in go_orphans:
-        print(
-            f"tackbox: warning: no enclosing go.mod, skipped: {pkg}",
-            file=sys.stderr,
-        )
     if not plan:
-        return 0
+        return [], warnings, go_orphans
 
     # Self-lint: tackbox lints itself. Cache is disabled so tackbox never
     # self-caches its own bugs (plan: "чтобы tackbox не самокэшировал").
@@ -153,6 +154,37 @@ def _run_lint(scope: str, no_cache: bool, changed: bool, since: str | None) -> i
         results = run_engines(filtered_plan, repo_root, tackbox_root, reporter_pairs)
         _mark_clean_units(results, pending, engines_hash, cache_root)
         cache.gc_soft_cap(engines_hash, cache.SOFT_CAP, cache_root)
+    return results, warnings, go_orphans
+
+
+def _run_lint(scope: str, no_cache: bool, changed: bool, since: str | None) -> int:
+    repo_root = _find_repo_root()
+    tackbox_root = _tackbox_root()
+
+    changed_scope: set[str] | None = None
+    if changed or since is not None:
+        changed_scope = _compute_changed_scope(repo_root, since)
+
+    results, warnings, go_orphans = _lint_results(
+        repo_root, tackbox_root, scope, no_cache, changed_scope
+    )
+    for w in warnings:
+        print(f"tackbox: warning: {w.reason}: {w.path}", file=sys.stderr)
+    if results is None:
+        print(
+            f"tackbox: scope {scope!r} matched no files in the source set",
+            file=sys.stderr,
+        )
+        return 2
+
+    _print_banner(tackbox_root)
+    for pkg in go_orphans:
+        print(
+            f"tackbox: warning: no enclosing go.mod, skipped: {pkg}",
+            file=sys.stderr,
+        )
+    if not results:
+        return 0
 
     for r in results:
         sys.stdout.write(f"== {r.engine_id} ==\n")
@@ -397,6 +429,220 @@ def _print_banner(tackbox_root: Path) -> None:
         engines_id = "dev"
     parts = " ".join(f"{k}={versions[k]}" for k in _BANNER_ORDER)
     print(f"tackbox {__version__} engines={engines_id} {parts}", file=sys.stderr)
+
+
+# -- Claude Code hook -----------------------------------------------------
+
+_HOOK_TOOLS = frozenset({"Edit", "Write", "MultiEdit"})
+_MARKER_RE = re.compile(r"(?:no-sentry|parse-skip|nil-return|long-comment):")
+
+
+def _run_hook() -> int:
+    """Dispatch a Claude Code hook event read as JSON from stdin.
+
+    Unknown / missing event -> exit 0 (forward-compat: never break another
+    hook consumer). Unreadable stdin / bad JSON -> exit 1 + one stderr line
+    (non-blocking). No version banner in hook mode.
+    """
+    try:
+        event = json.loads(sys.stdin.read())
+        if not isinstance(event, dict):
+            raise ValueError("hook event is not a JSON object")
+    except (json.JSONDecodeError, ValueError, OSError) as e:
+        print(f"tackbox hook: unreadable stdin: {e}", file=sys.stderr)
+        return 1
+    name = event.get("hook_event_name")
+    if name == "PreToolUse":
+        return _hook_pre(event)
+    if name == "PostToolUse":
+        return _hook_post(event)
+    return 0
+
+
+def _hook_repo_root(event: dict) -> Path | None:
+    """Repo root for the event's cwd, or None if the guard fails.
+
+    Guard (both modes): cwd must sit inside a git repo whose root holds a
+    `dev.py`. Anywhere else the hook is a deliberate no-op.
+    """
+    cwd = event.get("cwd")
+    if not cwd:
+        return None
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    root = Path(r.stdout.strip())
+    if not (root / "dev.py").is_file():
+        return None
+    return root
+
+
+def _hook_target(event: dict) -> tuple[Path | None, dict]:
+    """(file_path, tool_input) for an Edit/Write/MultiEdit event, else
+    (None, _) so the caller no-ops on other tools or a missing path."""
+    if event.get("tool_name") not in _HOOK_TOOLS:
+        return None, {}
+    tool_input = event.get("tool_input") or {}
+    file_path = tool_input.get("file_path")
+    if not file_path:
+        return None, tool_input
+    return Path(file_path), tool_input
+
+
+def _hook_post(event: dict) -> int:
+    root = _hook_repo_root(event)
+    if root is None:
+        return 0
+    target, _ = _hook_target(event)
+    if target is None:
+        return 0
+    try:
+        rel = str(target.resolve().relative_to(root.resolve()))
+    except (ValueError, OSError):
+        return 0  # edited file outside the repo -> nothing to lint
+
+    try:
+        results, _warnings, _orphans = _lint_results(
+            root, _tackbox_root(), rel, no_cache=False, changed_scope=None
+        )
+    except (
+        PathspecMagicError,
+        ChangedScopeError,
+        cache.GoListError,
+        reporters.ReportersError,
+        subprocess.CalledProcessError,
+    ) as e:
+        print(f"tackbox hook: {e}", file=sys.stderr)
+        return 1
+
+    if results is None or _aggregate_exit(results) == 0:
+        return 0  # scope matched no files, or clean
+
+    for r in results:
+        sys.stderr.write(f"== {r.engine_id} ==\n")
+        for chunk in (r.stdout, r.stderr):
+            if chunk:
+                sys.stderr.write(chunk if chunk.endswith("\n") else chunk + "\n")
+    return 2
+
+
+def _hook_pre(event: dict) -> int:
+    root = _hook_repo_root(event)
+    if root is None:
+        return 0
+    target, tool_input = _hook_target(event)
+    if target is None:
+        return 0
+    old, new, replace_all = _hook_pre_content(event["tool_name"], tool_input, target)
+    rel = _hook_rel(target, root)
+
+    if _same_path(target, root / reporters.FILENAME):
+        added = _reporters_added_line(old, new)
+        if added is not None:
+            return _hook_ask(f".tackbox-reporters line added: {added}", rel)
+        return 0
+
+    marker = _marker_gate(old, new, replace_all)
+    if marker is not None:
+        return _hook_ask(f"suppression marker: {marker}", rel)
+    return 0
+
+
+def _hook_pre_content(
+    tool_name: str, tool_input: dict, target: Path
+) -> tuple[str, str, bool]:
+    """(old, new, replace_all) content for the marker / line diff.
+
+    Write compares against the file on disk (absent -> empty); Edit uses its
+    old/new strings; MultiEdit concatenates every edit's strings.
+    """
+    if tool_name == "Write":
+        old = target.read_text(encoding="utf-8") if target.is_file() else ""
+        return old, tool_input.get("content") or "", False
+    if tool_name == "MultiEdit":
+        edits = tool_input.get("edits") or []
+        old = "\n".join(e.get("old_string") or "" for e in edits)
+        new = "\n".join(e.get("new_string") or "" for e in edits)
+        return old, new, any(e.get("replace_all") for e in edits)
+    return (
+        tool_input.get("old_string") or "",
+        tool_input.get("new_string") or "",
+        bool(tool_input.get("replace_all")),
+    )
+
+
+def _markers(content: str) -> list[str]:
+    """Each marker occurrence as `keyword: reason` (through end of its line,
+    trimmed). The multiset drives new-marker and reason-change detection."""
+    out: list[str] = []
+    for m in _MARKER_RE.finditer(content):
+        end = content.find("\n", m.start())
+        out.append(content[m.start() : len(content) if end < 0 else end].strip())
+    return out
+
+
+def _marker_gate(old: str, new: str, replace_all: bool) -> str | None:
+    """The marker string that must be approved, or None to allow.
+
+    replace_all is conservative: any marker present in new but not old asks.
+    Otherwise count-first: more markers -> ask; equal count but a changed
+    marker/reason -> ask; fewer -> allow (removing a marker is free).
+    """
+    old_c, new_c = Counter(_markers(old)), Counter(_markers(new))
+    added = list((new_c - old_c).elements())
+    if replace_all:
+        return added[0] if added else None
+    if sum(new_c.values()) > sum(old_c.values()):
+        return added[0] if added else next(iter(new_c))
+    if sum(new_c.values()) == sum(old_c.values()) and new_c != old_c:
+        return added[0] if added else "reason changed"
+    return None
+
+
+def _reporters_added_line(old: str, new: str) -> str | None:
+    """A `.tackbox-reporters` line in new but not old (trim-normalized), or
+    None when the change only removes lines."""
+    old_c = Counter(s.strip() for s in old.splitlines() if s.strip())
+    new_c = Counter(s.strip() for s in new.splitlines() if s.strip())
+    added = list((new_c - old_c).elements())
+    return added[0] if added else None
+
+
+def _hook_ask(reason: str, rel: str) -> int:
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "ask",
+                    "permissionDecisionReason": f"{reason} ({rel})",
+                }
+            }
+        )
+    )
+    return 0
+
+
+def _same_path(a: Path, b: Path) -> bool:
+    try:
+        return a.resolve() == b.resolve()
+    except OSError:
+        return False
+
+
+def _hook_rel(target: Path, root: Path) -> str:
+    try:
+        return str(target.resolve().relative_to(root.resolve()))
+    except (ValueError, OSError):
+        return str(target)
 
 
 if __name__ == "__main__":
