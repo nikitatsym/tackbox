@@ -15,6 +15,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tackbox.cli import _partition_findings, _span_lines
+from tackbox.engines import Finding
+
 TACKBOX_ROOT = Path(__file__).resolve().parents[2]
 
 GO_MOD = "module fixture\n\ngo 1.21\n"
@@ -36,6 +39,47 @@ GO_CLEAN = """package pkg
 
 func Two() int {
 \treturn 2
+}
+"""
+
+# ERC001 on line 7 (Fail); Clean() below is edited on a line the finding is not on.
+GO_ERC001_PLUS_CLEAN = """package pkg
+
+import "errors"
+
+func Fail() error {
+\terr := errors.New("x")
+\tif err != nil {
+\t\t_ = "swallowed"
+\t}
+\treturn errors.New("noop")
+}
+
+func Clean() int {
+\treturn 3
+}
+"""
+
+# Two ERC001 branches: A on line 7, B on line 15. Distinct bodies so an edit can
+# span exactly one.
+GO_TWO_ERC001 = """package pkg
+
+import "errors"
+
+func A() error {
+\terr := errors.New("x")
+\tif err != nil {
+\t\t_ = "swallowed"
+\t}
+\treturn errors.New("noop")
+}
+
+func B() error {
+\terr := errors.New("y")
+\tif err != nil {
+\t\t_ = "swallowed"
+\t}
+\treturn errors.New("noop")
 }
 """
 
@@ -98,7 +142,8 @@ def test_post_go_erc001_exit2_stderr(tmp_path):
         }
     )
     assert r.returncode == 2, f"findings must block with exit 2:\n{r.stdout}\n{r.stderr}"
-    assert "ERC001" in r.stderr, f"findings go to stderr:\n{r.stderr}"
+    # No new_string in the event -> whole-file scope; the erclint finding blocks.
+    assert "pkg/bad.go:7" in r.stderr and "errcheck" in r.stderr, r.stderr
     assert r.stdout == "", f"nothing on stdout in PostToolUse:\n{r.stdout}"
 
 
@@ -194,6 +239,88 @@ def test_broken_stdin_exit1(tmp_path):
     assert r.returncode == 1, f"broken stdin must exit 1 (non-blocking):\n{r.stdout}\n{r.stderr}"
     assert r.stderr.strip() != "", "one stderr line expected"
     assert "Traceback" not in r.stderr, r.stderr
+
+
+# -- PostToolUse diff-scope -----------------------------------------------
+
+
+def test_post_edit_clean_line_pre_existing_elsewhere_silent(tmp_path):
+    # Diff-scope: editing a clean line (Clean's return) while an ERC001 sits on
+    # line 7 (Fail) must NOT block. The clean path is fully silent - at exit 0
+    # PostToolUse output never reaches the model, so a heads-up line has no home.
+    (tmp_path / "go.mod").write_text(GO_MOD)
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "bad.go").write_text(GO_ERC001_PLUS_CLEAN)
+    _dev_py(tmp_path)
+    _init(tmp_path)
+    r = _hook(
+        {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Edit",
+            "cwd": str(tmp_path),
+            "tool_input": {
+                "file_path": str(tmp_path / "pkg" / "bad.go"),
+                "old_string": "\treturn 2",
+                "new_string": "\treturn 3",
+            },
+        }
+    )
+    assert r.returncode == 0, f"pre-existing finding elsewhere must not block:\n{r.stderr}"
+    assert r.stdout == "" and r.stderr == "", f"clean path is fully silent:\n{r.stdout!r}\n{r.stderr!r}"
+
+
+def test_post_edit_finding_line_blocks_and_summarizes_pre_existing(tmp_path):
+    # Editing A's err-branch (line 7) blocks on A's finding; B's finding (line 15)
+    # is pre-existing elsewhere - summarized in one line, not itemized.
+    (tmp_path / "go.mod").write_text(GO_MOD)
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "bad.go").write_text(GO_TWO_ERC001)
+    _dev_py(tmp_path)
+    _init(tmp_path)
+    r = _hook(
+        {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Edit",
+            "cwd": str(tmp_path),
+            "tool_input": {
+                "file_path": str(tmp_path / "pkg" / "bad.go"),
+                "old_string": "x",
+                "new_string": '\terr := errors.New("x")\n\tif err != nil {',
+            },
+        }
+    )
+    assert r.returncode == 2, f"a finding on the edited line must block:\n{r.stderr}"
+    assert "pkg/bad.go:7" in r.stderr and "errcheck" in r.stderr, r.stderr
+    assert "1 pre-existing elsewhere" in r.stderr, r.stderr
+    assert "pkg/bad.go:15" not in r.stderr, f"pre-existing is summarized, not itemized:\n{r.stderr}"
+
+
+def test_span_lines_multiline_and_repeat():
+    # A repeated substring counts every occurrence (over-report), and a two-line
+    # substring spans both its lines.
+    assert _span_lines("a\nX\nb\nX\nc\n", ["X"]) == {2, 4}
+    assert _span_lines("p\nq\nr\n", ["q\nr"]) == {2, 3}
+
+
+def test_partition_location_unknown_over_reports():
+    unknown = Finding(rule="opengrep-json-unparseable", file=None, line=None)
+    on, els = _partition_findings([unknown], "a.go", {1})
+    assert on == [unknown] and els == []
+
+
+def test_partition_scopes_by_file_and_line():
+    on_diff = Finding(rule="errcheck", file="a.go", line=7)
+    off_line = Finding(rule="errcheck", file="a.go", line=99)
+    other_file = Finding(rule="errcheck", file="b.go", line=7)
+    on, els = _partition_findings([on_diff, off_line, other_file], "a.go", {7})
+    assert on == [on_diff]
+    assert els == [off_line, other_file]
+
+
+def test_partition_whole_file_when_affected_none():
+    f = Finding(rule="errcheck", file="a.go", line=7)
+    on, els = _partition_findings([f], "a.go", None)
+    assert on == [f] and els == []
 
 
 # -- PreToolUse -----------------------------------------------------------
