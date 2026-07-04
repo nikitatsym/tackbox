@@ -16,7 +16,9 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent
 
 # uv invocation for the py test suite (mirrors the engine set installed in CI).
-_PYTEST = ["uv", "run", "--directory", "py", "--with", "pytest", "--with", "pyyaml", "pytest", "-q"]
+# --with flake8 hosts the pyrules plugin; `--directory py` auto-installs tackbox
+# so flake8 discovers the TBX entry point.
+_PYTEST = ["uv", "run", "--directory", "py", "--with", "pytest", "--with", "pyyaml", "--with", "flake8", "pytest", "-q"]
 
 
 def _run(cmd: list[str]) -> int:
