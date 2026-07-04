@@ -19,6 +19,7 @@ from .engines import (
     dispatch,
     engines_hash_hermetic,
     is_hermetic,
+    located_findings,
     parse_erclint_findings,
     resolve_dev_versions,
     resolve_hermetic_versions,
@@ -505,7 +506,7 @@ def _hook_post(event: dict) -> int:
     root = _hook_repo_root(event)
     if root is None:
         return 0
-    target, _ = _hook_target(event)
+    target, tool_input = _hook_target(event)
     if target is None:
         return 0
     try:
@@ -515,28 +516,105 @@ def _hook_post(event: dict) -> int:
 
     try:
         results, _warnings, _orphans = _lint_results(
-            root, _tackbox_root(), rel, no_cache=False, changed_scope=None
+            root, _tackbox_root(), rel, no_cache=False, changed_scope=None, machine=True
         )
+        findings = _located(results, root) if results else []
     except (
         PathspecMagicError,
         ChangedScopeError,
         cache.GoListError,
         reporters.ReportersError,
         subprocess.CalledProcessError,
+        ValueError,  # erclint analyzer-load error surfaced by parse_erclint_findings
     ) as e:
         # no-sentry: hook contract: infra error -> exit 1 + stderr, non-blocking
         print(f"tackbox hook: {e}", file=sys.stderr)
         return 1
 
-    if results is None or _aggregate_exit(results) == 0:
-        return 0  # scope matched no files, or clean
+    if results is None:
+        return 0  # scope matched no files
+    if not findings:
+        return _hook_infra_or_clean(results)
 
-    for r in results:
-        sys.stderr.write(f"== {r.engine_id} ==\n")
-        for chunk in (r.stdout, r.stderr):
-            if chunk:
-                sys.stderr.write(chunk if chunk.endswith("\n") else chunk + "\n")
+    on_diff, elsewhere = _partition_findings(
+        findings, rel, _affected_lines(event["tool_name"], tool_input, target)
+    )
+    if not on_diff:
+        return 0  # nothing on the edited lines; dev.py check owns the whole file
+    for f in on_diff:
+        loc = f"{f.file}:{f.line}" if f.line is not None else (f.file or "?")
+        sys.stderr.write(f"{loc}: {f.rule}\n")
+    if elsewhere:
+        sys.stderr.write(
+            f"{len(elsewhere)} pre-existing elsewhere (dev.py check enforces)\n"
+        )
     return 2
+
+
+def _located(results: list, root: Path) -> list:
+    return [f for r in results for f in located_findings(r.engine_id, r.stdout, root)]
+
+
+def _hook_infra_or_clean(results: list) -> int:
+    """No parseable findings: a nonzero engine exit is an infra failure (exit 1
+    plus its stderr); otherwise the scope is clean."""
+    if _aggregate_exit(results) == 0:
+        return 0
+    for r in results:
+        if r.exit_code != 0 and r.stderr.strip():
+            sys.stderr.write(r.stderr if r.stderr.endswith("\n") else r.stderr + "\n")
+    return 1
+
+
+def _affected_lines(tool_name: str, tool_input: dict, target: Path) -> set[int] | None:
+    """Line numbers the edit touched in the post-edit file, or None for the whole
+    file (Write leaves no pre-edit content to diff against).
+
+    Edit spans its new_string; MultiEdit unions every edit's new_string. Every
+    occurrence counts, so a coincidental repeat over-reports, never under-.
+    """
+    if tool_name == "Write":
+        return None
+    news = (
+        [e.get("new_string") or "" for e in tool_input.get("edits") or []]
+        if tool_name == "MultiEdit"
+        else [tool_input.get("new_string") or ""]
+    )
+    if not any(news):
+        return None  # no usable new_string -> whole file (over-report, never under)
+    return _span_lines(target.read_text(), news)
+
+
+def _span_lines(content: str, substrings: list[str]) -> set[int]:
+    lines: set[int] = set()
+    for sub in substrings:
+        if not sub:
+            continue
+        start = 0
+        while (idx := content.find(sub, start)) >= 0:
+            first = content.count("\n", 0, idx) + 1
+            lines.update(range(first, first + sub.count("\n") + 1))
+            start = idx + 1
+    return lines
+
+
+def _partition_findings(
+    findings: list, rel: str, affected: set[int] | None
+) -> tuple[list, list]:
+    """(on the edited diff, pre-existing elsewhere). An unknown location (file or
+    line None) over-reports as on-diff rather than being dropped."""
+    on_diff: list = []
+    elsewhere: list = []
+    for f in findings:
+        if f.file is None:
+            on_diff.append(f)
+        elif f.file != rel:
+            elsewhere.append(f)
+        elif affected is None or f.line is None or f.line in affected:
+            on_diff.append(f)
+        else:
+            elsewhere.append(f)
+    return on_diff, elsewhere
 
 
 def _hook_pre(event: dict) -> int:
