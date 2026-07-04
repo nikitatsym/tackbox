@@ -22,6 +22,8 @@ from pathlib import Path
 import pytest
 
 from tackbox import cache as tackbox_cache
+from tackbox import cli
+from tackbox.engines import DEV_ENGINES, EngineResult
 
 
 GO_MOD = "module cachefixture\n\ngo 1.24\n"
@@ -339,15 +341,11 @@ def test_missing_digest_still_lints_and_never_caches(monkeypatch, tmp_path):
     Dropping it from the plan would silently skip enforcement - the exact
     failure class tackbox exists to prevent.
     """
-    from tackbox import cache as cache_mod
-    from tackbox import cli
-    from tackbox.engines import DEV_ENGINES, EngineResult
-
     monkeypatch.setattr(
-        cache_mod, "erclint_package_digests", lambda root, dirs: {"pkg_a": "d1"}
+        tackbox_cache, "erclint_package_digests", lambda root, dirs: {"pkg_a": "d1"}
     )
     monkeypatch.setattr(
-        cache_mod, "erclint_import_paths", lambda root, dirs: {"pkg_a": "m/pkg_a"}
+        tackbox_cache, "erclint_import_paths", lambda root, dirs: {"pkg_a": "m/pkg_a"}
     )
     erclint = next(e for e in DEV_ENGINES if e.id == "erclint")
     cache_root = tmp_path / "cacheroot"

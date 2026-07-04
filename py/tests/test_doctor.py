@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -15,7 +16,6 @@ from tackbox import engines as engines_mod
 
 
 def _needs_git():
-    import shutil
     if not shutil.which("git"):
         pytest.fail("`git` toolchain not found on PATH; install it, do not skip")
 

@@ -166,6 +166,7 @@ def _check_binaries_start() -> CheckResult:
                 argv, capture_output=True, timeout=15, env=env
             )
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as e:
+            # no-sentry: doctor collects every failure to report them all (no short-circuit)
             failures.append(f"{name}({type(e).__name__})")
             continue
         rc = completed.returncode

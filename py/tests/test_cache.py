@@ -16,6 +16,7 @@ End-to-end CLI cache tests live in test_cli_cache.py.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -200,8 +201,6 @@ def test_gc_soft_cap_survives_files_vanishing_mid_scan(monkeypatch, tmp_path):
 def test_sha256_file_matches_hashlib(tmp_path):
     p = tmp_path / "x"
     p.write_bytes(b"hello world")
-    import hashlib
-
     assert cache.sha256_file(p) == hashlib.sha256(b"hello world").hexdigest()
 
 

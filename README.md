@@ -5,49 +5,48 @@
 [![pypi](https://img.shields.io/pypi/v/tackbox)](https://pypi.org/project/tackbox/)
 
 Universal lint rules that enforce the `error-reporting-and-coverage`
-spec across languages. Drop the repo into `.pre-commit-config.yaml`
-and the rules apply uniformly.
+and `error-handling-frontend` specs across Go, Python, JS, TS, and
+Svelte. One command brings the whole enforcement stack - no
+`go install`, no `npm i`, no external `opengrep`:
 
-## Hooks
+```bash
+uvx tackbox@latest lint .
+```
 
-| Hook id            | Engine       | Languages          | Rules covered     |
-|--------------------|--------------|--------------------|-------------------|
-| `erclint-go`       | go/analysis  | Go                 | ERC001-005        |
-| `erclint-opengrep` | opengrep     | Go, Python, JS, TS | ERC006            |
-| `tackbox-eslint`   | ESLint       | JS, TS, Svelte     | frontend swallow  |
-| `tackbox-mdlint`   | markdownlint | Markdown           | MD001-059 + ASCII |
+The wheel is hermetic: a consumer needs only `git` on PATH (plus a Go
+toolchain if the repo has `.go` files). Rules roll out via `@latest` -
+a new safety rule reaches every repo on its next run.
 
-Per-language hooks for Python and Java analyzers come in later
-versions.
+Covers ERC001-007 (Go, via `erclint`), ERC006 fingerprint rules (Go,
+Python, JS, TS, via the `opengrep` wrapper), frontend swallow rules
+(JS, TS, Svelte, via ESLint), and Markdown (MD001-059 + ASCII).
 
-### Prerequisites
+## Wiring into a repo
 
-- Go 1.24+ in PATH (pre-commit installs `erclint` and
-  `erclint-opengrep` via `go install`).
-- `opengrep` binary in PATH for the `erclint-opengrep` hook. See
-  <https://github.com/opengrep/opengrep> for installation.
-- Node 20+ in PATH for the `tackbox-eslint` and `tackbox-mdlint`
-  hooks.
+Call `tackbox lint` from the repo's `dev.py lint`, next to the
+project's own linters:
 
-## Quick start (pre-commit)
+```python
+def lint():
+    sh("uvx tackbox@latest lint .")
+    sh("uv run ruff check .")   # project-owned, if Python
+```
+
+Pre-commit runs a single language-agnostic hook; `dev.py check`
+(= lint + test) decides what to scan:
 
 ```yaml
 # .pre-commit-config.yaml in the consumer repo
 repos:
-  - repo: https://github.com/nikitatsym/tackbox
-    rev: main  # rolling release
+  - repo: local
     hooks:
-      - id: erclint-go
-      - id: erclint-opengrep
-      - id: tackbox-eslint
-      - id: tackbox-mdlint
-```
-
-Then:
-
-```bash
-pre-commit install
-pre-commit run --all-files
+      - id: dev-check
+        name: dev.py check
+        entry: python3
+        args: [dev.py, check]
+        language: system
+        pass_filenames: false
+        always_run: true
 ```
 
 ## Quick start (Go CLI, no pre-commit)
@@ -140,7 +139,7 @@ fast in-loop feedback, not the authoritative gate.
 ## Layout
 
 ```text
-.pre-commit-hooks.yaml                 # hooks exposed to consumers
+dev.py                                 # lint / test / e2e / check (dev-script)
 go.mod                                 # Go module
 package.json                           # npm package (ESLint plugin + report helper)
 eslint.config.preset.js                # default config used by tackbox-eslint bin
@@ -159,11 +158,13 @@ js/
   markdownlint-rules/                  # custom markdownlint rules
   report.js                            # browser capture helper (@sentry/browser)
   tests/                               # RuleTester + node:test
+py/
+  tackbox/                             # lint / hook / doctor CLI, cache, engines
+  tests/                               # pytest suite
 ```
 
-Python and Java directories with their own manifests will be added
-in later versions; they will sit next to `go.mod` and `package.json`
-in the repo root.
+A Java analyzer directory with its own manifest will be added in a
+later version, next to `go.mod`, `package.json`, and `py/`.
 
 ## Repo conventions
 
