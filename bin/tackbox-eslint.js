@@ -10,8 +10,11 @@ const REPORTERS_FLAG = '--reporters='
 function parseArgv(argv) {
   const decls = []
   const files = []
+  let machine = false
   for (const a of argv) {
-    if (a.startsWith(REPORTERS_FLAG)) {
+    if (a === '--machine') {
+      machine = true
+    } else if (a.startsWith(REPORTERS_FLAG)) {
       for (const d of a.slice(REPORTERS_FLAG.length).split(',')) {
         if (!d) continue
         const hash = d.lastIndexOf('#')
@@ -21,7 +24,7 @@ function parseArgv(argv) {
       files.push(a)
     }
   }
-  return { decls, files }
+  return { decls, files, machine }
 }
 
 function parseModule(file, code) {
@@ -97,8 +100,21 @@ function validateDeclarations(decls) {
   }
 }
 
+// Internal machine contract: one {file, line, rule} JSON object per error, for
+// the hook. Human (stylish) output is unchanged. A message with no line emits
+// line: null (location-unknown) - the caller over-reports, never drops it.
+function emitMachine(results) {
+  for (const r of results) {
+    const file = path.relative(process.cwd(), r.filePath)
+    for (const m of r.messages) {
+      if (m.severity !== 2) continue
+      process.stdout.write(JSON.stringify({ file, line: m.line ?? null, rule: m.ruleId }) + '\n')
+    }
+  }
+}
+
 async function main() {
-  const { decls, files } = parseArgv(process.argv.slice(2))
+  const { decls, files, machine } = parseArgv(process.argv.slice(2))
   if (files.length === 0) {
     process.stderr.write('tackbox-eslint: no files supplied\n')
     process.exit(2)
@@ -109,9 +125,13 @@ async function main() {
     overrideConfig: [{ settings: { tackbox: { reporters: decls.map(d => d.raw) } } }],
   })
   const results = await eslint.lintFiles(files)
-  const formatter = await eslint.loadFormatter('stylish')
-  const output = await formatter.format(results)
-  if (output) process.stdout.write(output + '\n')
+  if (machine) {
+    emitMachine(results)
+  } else {
+    const formatter = await eslint.loadFormatter('stylish')
+    const output = await formatter.format(results)
+    if (output) process.stdout.write(output + '\n')
+  }
   const fail = results.some(r => r.errorCount > 0 || r.fatalErrorCount > 0)
   process.exit(fail ? 1 : 0)
 }
