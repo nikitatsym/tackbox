@@ -59,6 +59,42 @@ test('no-swallow-catch result-boundary (F2)', () => {
   })
 })
 
+// F2b: one coherent path-sensitive analysis over all three exits. Every path
+// must terminate (throw / boundary) or pass a sticky reporter before the end;
+// a path reaching the end without an event is a finding. Reporters need not be
+// terminal (sticky). Opaque constructs (switch/loop) do not surface events.
+test('no-swallow-catch path-sensitive (F2b)', () => {
+  ruleTester.run('no-swallow-catch', require('../rules/no-swallow-catch'), {
+    valid: [
+      // both branches handled (reporter on one, throw on the other).
+      R + 'try { f() } catch (e) { if (x) { reportError("connection lost mid-stream", e) } else { throw e } }',
+      // reporter is sticky: statements after it on the same path are fine.
+      R + 'try { f() } catch (e) { reportError("connection lost mid-stream", e); cleanup() }',
+    ],
+    invalid: [
+      // throw on only one branch: the else path falls through (flip of block-scan).
+      { code: 'try { f() } catch (e) { if (x) { throw e } }', errors: [{ messageId: 'swallow' }] },
+      // reporter on only one branch: the else path swallows (flip of block-scan).
+      { code: R + 'try { f() } catch (e) { if (x) { reportError("connection lost mid-stream", e) } }', errors: [{ messageId: 'swallow' }] },
+      // switch is opaque: a reporter inside it does not count as a path event.
+      { code: R + 'try { f() } catch (e) { switch (x) { case 1: reportError("connection lost mid-stream", e) } }', errors: [{ messageId: 'swallow' }] },
+    ],
+  })
+})
+
+test('no-swallow-catch path-sensitive boundary (F2b)', () => {
+  tsRuleTester.run('no-swallow-catch', require('../rules/no-swallow-catch'), {
+    valid: [
+      // both branches terminate: boundary on one, throw on the other.
+      'function f(): Result<T> { try { g() } catch (e) { if (x) { return { ok: false, cause: e } } else { throw e } } }',
+    ],
+    invalid: [
+      // boundary on one branch, the else path just logs and falls through.
+      { code: 'function f(): Result<T> { try { g() } catch (e) { if (x) { return { ok: false, cause: e } } else { log(e) } } }', errors: [{ messageId: 'swallow' }] },
+    ],
+  })
+})
+
 test('no-swallow-promise-catch', () => {
   ruleTester.run('no-swallow-promise-catch', require('../rules/no-swallow-promise-catch'), {
     valid: [
@@ -81,6 +117,19 @@ test('no-swallow-promise-catch result-boundary refusal (F2)', () => {
     valid: [],
     invalid: [
       { code: 'function f(): Promise<Result<T>> { return p.catch(e => { return { ok: false, cause: e } }) }', errors: [{ messageId: 'swallow' }] },
+    ],
+  })
+})
+
+// F2b: the same path-sensitive analysis governs promise .catch handlers.
+test('no-swallow-promise-catch path-sensitive (F2b)', () => {
+  ruleTester.run('no-swallow-promise-catch', require('../rules/no-swallow-promise-catch'), {
+    valid: [
+      R + 'p.catch(e => { if (x) { reportError("api call failed mid-flight", e) } else { throw e } })',
+    ],
+    invalid: [
+      // reporter on only one branch: the else path swallows (flip of block-scan).
+      { code: R + 'p.catch(e => { if (x) { reportError("api call failed mid-flight", e) } })', errors: [{ messageId: 'swallow' }] },
     ],
   })
 })

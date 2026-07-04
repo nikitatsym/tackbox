@@ -331,12 +331,15 @@ function exprIsSecretRef(expr) {
   return null
 }
 
-// --- F2: typed Result-boundary conversion --------------------------------
-// The third legal catch exit alongside throw and a reporter call. Kin to the
-// policy layer (specs/general/error-policies.md): a boundary declaratively
-// turns a caught exception into a typed `{ ok: false }` failure. Annotation-
-// based (no type program): only a syntactic Result / Attempt / Promise<...>
-// return type earns the credit, so unannotated functions get none.
+// --- F2b: path-sensitive no-swallow analysis -----------------------------
+// One coherent path analysis for all three legal catch exits: throw and a
+// Result-boundary return terminate a path; a recognized reporter call is a
+// sticky event (statements after it on the path are fine). A path reaching the
+// end of the handler without a terminator or event swallows. Ported from gmux
+// makeHandledAnalysis; reporter recognition stays tackbox origin-gating.
+// Result-boundary is kin to the policy layer (specs/general/error-policies.md):
+// annotation-based (no type program) - only a syntactic Result / Attempt /
+// Promise<Result|Attempt> return type earns the boundary credit.
 
 function isResultLikeType(t) {
   if (!t || t.type !== 'TSTypeReference' || !t.typeName || t.typeName.type !== 'Identifier') return false
@@ -393,15 +396,74 @@ function isBoundaryValue(expr, errName) {
   )
 }
 
-// returnsResultBoundary: block-scan (like blockHasThrow/blockHasReport) for a
-// `return <boundary>`; walk stops at nested fn bodies so a return inside a
-// callback is not counted as the catch's own exit.
-function returnsResultBoundary(block, errName) {
+function containsReturn(node) {
   let found = false
-  walk(block, n => {
-    if (n.type === 'ReturnStatement' && isBoundaryValue(n.argument, errName)) found = true
+  walk(node, n => {
+    if (n.type === 'ReturnStatement') found = true
   })
   return found
+}
+
+// isReporterExpr: a (possibly awaited / void-wrapped) recognized reporter call.
+// Unwrapping preserves tackbox's existing recognition of `await reportError(e)`;
+// F2b changes path-completeness, not which calls count as reporters.
+function isReporterExpr(context, expr, errName) {
+  let e = expr
+  while (e && (e.type === 'AwaitExpression' || (e.type === 'UnaryExpression' && e.operator === 'void'))) {
+    e = e.argument
+  }
+  return !!e && e.type === 'CallExpression' && isReporterCall(context, e, errName)
+}
+
+// makeHandledAnalysis: path-sensitive walk of a catch / rejection handler.
+// Per-statement verdict: 'terminal' (no path falls past - throw or boundary
+// return), 'bad' (some path exits unhandled), { reported } (falls through;
+// reported true when every falling path passed the sticky event). Constructs
+// not modeled (switch, loops, nested try) are opaque: a hidden return fails
+// closed, reporters inside do not count. Ported from gmux.
+function makeHandledAnalysis(opts) {
+  const { context, errName, allowBoundary } = opts
+  function analyzeStmt(stmt, reported) {
+    if (!stmt) return { reported }
+    if (stmt.type === 'ExpressionStatement') {
+      return isReporterExpr(context, stmt.expression, errName) ? { reported: true } : { reported }
+    }
+    if (stmt.type === 'ThrowStatement') return 'terminal'
+    if (stmt.type === 'ReturnStatement') {
+      if (reported) return 'terminal'
+      if (allowBoundary && isBoundaryValue(stmt.argument, errName)) return 'terminal'
+      return 'bad'
+    }
+    if (stmt.type === 'BlockStatement') return analyzeList(stmt.body, reported)
+    if (stmt.type === 'IfStatement') {
+      const c = analyzeStmt(stmt.consequent, reported)
+      if (c === 'bad') return 'bad'
+      const a = stmt.alternate ? analyzeStmt(stmt.alternate, reported) : { reported }
+      if (a === 'bad') return 'bad'
+      if (c === 'terminal' && a === 'terminal') return 'terminal'
+      return { reported: (c === 'terminal' || c.reported) && (a === 'terminal' || a.reported) }
+    }
+    return containsReturn(stmt) ? 'bad' : { reported }
+  }
+  function analyzeList(stmts, reported) {
+    for (const stmt of stmts) {
+      const r = analyzeStmt(stmt, reported)
+      if (r === 'bad' || r === 'terminal') return r
+      reported = r.reported
+    }
+    return { reported }
+  }
+  function handled(body) {
+    if (!body) return false
+    if (body.type !== 'BlockStatement') {
+      if (isReporterExpr(context, body, errName)) return true
+      return !!allowBoundary && isBoundaryValue(body, errName)
+    }
+    const r = analyzeList(body.body, false)
+    if (r === 'bad') return false
+    return r === 'terminal' || r.reported
+  }
+  return { handled }
 }
 
 module.exports = {
@@ -428,5 +490,5 @@ module.exports = {
   exprIsSecretRef,
   enclosingFn,
   fnReturnsResultLike,
-  returnsResultBoundary,
+  makeHandledAnalysis,
 }
