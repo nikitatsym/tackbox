@@ -40,6 +40,29 @@ func okMarker() error {
 	return errors.New("noop")
 }
 
+// marker on the first line of the block above the branch (a continuation
+// comment sits directly above the branch) still suppresses.
+func okMarkerBlockAbove() error {
+	err := errors.New("x")
+	// no-sentry: caller already wraps and captures this at the boundary,
+	// a reason long enough that splitting it across lines is the point
+	if err != nil {
+		return errors.New("wrap")
+	}
+	return errors.New("noop")
+}
+
+// a blank line breaks the adjacent block: the marker no longer applies.
+func markerAcrossBlankLineFires() error {
+	err := errors.New("x")
+	// no-sentry: not adjacent
+
+	if err != nil { // want `ERC001:.*err=err`
+		return errors.New("wrap")
+	}
+	return errors.New("noop")
+}
+
 func okPanic() error {
 	err := errors.New("x")
 	if err != nil {

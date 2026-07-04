@@ -17,10 +17,12 @@ test('no-swallow-catch', () => {
       'try { f() } catch (e) { throw e }',
       R + 'try { f() } catch (e) { reportError("connection lost mid-stream", e) }',
       '// no-sentry: bootstrap-only, no Sentry stack yet\ntry { f() } catch (e) {}',
+      '// no-sentry: bootstrap-only, no Sentry stack yet, a reason long\n// enough that splitting it across lines is the point\ntry { f() } catch (e) {}',
     ],
     invalid: [
       { code: 'try { f() } catch (e) {}', errors: [{ messageId: 'swallow' }] },
       { code: 'try { f() } catch (e) { console.log(e) }', errors: [{ messageId: 'swallow' }] },
+      { code: '// no-sentry: reason\n\ntry { f() } catch (e) {}', errors: [{ messageId: 'swallow' }] },
     ],
   })
 })
@@ -137,11 +139,15 @@ test('ts-rethrow-without-cause', () => {
       'try { f() } catch (e) { throw e }',
       'try { f() } catch { throw new Error("no binding to chain") }',
       'throw new Error("not inside a catch")',
+      'try { f() } catch (e) { throw new AggregateError([e], "all downstream calls failed") }',
+      'try { f() } catch (e) { throw new AggregateError([first, e], "batch had failures") }',
     ],
     invalid: [
       { code: 'try { f() } catch (e) { throw new Error("connection dropped") }', errors: [{ messageId: 'noCause' }] },
       { code: 'try { f() } catch (e) { throw new HttpError("bad gateway", { status: 502 }) }', errors: [{ messageId: 'noCause' }] },
       { code: 'try { f() } catch (e) { throw new Error("wrong cause", { cause: other }) }', errors: [{ messageId: 'noCause' }] },
+      { code: 'try { f() } catch (e) { throw new AggregateError([], "nothing captured") }', errors: [{ messageId: 'noCause' }] },
+      { code: 'try { f() } catch (e) { throw new AggregateError([other], "wrong error kept") }', errors: [{ messageId: 'noCause' }] },
     ],
   })
 })
