@@ -61,7 +61,7 @@ npx tackbox-eslint src/**/*.{ts,svelte}
 Full constraints per rule:
 
 - `no-swallow-catch` - `catch` must throw, call a reporter, or have
-  `// no-sentry: <reason>` above the `try`.
+  `// no-report: <reason>` above the `try`.
 - `no-swallow-promise-catch` - `.catch(handler)` must throw, call a
   reporter, or carry the marker.
 - `no-console-error` - `console.error` is banned; use `reportError`.

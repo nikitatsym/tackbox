@@ -3,9 +3,9 @@ const { blockHasThrow, blockHasReport, hasMarkerAbove } = require('./_shared')
 module.exports = {
   meta: {
     type: 'problem',
-    docs: { description: 'promise.catch(handler) must throw, call a reporter, or carry // no-sentry: marker' },
+    docs: { description: 'promise.catch(handler) must throw, call a reporter, or carry // no-report: marker' },
     messages: {
-      swallow: 'promise .catch handler swallows the error: must throw, call a reporter (tackbox/report import or .tackbox-reporters declaration), or carry `// no-sentry: <reason>` above',
+      swallow: 'promise .catch handler swallows the error: must throw, call a reporter (tackbox/report import or .tackbox-reporters declaration), or carry `// no-report: <reason>` above',
     },
     schema: [],
   },
@@ -24,13 +24,13 @@ module.exports = {
         if (body.type !== 'BlockStatement') {
           const synthetic = { type: 'BlockStatement', body: [{ type: 'ExpressionStatement', expression: body }] }
           if (blockHasReport(context, synthetic, errName)) return
-          if (hasMarkerAbove(context, node, 'no-sentry')) return
+          if (hasMarkerAbove(context, node, 'no-report')) return
           context.report({ node, messageId: 'swallow' })
           return
         }
         if (blockHasThrow(body)) return
         if (blockHasReport(context, body, errName)) return
-        if (hasMarkerAbove(context, node, 'no-sentry')) return
+        if (hasMarkerAbove(context, node, 'no-report')) return
         context.report({ node, messageId: 'swallow' })
       },
     }

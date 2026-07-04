@@ -27,13 +27,13 @@ uvx tackbox@latest lint .
 Details per rule:
 
 - ERC001 `errcheck` - in any `if err != nil` branch, propagate,
-  capture, or carry `// no-sentry: <reason>`.
+  capture, or carry `// no-report: <reason>`.
 - ERC002 `parsenil` - parser results that fall through to nil must
   capture or carry `// parse-skip: <reason>`.
 - ERC003 `terminal` - `log.Fatal*`, `os.Exit`, project-local `die`
   must be preceded by a capture, carry the error into their own
   arguments (`log.Fatal(err)`, a reported death), resolve to a declared
-  sink, or carry `// no-sentry: <reason>` (e.g. the normal `os.Exit(0)`
+  sink, or carry `// no-report: <reason>` (e.g. the normal `os.Exit(0)`
   at the end of `main`).
 - ERC004 `returnnil` - bare `return nil` on `*T`/`[]T`/`map` needs
   `// nil-return: <reason>` or use `(val, ok)` / `(val, err)`.
@@ -43,7 +43,7 @@ Details per rule:
   secrets or carry raw user input.
 - ERC007 `recoverswallow` - a `recover()` must report the recovered
   value (to `go/report` or a declared sink that receives it) or
-  re-panic; a bare recover-and-continue needs `// no-sentry: <reason>`.
+  re-panic; a bare recover-and-continue needs `// no-report: <reason>`.
 
 `_test.go` files are skipped by every analyzer.
 
@@ -53,12 +53,12 @@ Markers must appear on the line immediately above the branch or
 return they apply to and must carry a non-empty reason.
 
 ```go
-// no-sentry: caller already wraps and captures
+// no-report: caller already wraps and captures
 if err != nil {
     return err
 }
 
-// no-sentry: normal exit
+// no-report: normal exit
 os.Exit(code)
 
 // parse-skip: optional-config

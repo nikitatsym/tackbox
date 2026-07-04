@@ -13,15 +13,15 @@ import (
 type Kind int
 
 const (
-	NoSentry Kind = iota
+	NoReport Kind = iota
 	ParseSkip
 	NilReturn
 )
 
 func (k Kind) String() string {
 	switch k {
-	case NoSentry:
-		return "no-sentry"
+	case NoReport:
+		return "no-report"
 	case ParseSkip:
 		return "parse-skip"
 	case NilReturn:
@@ -68,7 +68,7 @@ var prefixes = []struct {
 	kind   Kind
 	prefix string
 }{
-	{NoSentry, "no-sentry:"},
+	{NoReport, "no-report:"},
 	{ParseSkip, "parse-skip:"},
 	{NilReturn, "nil-return:"},
 }

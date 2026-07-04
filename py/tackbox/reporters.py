@@ -21,8 +21,9 @@ FILENAME = ".tackbox-reporters"
 
 _JS_EXTS = frozenset([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".svelte"])
 _GO_EXTS = frozenset([".go"])
-_OPENGREP_DECL_EXTS = frozenset([".py", ".java"])
-_KNOWN_EXTS = _JS_EXTS | _GO_EXTS | _OPENGREP_DECL_EXTS
+# python -> pyrules, java -> opengrep; symbol existence is the engine's job.
+_ENGINE_DECL_EXTS = frozenset([".py", ".java"])
+_KNOWN_EXTS = _JS_EXTS | _GO_EXTS | _ENGINE_DECL_EXTS
 
 
 class ReportersError(Exception):

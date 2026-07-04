@@ -113,7 +113,7 @@ def test_erclint_machine_location(machine_findings):
     assert hits and hits[0].line == 7, machine_findings
 
 
-def test_opengrep_machine_location(machine_findings):
+def test_pyrules_machine_location(machine_findings):
     hits = _hit(machine_findings, "python-swallowed-exception", "bad.py")
     assert hits and hits[0].line == 2, machine_findings
 

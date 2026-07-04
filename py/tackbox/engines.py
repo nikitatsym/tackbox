@@ -13,12 +13,14 @@ import concurrent.futures
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from .pyrules.codes import CODE_TO_ID
 from .source_set import (
     files_to_go_packages,
     group_go_packages_by_module,
@@ -318,11 +320,36 @@ def erclint_located_findings(stdout: str, repo_root: Path) -> list[Finding]:
     return out
 
 
+# flake8's `path:row:col: CODE msg`. file is non-greedy so a windows drive colon
+# stays with the path; only the TBX code is tokenized (the message carries colons).
+_FLAKE8_LINE = re.compile(r"^(?P<file>.+?):(?P<line>\d+):\d+: (?P<code>TBX\d+) ")
+
+
+def pyrules_located_findings(stdout: str, _repo_root: Path) -> list[Finding]:
+    """Parse flake8's `path:row:col: TBXNNN <id>: <msg>` lines. The rule id comes
+    from the TBX code via CODE_TO_ID - the message text is not tokenized."""
+    out: list[Finding] = []
+    for line in stdout.splitlines():
+        m = _FLAKE8_LINE.match(line)
+        if m is None:
+            continue
+        out.append(
+            Finding(
+                rule=CODE_TO_ID.get(m["code"], m["code"]),
+                file=m["file"],
+                line=int(m["line"]),
+            )
+        )
+    return out
+
+
 def located_findings(engine_id: str, stdout: str, repo_root: Path) -> list[Finding]:
     """Located findings from one engine's output: erclint from its -json posn,
-    every other engine from its machine NDJSON."""
+    pyrules from flake8's text, every other engine from its machine NDJSON."""
     if engine_id == "erclint":
         return erclint_located_findings(stdout, repo_root)
+    if engine_id == "pyrules":
+        return pyrules_located_findings(stdout, repo_root)
     return parse_machine_findings(stdout)
 
 
@@ -358,13 +385,16 @@ _JS_EXTS = frozenset(
 )
 _MD_EXTS = frozenset([".md"])
 _GO_EXTS = frozenset([".go"])
+_PY_EXTS = frozenset([".py"])
 # Extensions matched by any bundled opengrep rule (svelte omitted - no parser).
+# .py stays: opengrep still scans it for the erc006 fingerprint rules even though
+# the python exception rules moved to the pyrules engine.
 _OPENGREP_EXTS = frozenset(
     [".go", ".py", ".java", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"]
 )
-# Reporter declarations the opengrep wrapper substitutes: only the syntactic
-# swallowed-exception tier (Go -> erclint, JS/TS -> eslint own their decls).
-_OPENGREP_DECL_EXTS = frozenset([".py", ".java"])
+# Reporter declarations the opengrep wrapper substitutes: java only. Go -> erclint,
+# JS/TS -> eslint, python -> pyrules each own their own declaration resolution.
+_OPENGREP_DECL_EXTS = frozenset([".java"])
 
 
 def _built_go_binary(tackbox_root: Path, name: str) -> Path:
@@ -395,11 +425,11 @@ def resolve_dev_versions(tackbox_root: Path) -> dict[str, str]:
 
 
 def _erclint_dev_version(tackbox_root: Path) -> str:
-    # The dev binary is built on demand; without a Go toolchain the build
-    # itself fails, and the banner must degrade to "?" rather than crash.
     try:
         bin_ = _built_go_binary(tackbox_root, "erclint")
     except (FileNotFoundError, subprocess.CalledProcessError):
+        # no-report: no go toolchain - the dev binary builds on demand, so the
+        # version banner degrades to "?" rather than crash
         return "?"
     return _version_from_binary(bin_, ("--version",), prefix="erclint ")
 
@@ -412,6 +442,7 @@ def _version_from_binary(
             [str(binary), *args], capture_output=True, check=True, text=True
         )
     except (FileNotFoundError, subprocess.CalledProcessError):
+        # no-report: binary missing or non-zero exit - the version banner degrades to "?"
         return "?"
     line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
     if not line:
@@ -428,6 +459,7 @@ def _version_from_npm_manifest(tackbox_root: Path, pkg: str) -> str:
     try:
         data = json.loads(manifest.read_text(encoding="utf-8"))
     except (FileNotFoundError, ValueError):
+        # no-report: manifest missing or unparseable - the version banner degrades to "?"
         return "?"
     return data.get("version") or "?"
 
@@ -459,6 +491,20 @@ def _tackbox_mdlint_argv(
     _repo_root: Path, tackbox_root: Path, files: list[str], _reporters=()
 ) -> list[str]:
     return ["node", str(tackbox_root / "bin" / "tackbox-mdlint.js"), *files]
+
+
+def _pyrules_argv(
+    _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=()
+) -> list[str]:
+    """flake8 in closed form. It runs under the same interpreter as tackbox
+    (dev: the uv env; hermetic: the uvx venv), so it discovers the TBX plugin
+    entry point in both. Shared by the dev and hermetic registries."""
+    flag = _reporters_flag(reporters, _PY_EXTS, lambda f: f)
+    return [
+        sys.executable, "-m", "flake8",
+        "--isolated", "--disable-noqa", "--select=TBX",
+        *flag, *files,
+    ]
 
 
 def _drop_go_testdata(path: str) -> bool:
@@ -494,6 +540,11 @@ DEV_ENGINES: list[EngineSpec] = [
         extensions=_MD_EXTS,
         build_argv=_tackbox_mdlint_argv,
         machine_flag=True,
+    ),
+    EngineSpec(
+        id="pyrules",
+        extensions=_PY_EXTS,
+        build_argv=_pyrules_argv,
     ),
 ]
 
@@ -580,6 +631,11 @@ HERMETIC_ENGINES: list[EngineSpec] = [
         extensions=_MD_EXTS,
         build_argv=_tackbox_mdlint_argv_hermetic,
         machine_flag=True,
+    ),
+    EngineSpec(
+        id="pyrules",
+        extensions=_PY_EXTS,
+        build_argv=_pyrules_argv,
     ),
 ]
 

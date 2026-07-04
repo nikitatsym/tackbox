@@ -1,7 +1,7 @@
 // Package terminal implements ERC003: every terminal exit (`log.Fatal*`,
 // `os.Exit`, project-local `die`) must either be preceded by a capture in the
 // same block, carry the error into its own arguments (`log.Fatal(err)` - a
-// reported death), or carry a `// no-sentry: <reason>` marker directly above
+// reported death), or carry a `// no-report: <reason>` marker directly above
 // the call. A silent exit (`os.Exit(1)` in an err-branch, `log.Fatal("msg")`
 // with the live error dropped) stays a finding.
 package terminal
@@ -19,7 +19,7 @@ import (
 
 var Analyzer = &analysis.Analyzer{
 	Name: "terminal",
-	Doc:  "ERC003: terminal exit must capture, carry the error, or carry `// no-sentry:` marker",
+	Doc:  "ERC003: terminal exit must capture, carry the error, or carry `// no-report:` marker",
 	Run:  run,
 }
 
@@ -37,7 +37,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 				if !ok {
 					continue
 				}
-				if m, ok := idx.Above(st); ok && m.Kind == markers.NoSentry {
+				if m, ok := idx.Above(st); ok && m.Kind == markers.NoReport {
 					continue
 				}
 				if hasCaptureBefore(pass.TypesInfo, block.List[:i]) {
@@ -47,7 +47,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 					continue
 				}
 				pass.Reportf(call.Pos(),
-					"ERC003: terminal exit `%s` must be preceded by a capture, carry the error into its arguments, or carry `// no-sentry: <reason>`",
+					"ERC003: terminal exit `%s` must be preceded by a capture, carry the error into its arguments, or carry `// no-report: <reason>`",
 					astutil.QualifiedName(call.Fun))
 			}
 			return true

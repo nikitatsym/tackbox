@@ -52,7 +52,7 @@ def findings(rels: Iterable[str], root: Path) -> list[str]:
             try:
                 yaml.safe_load(text)
             except yaml.YAMLError as err:
-                # no-sentry: collects a parse diagnostic into findings, no short-circuit
+                # no-report: collects a parse diagnostic into findings, no short-circuit
                 out.append(_yaml_finding(rel, err))
         for i, raw in enumerate(text.split("\n"), 1):
             line = raw.rstrip("\r")  # tolerate CRLF without flagging the CR

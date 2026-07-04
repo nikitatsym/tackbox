@@ -385,11 +385,11 @@ def test_pre_introduce_marker_ask(tmp_path):
             "tool_input": {
                 "file_path": str(tmp_path / "svc.go"),
                 "old_string": "x := 1",
-                "new_string": "// no-sentry: bootstrap only\nx := 1",
+                "new_string": "// no-report: bootstrap only\nx := 1",
             },
         }
     )
-    assert "no-sentry" in _ask(r)["permissionDecisionReason"]
+    assert "no-report" in _ask(r)["permissionDecisionReason"]
 
 
 def test_pre_remove_marker_allow(tmp_path):
@@ -402,7 +402,7 @@ def test_pre_remove_marker_allow(tmp_path):
             "cwd": str(tmp_path),
             "tool_input": {
                 "file_path": str(tmp_path / "svc.go"),
-                "old_string": "// no-sentry: bootstrap only\nx := 1",
+                "old_string": "// no-report: bootstrap only\nx := 1",
                 "new_string": "x := 1",
             },
         }
@@ -421,12 +421,12 @@ def test_pre_change_reason_ask(tmp_path):
             "cwd": str(tmp_path),
             "tool_input": {
                 "file_path": str(tmp_path / "svc.go"),
-                "old_string": "// no-sentry: old reason\nx := 1",
-                "new_string": "// no-sentry: new reason\nx := 1",
+                "old_string": "// no-report: old reason\nx := 1",
+                "new_string": "// no-report: new reason\nx := 1",
             },
         }
     )
-    assert "no-sentry" in _ask(r)["permissionDecisionReason"]
+    assert "no-report" in _ask(r)["permissionDecisionReason"]
 
 
 def test_pre_write_new_file_with_marker_ask(tmp_path):

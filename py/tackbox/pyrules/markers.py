@@ -25,7 +25,7 @@ def _marker_reason_ok(comment: str) -> bool:
 
 
 class MarkerIndex:
-    """Bottom lines of comment blocks that carry a valid no-sentry marker."""
+    """Bottom lines of comment blocks that carry a valid no-report marker."""
 
     def __init__(self, file_tokens: list[tokenize.TokenInfo] | None):
         self._suppress_bottoms: set[int] = set()

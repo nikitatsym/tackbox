@@ -167,21 +167,21 @@ function shortThrow() {
 }
 """
 
-# Negative: `# no-sentry: <reason>` with a reason suppresses the finding.
+# Negative: `# no-report: <reason>` with a reason suppresses the finding.
 PY_SUPPRESSED_OK = """def cleanup():
     try:
         work()
     except ValueError as e:
-        # no-sentry: boundary cleanup, nothing to propagate
+        # no-report: boundary cleanup, nothing to propagate
         pass
 """
 
-# Negative: `# no-sentry:` with an empty reason must NOT suppress.
+# Negative: `# no-report:` with an empty reason must NOT suppress.
 PY_MARKER_NO_REASON = """def cleanup():
     try:
         work()
     except ValueError as e:
-        # no-sentry:
+        # no-report:
         pass
 """
 
@@ -287,12 +287,13 @@ def test_banner_shape_on_stderr(fixture_repo):
     ), f"unexpected banner: {banner!r}"
 
 
-def test_all_four_engine_sections_present(fixture_repo):
+def test_all_five_engine_sections_present(fixture_repo):
     result = _run_tackbox(fixture_repo)
     sections = _split_engine_sections(result.stdout)
     assert set(sections) == {
         "erclint",
         "erclint-opengrep",
+        "pyrules",
         "tackbox-eslint",
         "tackbox-mdlint",
     }
@@ -338,6 +339,7 @@ def test_engine_sections_appear_in_alphabetical_order(fixture_repo):
     assert ids == [
         "erclint",
         "erclint-opengrep",
+        "pyrules",
         "tackbox-eslint",
         "tackbox-mdlint",
     ]
@@ -415,8 +417,8 @@ def sections(fixture_repo) -> dict[str, str]:
     return _split_engine_sections(_run_tackbox(fixture_repo).stdout)
 
 
-def test_opengrep_reports_every_python_rule(sections):
-    og = _nows(sections["erclint-opengrep"])
+def test_pyrules_reports_every_python_rule(sections):
+    py = _nows(sections["pyrules"])
     for rule in (
         "python-swallowed-exception",
         "python-bare-except",
@@ -426,7 +428,7 @@ def test_opengrep_reports_every_python_rule(sections):
         "python-suppress-exception",
         "python-import-inside-function",
     ):
-        assert rule in og, f"missing {rule} in opengrep section:\n{og}"
+        assert rule in py, f"missing {rule} in pyrules section:\n{py}"
 
 
 def test_opengrep_reports_every_java_rule(sections):
@@ -470,13 +472,13 @@ def test_valid_throw_error_no_longer_fires(sections):
     assert "valid-throw-error" not in es
 
 
-def test_no_sentry_marker_with_reason_suppresses(sections):
+def test_no_report_marker_with_reason_suppresses(sections):
     # marker + reason -> suppressed -> file absent from findings.
-    og = _nows(sections["erclint-opengrep"])
-    assert "suppressed_ok.py" not in og, f"marked-with-reason not suppressed:\n{og}"
+    py = _nows(sections["pyrules"])
+    assert "suppressed_ok.py" not in py, f"marked-with-reason not suppressed:\n{py}"
 
 
-def test_no_sentry_marker_without_reason_does_not_suppress(sections):
+def test_no_report_marker_without_reason_does_not_suppress(sections):
     # empty reason -> not suppressed -> file present in findings.
-    og = _nows(sections["erclint-opengrep"])
-    assert "marker_no_reason.py" in og, f"empty-reason marker wrongly suppressed:\n{og}"
+    py = _nows(sections["pyrules"])
+    assert "marker_no_reason.py" in py, f"empty-reason marker wrongly suppressed:\n{py}"

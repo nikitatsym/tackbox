@@ -115,7 +115,7 @@ function setupGlobalHandlers() {
 }
 
 function maskDSN(dsn) {
-  // no-sentry: malformed user DSN, opaque marker is the recovery
+  // no-report: malformed user DSN, opaque marker is the recovery
   try {
     const u = new URL(dsn)
     return u.host + u.pathname
@@ -126,7 +126,7 @@ function maskDSN(dsn) {
 
 function dispatchEventSafely(name, detail) {
   if (typeof window === 'undefined' || typeof CustomEvent === 'undefined') return
-  // no-sentry: event dispatch only, capture already happened upstream
+  // no-report: event dispatch only, capture already happened upstream
   try {
     window.dispatchEvent(new CustomEvent(name, { detail }))
   } catch (e) {

@@ -16,13 +16,13 @@ test('no-swallow-catch', () => {
     valid: [
       'try { f() } catch (e) { throw e }',
       R + 'try { f() } catch (e) { reportError("connection lost mid-stream", e) }',
-      '// no-sentry: bootstrap-only, no Sentry stack yet\ntry { f() } catch (e) {}',
-      '// no-sentry: bootstrap-only, no Sentry stack yet, a reason long\n// enough that splitting it across lines is the point\ntry { f() } catch (e) {}',
+      '// no-report: bootstrap-only, no Sentry stack yet\ntry { f() } catch (e) {}',
+      '// no-report: bootstrap-only, no Sentry stack yet, a reason long\n// enough that splitting it across lines is the point\ntry { f() } catch (e) {}',
     ],
     invalid: [
       { code: 'try { f() } catch (e) {}', errors: [{ messageId: 'swallow' }] },
       { code: 'try { f() } catch (e) { console.log(e) }', errors: [{ messageId: 'swallow' }] },
-      { code: '// no-sentry: reason\n\ntry { f() } catch (e) {}', errors: [{ messageId: 'swallow' }] },
+      { code: '// no-report: reason\n\ntry { f() } catch (e) {}', errors: [{ messageId: 'swallow' }] },
     ],
   })
 })
