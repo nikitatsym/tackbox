@@ -28,7 +28,8 @@ repos:
       - id: go-test
         name: go test
         entry: go
-        args: [test, -race, ./go/...]
+        # -count=1: golden builds erclint via subprocess -> test cache can pass stale (tackbox-17)
+        args: [test, -race, -count=1, ./go/...]
         language: system
         pass_filenames: false
         always_run: true
