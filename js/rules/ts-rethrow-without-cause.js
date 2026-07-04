@@ -1,5 +1,20 @@
 const { walk } = require('./_shared')
 
+// new AggregateError([...errors], msg) preserves the caught error in its
+// errors array, so it does not also need { cause }.
+function aggregateHoldsError(newExpr, errName) {
+  const callee = newExpr.callee
+  if (!callee || callee.type !== 'Identifier' || callee.name !== 'AggregateError') return false
+  const first = newExpr.arguments[0]
+  if (!first || first.type !== 'ArrayExpression') return false
+  return first.elements.some(el => {
+    if (!el) return false
+    if (el.type === 'Identifier') return el.name === errName
+    if (el.type === 'SpreadElement' && el.argument.type === 'Identifier') return el.argument.name === errName
+    return false
+  })
+}
+
 function optionsHasCause(newExpr, errName) {
   for (const arg of newExpr.arguments) {
     if (arg.type !== 'ObjectExpression') continue
@@ -38,6 +53,7 @@ module.exports = {
           const arg = n.argument
           if (!arg || arg.type !== 'NewExpression') return
           if (optionsHasCause(arg, errName)) return
+          if (aggregateHoldsError(arg, errName)) return
           context.report({ node: n, messageId: 'noCause' })
         })
       },

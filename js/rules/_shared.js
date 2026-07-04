@@ -293,16 +293,19 @@ function blockHasReport(context, block, errName) {
   return found
 }
 
-// hasMarkerAbove returns true when the line directly above node carries
-// `// <prefix>: <non-empty reason>`.
+// hasMarkerAbove returns true when the comment block directly above node
+// carries `// <prefix>: <non-empty reason>` on any of its lines - not only the
+// line immediately above, so a long reason can be followed by human context.
+// A blank line breaks the block (adjacency required).
 function hasMarkerAbove(context, node, prefix) {
   if (!node || !node.loc) return false
   const sourceCode = context.sourceCode || context.getSourceCode()
-  const targetLine = node.loc.start.line - 1
+  const byEndLine = new Map()
   for (const c of sourceCode.getAllComments()) {
-    if (c.type !== 'Line') continue
-    if (c.loc.end.line !== targetLine) continue
-    const text = c.value.trim()
+    if (c.type === 'Line') byEndLine.set(c.loc.end.line, c)
+  }
+  for (let line = node.loc.start.line - 1; byEndLine.has(line); line--) {
+    const text = byEndLine.get(line).value.trim()
     if (!text.startsWith(prefix + ':')) continue
     const reason = text.slice(prefix.length + 1).trim()
     if (reason.length > 0) return true

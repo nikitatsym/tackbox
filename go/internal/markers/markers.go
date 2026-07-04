@@ -1,7 +1,7 @@
-// Package markers parses suppression comments that consumers attach
-// directly above a branch or return to opt out of an err-coverage
-// rule. A marker is only recognized on the line immediately above
-// the target node and must carry a non-empty reason after the colon.
+// Package markers parses suppression comments that consumers attach in the
+// comment block directly above a branch or return to opt out of an
+// err-coverage rule. A marker is recognized on any line of that adjacent
+// block and must carry a non-empty reason after the colon.
 package markers
 
 import (
@@ -38,20 +38,28 @@ type Marker struct {
 
 type Index struct {
 	file   *token.File
-	byLine map[int]Marker
+	groups []group
+}
+
+// group records a comment block's last line and the marker nearest that end
+// (closest to a node placed directly below), if the block carries one.
+type group struct {
+	lastLine  int
+	marker    Marker
+	hasMarker bool
 }
 
 func Build(fset *token.FileSet, f *ast.File) *Index {
 	tf := fset.File(f.Pos())
-	idx := &Index{file: tf, byLine: make(map[int]Marker)}
+	idx := &Index{file: tf}
 	for _, cg := range f.Comments {
+		g := group{lastLine: tf.Line(cg.End())}
 		for _, c := range cg.List {
-			m, ok := parse(c)
-			if !ok {
-				continue
+			if m, ok := parse(c); ok {
+				g.marker, g.hasMarker = m, true // later comment wins: nearest the node
 			}
-			idx.byLine[tf.Line(c.Slash)] = m
 		}
+		idx.groups = append(idx.groups, g)
 	}
 	return idx
 }
@@ -82,12 +90,18 @@ func parse(c *ast.Comment) (Marker, bool) {
 	return Marker{}, false
 }
 
-// Above returns the marker placed on the line directly above node.
+// Above returns the marker carried by the comment block directly above node.
+// The marker may sit on any line of that block, not only the line immediately
+// above, so a reason too long for one line can be followed by human context.
 func (idx *Index) Above(node ast.Node) (Marker, bool) {
 	if node == nil || idx.file == nil {
 		return Marker{}, false
 	}
 	line := idx.file.Line(node.Pos())
-	m, ok := idx.byLine[line-1]
-	return m, ok
+	for _, g := range idx.groups {
+		if g.lastLine == line-1 && g.hasMarker {
+			return g.marker, true
+		}
+	}
+	return Marker{}, false
 }
