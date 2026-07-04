@@ -18,6 +18,7 @@ from .engines import (
     active_engines,
     dispatch,
     engines_hash_hermetic,
+    erclint_compile_broken_pkgs,
     is_hermetic,
     located_findings,
     parse_erclint_findings,
@@ -518,21 +519,28 @@ def _hook_post(event: dict) -> int:
         results, _warnings, _orphans = _lint_results(
             root, _tackbox_root(), rel, no_cache=False, changed_scope=None, machine=True
         )
-        findings = _located(results, root) if results else []
+        if results is None:
+            return 0  # scope matched no files
+        # A non-compiling Go package must block with a readable line, not a raw
+        # analyzer-load dump; checked before _located, which would raise on it.
+        break_lines = _hook_compile_break(results)
+        if break_lines:
+            for line in break_lines:
+                sys.stderr.write(line + "\n")
+            return 2
+        findings = _located(results, root)
     except (
         PathspecMagicError,
         ChangedScopeError,
         cache.GoListError,
         reporters.ReportersError,
         subprocess.CalledProcessError,
-        ValueError,  # erclint analyzer-load error surfaced by parse_erclint_findings
+        ValueError,  # a non-compile erclint analyzer-load error
     ) as e:
         # no-sentry: hook contract: infra error -> exit 1 + stderr, non-blocking
         print(f"tackbox hook: {e}", file=sys.stderr)
         return 1
 
-    if results is None:
-        return 0  # scope matched no files
     if not findings:
         return _hook_infra_or_clean(results)
 
@@ -564,6 +572,33 @@ def _hook_infra_or_clean(results: list) -> int:
         if r.exit_code != 0 and r.stderr.strip():
             sys.stderr.write(r.stderr if r.stderr.endswith("\n") else r.stderr + "\n")
     return 1
+
+
+_GO_COMPILE_ERR = re.compile(r"^[^/\s].*\.go:\d+:\d+: .")
+
+
+def _first_go_compile_error(stderr: str) -> str:
+    """The first repo-relative `file:line:col: msg` go compiler error, skipping
+    `-: # pkg` headers and the absolute-path duplicates erclint also prints."""
+    for line in stderr.splitlines():
+        line = line.rstrip()
+        if _GO_COMPILE_ERR.match(line):
+            return line
+    return "unknown"
+
+
+def _hook_compile_break(results: list) -> list[str]:
+    """One `package <p> does not compile; first error: <...>` line per package
+    erclint could not build (pkg / pkg.test variants deduped); empty when the
+    package built."""
+    erc = next((r for r in results if r.engine_id == "erclint"), None)
+    if erc is None:
+        return []
+    pkgs = erclint_compile_broken_pkgs(erc.stdout)
+    if not pkgs:
+        return []
+    first = _first_go_compile_error(erc.stderr)
+    return [f"package {p} does not compile; first error: {first}" for p in pkgs]
 
 
 def _affected_lines(tool_name: str, tool_input: dict, target: Path) -> set[int] | None:

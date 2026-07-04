@@ -42,6 +42,13 @@ func Two() int {
 }
 """
 
+GO_BROKEN = """package pkg
+
+func F() int {
+\treturn undefinedThing
+}
+"""
+
 # ERC001 on line 7 (Fail); Clean() below is edited on a line the finding is not on.
 GO_ERC001_PLUS_CLEAN = """package pkg
 
@@ -144,7 +151,39 @@ def test_post_go_erc001_exit2_stderr(tmp_path):
     assert r.returncode == 2, f"findings must block with exit 2:\n{r.stdout}\n{r.stderr}"
     # No new_string in the event -> whole-file scope; the erclint finding blocks.
     assert "pkg/bad.go:7" in r.stderr and "errcheck" in r.stderr, r.stderr
+    # Other direction of the compile-break contract: a compiling package that
+    # merely has a finding is not reported as a compile break.
+    assert "does not compile" not in r.stderr, r.stderr
     assert r.stdout == "", f"nothing on stdout in PostToolUse:\n{r.stdout}"
+
+
+def test_post_go_compile_break_exit2(tmp_path):
+    # A non-compiling package blocks with a readable one-line contract (exit 2,
+    # no JSON dump); the pkg / pkg.test variants dedup to a single line.
+    (tmp_path / "go.mod").write_text(GO_MOD)
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "bad.go").write_text(GO_BROKEN)
+    (tmp_path / "pkg" / "bad_test.go").write_text(
+        'package pkg\n\nimport "testing"\n\nfunc TestF(t *testing.T) { _ = F() }\n'
+    )
+    _dev_py(tmp_path)
+    _init(tmp_path)
+    r = _hook(
+        {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Edit",
+            "cwd": str(tmp_path),
+            "tool_input": {
+                "file_path": str(tmp_path / "pkg" / "bad.go"),
+                "new_string": "\treturn undefinedThing",
+            },
+        }
+    )
+    assert r.returncode == 2, f"compile break must block with exit 2:\n{r.stdout}\n{r.stderr}"
+    assert "package fixture/pkg does not compile" in r.stderr, r.stderr
+    assert "undefinedThing" in r.stderr, f"first compile error must be shown:\n{r.stderr}"
+    assert r.stderr.count("does not compile") == 1, f"pkg/pkg.test dedup to one line:\n{r.stderr}"
+    assert r.stdout == "" and "{" not in r.stderr, f"no JSON dump on a compile break:\n{r.stdout}\n{r.stderr}"
 
 
 def test_post_go_clean_exit0(tmp_path):
