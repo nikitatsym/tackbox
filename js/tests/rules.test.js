@@ -5,6 +5,12 @@ const ruleTester = new RuleTester({
   languageOptions: { ecmaVersion: 2022, sourceType: 'module' },
 })
 
+// The Result-boundary exit (F2) keys off the enclosing function's return-type
+// annotation, so those fixtures need the TS parser (espree has no returnType).
+const tsRuleTester = new RuleTester({
+  languageOptions: { parser: require('@typescript-eslint/parser'), ecmaVersion: 2022, sourceType: 'module' },
+})
+
 // Reporter calls are recognized only through a tackbox/report import (tier-1)
 // or a .tackbox-reporters declaration (tier-2); a bare name is not trusted.
 // These rule tests import the canonical reporters so the calls resolve.
@@ -16,6 +22,9 @@ test('no-swallow-catch', () => {
     valid: [
       'try { f() } catch (e) { throw e }',
       R + 'try { f() } catch (e) { reportError("connection lost mid-stream", e) }',
+      // reporter anywhere in the block (after other statements) keeps the catch
+      // clean: block-scan, pinned so a future path-sensitive port cannot regress it (F2).
+      R + 'try { f() } catch (e) { cleanupState(); logLocally(e); reportError("connection lost mid-stream", e) }',
       '// no-report: bootstrap-only, no Sentry stack yet\ntry { f() } catch (e) {}',
       '// no-report: bootstrap-only, no Sentry stack yet, a reason long\n// enough that splitting it across lines is the point\ntry { f() } catch (e) {}',
     ],
@@ -23,6 +32,29 @@ test('no-swallow-catch', () => {
       { code: 'try { f() } catch (e) {}', errors: [{ messageId: 'swallow' }] },
       { code: 'try { f() } catch (e) { console.log(e) }', errors: [{ messageId: 'swallow' }] },
       { code: '// no-report: reason\n\ntry { f() } catch (e) {}', errors: [{ messageId: 'swallow' }] },
+    ],
+  })
+})
+
+// F2: typed Result-boundary is the third legal catch exit (throw / reporter /
+// boundary). Legal only when the enclosing fn is annotated Result / Attempt /
+// Promise<Result|Attempt> AND the caught err flows into `{ ok:false, cause:err }`.
+test('no-swallow-catch result-boundary (F2)', () => {
+  tsRuleTester.run('no-swallow-catch', require('../rules/no-swallow-catch'), {
+    valid: [
+      'function f(): Result<T> { try { g() } catch (e) { return { ok: false, cause: e } } }',
+      'function f(): Attempt { try { g() } catch (e) { return { ok: false, message: e } } }',
+      'async function f(): Promise<Result<T>> { try { await g() } catch (e) { return { ok: false, cause: e } } }',
+    ],
+    invalid: [
+      // bare { ok:false } drops the caught error -> swallow.
+      { code: 'function f(): Result<T> { try { g() } catch (e) { return { ok: false } } }', errors: [{ messageId: 'swallow' }] },
+      // boundary carries some other identifier, not the caught err -> swallow.
+      { code: 'function f(): Result<T> { try { g() } catch (e) { return { ok: false, cause: other } } }', errors: [{ messageId: 'swallow' }] },
+      // no Result annotation on the enclosing fn -> no boundary credit (annotation-based).
+      { code: 'function f() { try { g() } catch (e) { return { ok: false, cause: e } } }', errors: [{ messageId: 'swallow' }] },
+      // non-Result return annotation -> no credit.
+      { code: 'function f(): void { try { g() } catch (e) { return { ok: false, cause: e } } }', errors: [{ messageId: 'swallow' }] },
     ],
   })
 })
@@ -37,6 +69,18 @@ test('no-swallow-promise-catch', () => {
       { code: 'p.catch(e => {})', errors: [{ messageId: 'swallow' }] },
       { code: 'p.catch(e => { console.log(e) })', errors: [{ messageId: 'swallow' }] },
       { code: 'p.catch(function (e) {})', errors: [{ messageId: 'swallow' }] },
+    ],
+  })
+})
+
+// Result-boundary conversion is NOT accepted in a promise .catch handler (gmux
+// allowBoundary:false): the enclosing fn's Result type does not govern the
+// callback's return, so it stays a swallow even under Promise<Result<T>>.
+test('no-swallow-promise-catch result-boundary refusal (F2)', () => {
+  tsRuleTester.run('no-swallow-promise-catch', require('../rules/no-swallow-promise-catch'), {
+    valid: [],
+    invalid: [
+      { code: 'function f(): Promise<Result<T>> { return p.catch(e => { return { ok: false, cause: e } }) }', errors: [{ messageId: 'swallow' }] },
     ],
   })
 })

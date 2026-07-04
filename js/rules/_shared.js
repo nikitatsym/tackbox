@@ -331,6 +331,79 @@ function exprIsSecretRef(expr) {
   return null
 }
 
+// --- F2: typed Result-boundary conversion --------------------------------
+// The third legal catch exit alongside throw and a reporter call. Kin to the
+// policy layer (specs/general/error-policies.md): a boundary declaratively
+// turns a caught exception into a typed `{ ok: false }` failure. Annotation-
+// based (no type program): only a syntactic Result / Attempt / Promise<...>
+// return type earns the credit, so unannotated functions get none.
+
+function isResultLikeType(t) {
+  if (!t || t.type !== 'TSTypeReference' || !t.typeName || t.typeName.type !== 'Identifier') return false
+  const name = t.typeName.name
+  if (name === 'Result' || name === 'Attempt') return true
+  if (name === 'Promise') {
+    const args = (t.typeArguments && t.typeArguments.params) || (t.typeParameters && t.typeParameters.params)
+    return Array.isArray(args) && args.length >= 1 && isResultLikeType(args[0])
+  }
+  return false
+}
+
+function enclosingFn(node) {
+  let cur = node && node.parent
+  while (cur) {
+    if (
+      cur.type === 'FunctionDeclaration' ||
+      cur.type === 'FunctionExpression' ||
+      cur.type === 'ArrowFunctionExpression'
+    ) return cur
+    cur = cur.parent
+  }
+  return null
+}
+
+function fnReturnsResultLike(fn) {
+  return !!fn && !!fn.returnType && isResultLikeType(fn.returnType.typeAnnotation)
+}
+
+function exprRefsIdent(node, name) {
+  if (name == null) return false
+  let found = false
+  walk(node, n => {
+    if (n.type === 'Identifier' && n.name === name) found = true
+  })
+  return found
+}
+
+// isBoundaryValue: `{ ok: false, cause|message: <refs err> }`. A bare
+// { ok: false } drops the caught error and does not qualify.
+function isBoundaryValue(expr, errName) {
+  if (!errName || !expr || expr.type !== 'ObjectExpression') return false
+  const okProp = expr.properties.find(
+    p => p.type === 'Property' && p.key && p.key.type === 'Identifier' && p.key.name === 'ok',
+  )
+  if (!okProp || !okProp.value || okProp.value.type !== 'Literal' || okProp.value.value !== false) return false
+  return expr.properties.some(
+    p =>
+      p.type === 'Property' &&
+      p.key &&
+      p.key.type === 'Identifier' &&
+      (p.key.name === 'cause' || p.key.name === 'message') &&
+      exprRefsIdent(p.value, errName),
+  )
+}
+
+// returnsResultBoundary: block-scan (like blockHasThrow/blockHasReport) for a
+// `return <boundary>`; walk stops at nested fn bodies so a return inside a
+// callback is not counted as the catch's own exit.
+function returnsResultBoundary(block, errName) {
+  let found = false
+  walk(block, n => {
+    if (n.type === 'ReturnStatement' && isBoundaryValue(n.argument, errName)) found = true
+  })
+  return found
+}
+
 module.exports = {
   REPORTER_NAMES,
   REPORTER_FULL,
@@ -353,4 +426,7 @@ module.exports = {
   hasMarkerAbove,
   matchesSecret,
   exprIsSecretRef,
+  enclosingFn,
+  fnReturnsResultLike,
+  returnsResultBoundary,
 }
