@@ -3,18 +3,28 @@
 ESLint plugin + browser report helper. Implements the
 `error-reporting-and-coverage` and `error-handling-frontend` specs.
 
-## Install
+## Linting
+
+The frontend rules run through the hermetic tackbox CLI, which bundles
+ESLint, the parsers, and this plugin - no `npm install` is needed to
+lint:
+
+```bash
+uvx tackbox@latest lint .
+```
+
+## Direct ESLint integration
+
+To wire the plugin into your own ESLint run instead, install it from
+npm:
 
 ```bash
 npm install --save-dev tackbox eslint
 ```
 
-`@typescript-eslint/parser` and `svelte-eslint-parser` ship as
-direct dependencies, so `.ts`, `.tsx`, `.svelte`, and
-`<script lang="ts">` blocks work out of the box.
-
-The plugin exposes a `recommended` config. Add to your
-`eslint.config.js`:
+`@typescript-eslint/parser` and `svelte-eslint-parser` ship as direct
+dependencies, so `.ts`, `.tsx`, `.svelte`, and `<script lang="ts">`
+blocks work out of the box. The plugin exposes a `recommended` config:
 
 ```js
 import tackbox from 'tackbox'
@@ -27,7 +37,7 @@ export default [
 ]
 ```
 
-Or use the bundled preset directly via the bin wrapper:
+Or run the bundled preset via the bin wrapper:
 
 ```bash
 npx tackbox-eslint src/**/*.{ts,svelte}

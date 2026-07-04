@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent
 
 # uv invocation for the py test suite (mirrors the engine set installed in CI).
 _PYTEST = ["uv", "run", "--directory", "py", "--with", "pytest", "--with", "pyyaml", "pytest", "-q"]
@@ -32,13 +35,16 @@ def lint() -> int:
             _run(["go", "build", "./go/..."]),
             _run(["go", "vet", "./go/..."]),
             _run(["uv", "run", "--directory", "py", "python", "-m", "tackbox.cli", "lint", "."]),
+            # Hygiene checks run under uv for pyyaml; the system python3 that runs
+            # dev.py has none. hygiene.py stays out of the tackbox package.
+            _run(["uv", "run", "--with", "pyyaml", "python", str(_ROOT / "hygiene.py")]),
         ]
     )
 
 
 def test() -> int:
     # -count=1 disables the go test cache: golden tests build erclint via a
-    # subprocess, so analyzer changes do not invalidate it (see handover-17).
+    # subprocess, so analyzer changes would not otherwise invalidate cached runs.
     return _aggregate(
         [
             _run(["go", "test", "-race", "-count=1", "./go/..."]),
