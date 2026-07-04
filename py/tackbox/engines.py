@@ -68,6 +68,9 @@ class EngineSpec:
     # Per-path predicate applied after extension match; drop when False.
     # Used to encode language conventions like Go's `testdata/` exclusion.
     path_filter: Callable[[str], bool] = lambda _p: True
+    # Accepts the internal --machine flag (one {file, line, rule} JSON per
+    # finding). erclint is False: its -json output is parsed directly.
+    machine_flag: bool = False
 
 
 @dataclass(frozen=True)
@@ -113,19 +116,28 @@ def run_engines(
     repo_root: Path,
     tackbox_root: Path,
     reporters: tuple[tuple[str, str], ...] = (),
+    machine: bool = False,
 ) -> list[EngineResult]:
-    """Run each dispatched engine as a subprocess in parallel."""
+    """Run each dispatched engine as a subprocess in parallel.
+
+    machine=True asks every machine-capable engine for the internal
+    one-JSON-object-per-finding output instead of its human format.
+    """
     if not plan:
         return []
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(plan)) as pool:
         futures = {
             pool.submit(
-                _run_one, engine, args, repo_root, tackbox_root, reporters
+                _run_one, engine, args, repo_root, tackbox_root, reporters, machine
             ): engine.id
             for engine, args in plan
         }
         results = [fut.result() for fut in concurrent.futures.as_completed(futures)]
     return sorted(results, key=lambda r: r.engine_id)
+
+
+def _machine_argv(engine: EngineSpec, argv: list[str], machine: bool) -> list[str]:
+    return [*argv, "--machine"] if machine and engine.machine_flag else argv
 
 
 def _run_one(
@@ -134,10 +146,11 @@ def _run_one(
     repo_root: Path,
     tackbox_root: Path,
     reporters: tuple[tuple[str, str], ...] = (),
+    machine: bool = False,
 ) -> EngineResult:
     if engine.package_mode:
-        return _run_per_module(engine, args, repo_root, tackbox_root, reporters)
-    argv = engine.build_argv(repo_root, tackbox_root, args, reporters)
+        return _run_per_module(engine, args, repo_root, tackbox_root, reporters, machine)
+    argv = _machine_argv(engine, engine.build_argv(repo_root, tackbox_root, args, reporters), machine)
     env = hermetic_env() if is_hermetic() else None
     completed = subprocess.run(
         argv,
@@ -160,6 +173,7 @@ def _run_per_module(
     repo_root: Path,
     tackbox_root: Path,
     reporters: tuple[tuple[str, str], ...] = (),
+    machine: bool = False,
 ) -> EngineResult:
     """One subprocess per Go module, cwd at the module root.
 
@@ -175,7 +189,7 @@ def _run_per_module(
     errs: list[str] = []
     for module in sorted(groups):
         rel = [module_relative(module, p) for p in groups[module]]
-        argv = engine.build_argv(repo_root, tackbox_root, rel, reporters)
+        argv = _machine_argv(engine, engine.build_argv(repo_root, tackbox_root, rel, reporters), machine)
         completed = subprocess.run(
             argv,
             cwd=repo_root / module,
@@ -235,6 +249,57 @@ def iter_json_objects(text: str):
         obj, end = decoder.raw_decode(text, idx)
         yield obj
         idx = end
+
+
+@dataclass(frozen=True)
+class Finding:
+    """A located finding for the hook's diff-scope. file/line are None when the
+    engine could not attribute a location; the caller over-reports such a
+    finding rather than dropping it."""
+
+    rule: str
+    file: str | None
+    line: int | None
+
+
+def parse_machine_findings(stdout: str) -> list[Finding]:
+    """Parse the internal one-JSON-object-per-line machine output. Bins emit
+    valid JSON per finding; a missing file/line becomes None (location
+    unknown)."""
+    out: list[Finding] = []
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        obj = json.loads(line)
+        out.append(Finding(rule=obj.get("rule") or "", file=obj.get("file"), line=obj.get("line")))
+    return out
+
+
+def _split_posn(posn: str) -> tuple[str | None, int | None]:
+    # erclint posn is `path:line:col`; rsplit from the right keeps a Windows
+    # drive colon intact. An unexpected shape yields a location-unknown finding.
+    parts = posn.rsplit(":", 2)
+    if len(parts) == 3 and parts[1].isdigit():
+        return parts[0], int(parts[1])
+    return None, None
+
+
+def erclint_located_findings(stdout: str, repo_root: Path) -> list[Finding]:
+    out: list[Finding] = []
+    for f in parse_erclint_findings(stdout):
+        path, line = _split_posn(f.get("posn", ""))
+        rel = os.path.relpath(path, repo_root) if path is not None else None
+        out.append(Finding(rule=f.get("analyzer", ""), file=rel, line=line))
+    return out
+
+
+def located_findings(engine_id: str, stdout: str, repo_root: Path) -> list[Finding]:
+    """Located findings from one engine's output: erclint from its -json posn,
+    every other engine from its machine NDJSON."""
+    if engine_id == "erclint":
+        return erclint_located_findings(stdout, repo_root)
+    return parse_machine_findings(stdout)
 
 
 def _has_ext(path: str, exts: frozenset[str]) -> bool:
@@ -392,16 +457,19 @@ DEV_ENGINES: list[EngineSpec] = [
         extensions=_OPENGREP_EXTS,
         build_argv=_erclint_opengrep_argv,
         path_filter=_drop_go_testdata,
+        machine_flag=True,
     ),
     EngineSpec(
         id="tackbox-eslint",
         extensions=_JS_EXTS,
         build_argv=_tackbox_eslint_argv,
+        machine_flag=True,
     ),
     EngineSpec(
         id="tackbox-mdlint",
         extensions=_MD_EXTS,
         build_argv=_tackbox_mdlint_argv,
+        machine_flag=True,
     ),
 ]
 
@@ -475,16 +543,19 @@ HERMETIC_ENGINES: list[EngineSpec] = [
         extensions=_OPENGREP_EXTS,
         build_argv=_erclint_opengrep_argv_hermetic,
         path_filter=_drop_go_testdata,
+        machine_flag=True,
     ),
     EngineSpec(
         id="tackbox-eslint",
         extensions=_JS_EXTS,
         build_argv=_tackbox_eslint_argv_hermetic,
+        machine_flag=True,
     ),
     EngineSpec(
         id="tackbox-mdlint",
         extensions=_MD_EXTS,
         build_argv=_tackbox_mdlint_argv_hermetic,
+        machine_flag=True,
     ),
 ]
 

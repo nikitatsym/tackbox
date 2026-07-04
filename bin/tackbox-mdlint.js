@@ -3,7 +3,9 @@ const { lint } = require('markdownlint/promise')
 const noNonAscii = require('../js/markdownlint-rules/no-non-ascii')
 
 async function run() {
-  const files = process.argv.slice(2)
+  const argv = process.argv.slice(2)
+  const machine = argv.includes('--machine')
+  const files = argv.filter(a => a !== '--machine')
   if (files.length === 0) {
     process.stderr.write('tackbox-mdlint: no files supplied\n')
     process.exit(2)
@@ -18,6 +20,12 @@ async function run() {
   for (const [file, errors] of Object.entries(result)) {
     for (const e of errors) {
       count++
+      if (machine) {
+        // Internal {file, line, rule} contract for the hook; human output below
+        // is unchanged.
+        process.stdout.write(JSON.stringify({ file, line: e.lineNumber, rule: e.ruleNames[0] }) + '\n')
+        continue
+      }
       const col = e.errorRange ? ':' + e.errorRange[0] : ''
       const detail = e.errorDetail ? ' [' + e.errorDetail + ']' : ''
       const name = e.ruleNames.slice(0, 2).join('/')

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -66,6 +67,7 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 	}
 
 	scanArgs, pyNames, javaNames := splitReporters(args)
+	machine, scanArgs := splitMachine(scanArgs)
 
 	rulesDir, err := os.MkdirTemp("", "erclint-rules-*")
 	if err != nil {
@@ -88,7 +90,11 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 		return 0, fmt.Errorf("write empty .semgrepignore: %w", err)
 	}
 
-	full := append([]string{"scan", "--config", rulesDir, "--error"}, toAbs(origCwd, scanArgs)...)
+	full := []string{"scan", "--config", rulesDir, "--error"}
+	if machine {
+		full = append(full, "--json")
+	}
+	full = append(full, toAbs(origCwd, scanArgs)...)
 	cmd := exec.Command("opengrep", full...)
 	cmd.Dir = scanCwd
 	var outBuf, errBuf bytes.Buffer
@@ -98,8 +104,14 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 	runErr := cmd.Run()
 
 	// Opengrep sees absolute paths; rewrite them back so consumers see the
-	// same shape they would if opengrep ran directly in origCwd.
-	if _, err := io.WriteString(stdout, rewritePaths(outBuf.String(), origCwd)); err != nil {
+	// same shape they would if opengrep ran directly in origCwd. Machine mode
+	// translates opengrep's stable JSON into the internal one-finding-per-line
+	// {file, line, rule} contract instead of the decorative text.
+	if machine {
+		if err := emitMachine(stdout, outBuf.Bytes(), origCwd); err != nil {
+			return 0, fmt.Errorf("translate opengrep json: %w", err)
+		}
+	} else if _, err := io.WriteString(stdout, rewritePaths(outBuf.String(), origCwd)); err != nil {
 		return 0, fmt.Errorf("write stdout: %w", err)
 	}
 	if _, err := io.WriteString(stderr, rewritePaths(errBuf.String(), origCwd)); err != nil {
@@ -207,6 +219,69 @@ func splitReporters(args []string) (scan, py, java []string) {
 		}
 	}
 	return scan, py, java
+}
+
+// splitMachine strips the internal --machine flag (opengrep JSON translated to
+// the {file, line, rule} contract) out of the scan args.
+func splitMachine(args []string) (bool, []string) {
+	machine := false
+	var out []string
+	for _, a := range args {
+		if a == "--machine" {
+			machine = true
+			continue
+		}
+		out = append(out, a)
+	}
+	return machine, out
+}
+
+type machineFinding struct {
+	File string `json:"file"`
+	Line int    `json:"line"`
+	Rule string `json:"rule"`
+}
+
+// emitMachine translates opengrep's --json output into the internal contract:
+// one {file, line, rule} object per line. Paths are made repo-relative and
+// check_id is reduced to its final segment (the rule id, the temp rules dir
+// prefix dropped). A whole-output parse failure surfaces as an error, never a
+// silent drop.
+func emitMachine(w io.Writer, jsonOut []byte, cwd string) error {
+	if len(bytes.TrimSpace(jsonOut)) == 0 {
+		return nil
+	}
+	enc := json.NewEncoder(w)
+	var parsed struct {
+		Results []struct {
+			CheckID string `json:"check_id"`
+			Path    string `json:"path"`
+			Start   struct {
+				Line int `json:"line"`
+			} `json:"start"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(jsonOut, &parsed); err != nil {
+		report.SentryErr(context.Background(),
+			"opengrep --json output unparseable", err, nil, "erclint-opengrep.machine")
+		// Never drop a finding: a location-unknown record makes the caller
+		// over-report rather than silently see zero findings.
+		return enc.Encode(machineFinding{Rule: "opengrep-json-unparseable"})
+	}
+	for _, r := range parsed.Results {
+		rule := r.CheckID
+		if i := strings.LastIndex(rule, "."); i >= 0 {
+			rule = rule[i+1:]
+		}
+		if err := enc.Encode(machineFinding{
+			File: rewritePaths(r.Path, cwd),
+			Line: r.Start.Line,
+			Rule: rule,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // injectReporters splices a pattern-not per declared name into the swallowed

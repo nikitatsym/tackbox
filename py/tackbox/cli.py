@@ -120,6 +120,7 @@ def _lint_results(
     scope: str,
     no_cache: bool,
     changed_scope: set[str] | None,
+    machine: bool = False,
 ):
     """Run the lint pipeline for `scope`; return (results, warnings, orphans).
 
@@ -145,14 +146,14 @@ def _lint_results(
         no_cache = True
 
     if no_cache:
-        results = run_engines(plan, repo_root, tackbox_root, reporter_pairs)
+        results = run_engines(plan, repo_root, tackbox_root, reporter_pairs, machine)
     else:
         cache_root = cache.default_cache_root()
         engines_hash = engines_hash_hermetic() if is_hermetic() else cache.engines_hash_dev(tackbox_root)
         cache.gc_stale_engines(engines_hash, cache_root)
 
         filtered_plan, pending = _apply_cache(plan, repo_root, engines_hash, cache_root)
-        results = run_engines(filtered_plan, repo_root, tackbox_root, reporter_pairs)
+        results = run_engines(filtered_plan, repo_root, tackbox_root, reporter_pairs, machine)
         _mark_clean_units(results, pending, engines_hash, cache_root)
         cache.gc_soft_cap(engines_hash, cache.SOFT_CAP, cache_root)
     return results, warnings, go_orphans
