@@ -10,6 +10,7 @@ Signal-killed subprocess exit code is normalized to `128 + sig`
 from __future__ import annotations
 
 import concurrent.futures
+import importlib.util
 import json
 import os
 import subprocess
@@ -36,17 +37,11 @@ _TACKBOX_PKG_ROOT = Path(__file__).parent
 def is_hermetic() -> bool:
     if not (_TACKBOX_PKG_ROOT / "engines.json").is_file():
         return False
-    try:
-        import tackbox_engines  # noqa: F401
-    except ImportError:
-        return False
-    return True
+    return importlib.util.find_spec("tackbox_engines") is not None
 
 
 def hermetic_engines_root() -> Path:
-    import tackbox_engines
-
-    return tackbox_engines.root()
+    return importlib.import_module("tackbox_engines").root()
 
 
 def hermetic_env(base: dict[str, str] | None = None) -> dict[str, str]:

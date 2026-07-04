@@ -44,12 +44,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return _dispatch(argv)
     except BrokenPipeError:
-        # Downstream reader closed the pipe (e.g. `tackbox lint | head`).
-        # Point stdout's fd at devnull so the interpreter's atexit flush does
-        # not re-raise, then exit 141 (128 + SIGPIPE) with no traceback.
+        # no-sentry: downstream pipe closed (lint | head) - exit 141, no traceback
+        # dup2 to devnull so the interpreter's atexit flush does not re-raise.
         try:
             os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         except OSError:
+            # no-sentry: best-effort devnull redirect for the atexit flush; nothing to report
             pass
         return 141
 
@@ -70,6 +70,7 @@ def _dispatch(argv: list[str] | None) -> int:
             cache.GoListError,
             reporters.ReportersError,
         ) as e:
+            # no-sentry: CLI boundary: surface as message + exit 2; a traceback here is the bug
             print(f"tackbox: {e}", file=sys.stderr)
             return 2
     if args.command == "doctor":
@@ -305,6 +306,7 @@ def _clean_args(r: EngineResult, info: dict) -> list[str]:
         try:
             findings = parse_erclint_findings(r.stdout)
         except ValueError:
+            # no-sentry: unparseable erclint json -> attribute nothing, never a false clean
             return []
         dirty_ips = {f.get("pkg") for f in findings}
         ip_map = info.get("arg_ip", {})
@@ -339,7 +341,7 @@ def _erclint_has_findings(stdout: str) -> bool:
     try:
         return bool(parse_erclint_findings(stdout))
     except ValueError:
-        # Analyzer-load errors surface as a failing aggregate.
+        # no-sentry: unparseable erclint output -> failing aggregate, never a false clean
         return True
 
 
@@ -449,6 +451,7 @@ def _run_hook() -> int:
         if not isinstance(event, dict):
             raise ValueError("hook event is not a JSON object")
     except (json.JSONDecodeError, ValueError, OSError) as e:
+        # no-sentry: hook contract: bad stdin -> exit 1 + one stderr line, non-blocking
         print(f"tackbox hook: unreadable stdin: {e}", file=sys.stderr)
         return 1
     name = event.get("hook_event_name")
@@ -520,6 +523,7 @@ def _hook_post(event: dict) -> int:
         reporters.ReportersError,
         subprocess.CalledProcessError,
     ) as e:
+        # no-sentry: hook contract: infra error -> exit 1 + stderr, non-blocking
         print(f"tackbox hook: {e}", file=sys.stderr)
         return 1
 
@@ -635,6 +639,7 @@ def _same_path(a: Path, b: Path) -> bool:
     try:
         return a.resolve() == b.resolve()
     except OSError:
+        # no-sentry: unresolvable path is simply not the reporters file - guard
         return False
 
 

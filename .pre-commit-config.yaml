@@ -1,83 +1,12 @@
+# Single entry point: pre-commit runs `dev.py check` (= lint + test), the
+# same gate CI runs. No per-hook logic here (dev-script spec).
 repos:
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
-    hooks:
-      - id: trailing-whitespace
-      - id: end-of-file-fixer
-      - id: check-yaml
-      - id: check-merge-conflict
-
   - repo: local
     hooks:
-      - id: go-build
-        name: go build
-        entry: go
-        args: [build, ./go/...]
-        language: system
-        pass_filenames: false
-        types: [go]
-
-      - id: go-vet
-        name: go vet
-        entry: go
-        args: [vet, ./go/...]
-        language: system
-        pass_filenames: false
-        types: [go]
-
-      - id: go-test
-        name: go test
-        entry: go
-        # -count=1: golden builds erclint via subprocess -> test cache can pass stale (tackbox-17)
-        args: [test, -race, -count=1, ./go/...]
+      - id: dev-check
+        name: dev.py check
+        entry: python3
+        args: [dev.py, check]
         language: system
         pass_filenames: false
         always_run: true
-
-      - id: py-test
-        name: py test
-        entry: uv
-        args: [run, --directory, py, --with, pytest, --with, pyyaml, pytest, -q]
-        language: system
-        pass_filenames: false
-        always_run: true
-
-      - id: erclint
-        name: erclint (self)
-        entry: go
-        args: [run, ./go/cmd/erclint, ./go/...]
-        language: system
-        pass_filenames: false
-        types: [go]
-
-      - id: erclint-opengrep
-        name: erclint-opengrep (self)
-        entry: go
-        args: [run, ./go/cmd/erclint-opengrep, ./go]
-        language: system
-        pass_filenames: false
-        types: [go]
-
-      - id: npm-test
-        name: npm test (JS rules)
-        entry: npm
-        args: [test]
-        language: system
-        pass_filenames: false
-        always_run: true
-
-      - id: tackbox-eslint-self
-        name: tackbox-eslint (self)
-        entry: node
-        args: [./bin/tackbox-eslint.js, js/eslint-plugin.js, js/report.js, js/rules, bin]
-        language: system
-        pass_filenames: false
-        types_or: [javascript]
-
-      - id: tackbox-mdlint-self
-        name: tackbox-mdlint (self)
-        entry: node
-        args: [./bin/tackbox-mdlint.js, README.md, go/README.md, js/README.md]
-        language: system
-        pass_filenames: false
-        types: [markdown]

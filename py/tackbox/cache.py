@@ -101,6 +101,7 @@ def is_cached(key: CacheKey, root: Path) -> bool:
         p.touch()
         return True
     except OSError:
+        # no-sentry: cache is transparent - a miss is never a run failure
         return False
 
 
@@ -111,6 +112,7 @@ def mark_clean(key: CacheKey, root: Path) -> None:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.touch()
     except OSError:
+        # no-sentry: cache is transparent - a write miss is never a run failure
         pass
 
 
@@ -167,6 +169,7 @@ def gc_soft_cap(engines_hash: str, cap: int, root: Path) -> None:
         try:
             return p.stat().st_mtime
         except OSError:
+            # no-sentry: missing marker sorts as oldest for GC, never fails the run
             return 0.0
 
     markers.sort(key=_mtime)
@@ -174,6 +177,7 @@ def gc_soft_cap(engines_hash: str, cap: int, root: Path) -> None:
         try:
             m.unlink()
         except OSError:
+            # no-sentry: best-effort GC unlink; a miss is never a run failure
             pass
 
 
@@ -266,6 +270,7 @@ def _module_digests(
         try:
             rel = info["dir"].resolve().relative_to(repo_resolved)
         except ValueError:
+            # no-sentry: dir outside repo boundary - not ours to digest, skip
             continue
         key = str(rel) if str(rel) != "." else "."
         dir_to_import[key] = import_path
@@ -309,6 +314,7 @@ def erclint_import_paths(
             try:
                 rel = Path(p["Dir"]).resolve().relative_to(repo_resolved)
             except ValueError:
+                # no-sentry: dir outside repo boundary - not ours to digest, skip
                 continue
             key = str(rel) if str(rel) != "." else "."
             if key in module_pkgs:

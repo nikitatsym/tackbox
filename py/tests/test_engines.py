@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+import tackbox.engines as engines
 from tackbox.engines import (
     DEV_ENGINES,
     EngineSpec,
@@ -117,8 +118,6 @@ def test_dispatch_path_filter_drops_matching_files():
 
 
 def test_dispatch_dev_engines_erclint_skips_go_testdata():
-    from tackbox.engines import DEV_ENGINES
-
     erclint = next(e for e in DEV_ENGINES if e.id == "erclint")
     plan = dispatch(
         [
@@ -132,8 +131,6 @@ def test_dispatch_dev_engines_erclint_skips_go_testdata():
 
 
 def test_dispatch_dev_engines_opengrep_skips_go_testdata_but_not_other_langs():
-    from tackbox.engines import DEV_ENGINES
-
     opengrep = next(e for e in DEV_ENGINES if e.id == "erclint-opengrep")
     plan = dispatch(
         [
@@ -261,8 +258,6 @@ def test_resolve_versions_erclint_degrades_to_question_without_go(
 ):
     # No Go toolchain: the dev-binary build fails and the banner must show
     # "?" for erclint instead of crashing the whole CLI.
-    import tackbox.engines as engines
-
     def _no_go(_root, _name):
         raise FileNotFoundError("go")
 

@@ -22,30 +22,22 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go build ./go/...
-      - run: go vet ./go/...
-      # erclint-opengrep hardening tests build the wrapper and exercise it
-      # end-to-end, so opengrep must be on PATH before `go test`.
+      # opengrep must be on PATH: dev.py lint (erclint-opengrep) and the go
+      # hardening tests both shell out to it.
       - name: Install opengrep
         run: |
           set -euo pipefail
           curl -fsSL https://github.com/opengrep/opengrep/releases/latest/download/opengrep_manylinux_x86 -o /usr/local/bin/opengrep
           chmod +x /usr/local/bin/opengrep
           opengrep --version
-      - run: go test -race ./go/...
-      - run: go run ./go/cmd/erclint ./go/...
-      - run: go run ./go/cmd/erclint-opengrep ./go
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: npm
       - run: npm ci --no-audit --no-fund
-      # py e2e fixture tests drive every engine; keep after go/opengrep/node setup
       - uses: astral-sh/setup-uv@v5
-      - run: uv run --directory py --with pytest --with pyyaml pytest -q
-      - run: npm test
-      - run: node ./bin/tackbox-eslint.js js/eslint-plugin.js js/report.js js/rules bin
-      - run: node ./bin/tackbox-mdlint.js README.md go/README.md js/README.md
+      # Same gate as the local pre-commit hook: dev.py check = lint + test.
+      - run: python3 dev.py check
 
   tag:
     needs: test
