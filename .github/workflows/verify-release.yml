@@ -25,6 +25,7 @@ jobs:
     outputs:
       uvx: ${{ steps.pick.outputs.uvx }}
       pip: ${{ steps.pick.outputs.pip }}
+      version: ${{ steps.pick.outputs.version }}
     steps:
       - id: pick
         shell: bash
@@ -38,13 +39,15 @@ jobs:
             workflow_run) version="${HEAD_BRANCH#v}" ;;
             workflow_dispatch) version="${INPUT_VERSION}" ;;
           esac
-          if [ -n "$version" ]; then
-            echo "uvx=tackbox@${version}" >> "$GITHUB_OUTPUT"
-            echo "pip=tackbox==${version}" >> "$GITHUB_OUTPUT"
-          else
-            echo "uvx=tackbox@latest" >> "$GITHUB_OUTPUT"
-            echo "pip=tackbox" >> "$GITHUB_OUTPUT"
+          # Pin scheduled/latest runs to one number up front: canary and badge
+          # must agree on the version even if a release lands mid-run.
+          if [ -z "$version" ]; then
+            version=$(curl -fsSL https://pypi.org/pypi/tackbox/json \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])')
           fi
+          echo "version=$version"          >> "$GITHUB_OUTPUT"
+          echo "uvx=tackbox@${version}"    >> "$GITHUB_OUTPUT"
+          echo "pip=tackbox==${version}"   >> "$GITHUB_OUTPUT"
 
   canary:
     name: canary ${{ matrix.platform }}
@@ -129,6 +132,52 @@ jobs:
             echo "expected exit 1 on fixture violations, got $rc" >&2
             exit 1
           fi
+
+  badge:
+    name: pypi badge
+    needs: [target, canary]
+    # Red on canary failure is the point, so always(); a cancelled canary
+    # (superseded by a newer release) must not stamp a stale verdict, and a
+    # manual re-verify of a pinned old version must not roll the badge back
+    # (bare dispatch pins to latest, so it may stamp - handy for reseeding).
+    if: >-
+      always() && needs.canary.result != 'cancelled' && needs.canary.result != 'skipped'
+      && (github.event_name != 'workflow_dispatch' || inputs.version == '')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      # The badges branch is written only here, never by hand: green means a
+      # canary actually passed. README serves it via raw.githubusercontent
+      # (max-age=300), so it escapes the 3h shields+camo cache stack that
+      # keeps img.shields.io/pypi/v badges hours behind.
+      - name: Render badge and push to badges branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.canary.result }}
+          VERSION: ${{ needs.target.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$RESULT" = "success" ]; then
+            color=brightgreen
+            text="v${VERSION} verified"
+          else
+            color=red
+            text="v${VERSION} canary failed"
+          fi
+          # shields static-badge escaping: literal dash doubles, space is underscore
+          msg=$(printf '%s' "$text" | sed 's/-/--/g; s/ /_/g')
+          curl -fsSL "https://img.shields.io/badge/pypi-${msg}-${color}" -o pypi.svg
+          mkdir badge-branch
+          mv pypi.svg badge-branch/
+          cd badge-branch
+          git init -q -b badges
+          git config user.name "github-actions[bot]"
+          git config user.email "41898270+github-actions[bot]@users.noreply.github.com"
+          git add pypi.svg
+          git commit -qm "pypi badge: ${text}"
+          # Single disposable commit each time; badge history is pure noise.
+          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" badges
 
   status:
     name: commit status

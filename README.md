@@ -2,7 +2,7 @@
 
 [![publish](https://github.com/nikitatsym/tackbox/actions/workflows/publish.yml/badge.svg)](https://github.com/nikitatsym/tackbox/actions/workflows/publish.yml)
 [![verify-release](https://github.com/nikitatsym/tackbox/actions/workflows/verify-release.yml/badge.svg)](https://github.com/nikitatsym/tackbox/actions/workflows/verify-release.yml)
-[![pypi](https://img.shields.io/pypi/v/tackbox)](https://pypi.org/project/tackbox/)
+[![pypi](https://raw.githubusercontent.com/nikitatsym/tackbox/badges/pypi.svg)](https://pypi.org/project/tackbox/)
 
 Universal lint rules that enforce the `error-reporting-and-coverage`
 and `error-handling-frontend` specs across Go, Python, JS, TS, and
