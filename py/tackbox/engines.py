@@ -236,6 +236,30 @@ def parse_erclint_findings(raw: str) -> list[dict]:
     return findings
 
 
+COMPILE_SKIP = "analysis skipped due to errors in package"
+
+
+def erclint_compile_broken_pkgs(stdout: str) -> list[str]:
+    """Base packages whose erclint run was skipped because they do not compile.
+    `pkg`, `pkg [pkg.test]`, and `pkg.test` variants collapse to one entry."""
+    bases: list[str] = []
+    seen: set[str] = set()
+    for doc in iter_json_objects(stdout):
+        for pkg, analyzers in doc.items():
+            if not any(
+                isinstance(p, dict) and p.get("error") == COMPILE_SKIP
+                for p in analyzers.values()
+            ):
+                continue
+            base = pkg.split(" [", 1)[0]
+            if base.endswith(".test"):
+                base = base[: -len(".test")]
+            if base not in seen:
+                seen.add(base)
+                bases.append(base)
+    return bases
+
+
 def iter_json_objects(text: str):
     """Iterate over concatenated top-level JSON objects in `text`."""
     decoder = json.JSONDecoder()
