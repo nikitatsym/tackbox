@@ -8,6 +8,7 @@ const noSwallowAllsettled = require('./rules/no-swallow-allsettled')
 const noConsoleError = require('./rules/no-console-error')
 const validErrorReport = require('./rules/valid-error-report')
 const noThrowAndReport = require('./rules/no-throw-and-report')
+const noParseFallback = require('./rules/no-parse-fallback')
 const validDedupKey = require('./rules/valid-dedup-key')
 const noSecretInReport = require('./rules/no-secret-in-report')
 const tsRethrowWithoutCause = require('./rules/ts-rethrow-without-cause')
@@ -21,6 +22,7 @@ const rules = {
   'no-console-error': noConsoleError,
   'valid-error-report': validErrorReport,
   'no-throw-and-report': noThrowAndReport,
+  'no-parse-fallback': noParseFallback,
   'valid-dedup-key': validDedupKey,
   'no-secret-in-report': noSecretInReport,
   'ts-rethrow-without-cause': tsRethrowWithoutCause,
