@@ -34,7 +34,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			if !hasCaptureNotPanic(pass.TypesInfo, ifst.Body, errName) {
 				return true
 			}
-			if !hasReturnReferencingErr(ifst.Body, errName) {
+			if !hasReturnReferencingErr(pass.TypesInfo, ifst.Body, errName) {
 				return true
 			}
 			pass.Reportf(ifst.Pos(),
@@ -55,10 +55,12 @@ func hasCaptureNotPanic(info *types.Info, body *ast.BlockStmt, errName string) b
 	return false
 }
 
-func hasReturnReferencingErr(body *ast.BlockStmt, errName string) bool {
+// A result that cannot hand an error to the caller (a sink's exit code) is
+// not `return err`: `return DeclaredSink(err)` is a single capture.
+func hasReturnReferencingErr(info *types.Info, body *ast.BlockStmt, errName string) bool {
 	for _, ret := range astutil.BlockReturns(body) {
 		for _, res := range ret.Results {
-			if astutil.ContainsIdent(res, errName) {
+			if astutil.ContainsIdent(res, errName) && astutil.IsErrorCarryingExpr(info, res) {
 				return true
 			}
 		}
