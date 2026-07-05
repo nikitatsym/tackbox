@@ -355,13 +355,15 @@ def prepare_thin(
         "payload_sha256": payload_sha,
         "platform": pl.key,
         "wheel_plat": pl.wheel_plat,
-        # The store fetches this exact fat wheel by name and verifies both the
-        # wheel file (fat_wheel.sha256) and the unpacked payload (store_sha256).
-        # platform lets the store refuse a wrong-arch wheel before downloading.
+        # The store fetches this exact fat wheel by name and verifies the
+        # unpacked payload against store_sha256. No wheel-file sha pin: a
+        # rebuild of a published engines version is not zip-reproducible and
+        # PyPI keeps the first upload (skip-existing), so container bytes
+        # legitimately differ. platform lets the store refuse a wrong-arch
+        # wheel before downloading.
         "fat_wheel": {
             "platform": pl.key,
             "wheel": fat_wheel.name,
-            "sha256": sha256_file(fat_wheel),
         },
         "store_sha256": engines_payload_tree_sha256(fat_wheel),
         "engines": all_entries,

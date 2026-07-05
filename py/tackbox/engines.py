@@ -155,13 +155,9 @@ def _fetch_and_install(data: dict, root: Path, fetcher: "Fetcher") -> None:
     work = Path(tempfile.mkdtemp(prefix=".ensure-", dir=base))
     try:
         wheel = fetcher(data, work)
-        want_wheel_sha = data["fat_wheel"]["sha256"]
-        got = sha256_file(wheel)
-        if got != want_wheel_sha:
-            raise EnginesStoreError(
-                f"fat wheel sha256 mismatch: pinned {want_wheel_sha}, got {got} "
-                f"({wheel.name})"
-            )
+        # Integrity is pinned on the payload TREE, not the wheel file: rebuilds
+        # of a published engines version are not zip-reproducible and PyPI
+        # keeps the first upload, so container bytes legitimately differ.
         staged = work / "store"
         _unpack_tackbox_engines(wheel, staged)
         tree = sha256_tree(staged)
@@ -253,6 +249,16 @@ def _download_fat_wheel(data: dict, workdir: Path) -> Path:
             shutil.copyfileobj(r, out)
     except OSError as e:
         raise EnginesStoreError(f"cannot download engines wheel {dl_url}: {e}") from e
+    # Transport integrity against the index's own digest (truncation, corrupt
+    # proxy); substitution is caught later by the store_sha256 tree pin.
+    claimed = (entry.get("digests") or {}).get("sha256")
+    if claimed:
+        got = sha256_file(dest)
+        if got != claimed:
+            raise EnginesStoreError(
+                f"downloaded {want_name} does not match the index digest: "
+                f"index {claimed}, got {got}"
+            )
     return dest
 
 
