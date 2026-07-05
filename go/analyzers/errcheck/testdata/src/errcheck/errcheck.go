@@ -2,6 +2,7 @@ package errcheck
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"os"
 
@@ -148,6 +149,67 @@ func exitCarryingErrFires() error {
 	err := errors.New("x")
 	if err != nil { // want `ERC001:.*err=err`
 		os.Exit(len(err.Error()))
+	}
+	return errors.New("noop")
+}
+
+// --- type-gate (F5): only guards of an error-assignable identifier are err-branches ---
+
+type parseErr struct{ msg string }
+
+func (e *parseErr) Error() string { return e.msg }
+
+// *parseErr implements error: guarding it is an err-branch, so an unhandled
+// body still fires even though the identifier is not named "err".
+func typeGateConcreteErrFires(e *parseErr) error {
+	if e != nil { // want `ERC001:.*err=e`
+		_ = "swallowed"
+	}
+	return nil
+}
+
+// a non-error pointer is not an err-branch: guarding it and falling through
+// must not fire (the thrift-nats false-positive class: `if conn != nil`).
+func typeGateNonErrorClean(conn *int) {
+	if conn != nil {
+		_ = "not an error branch"
+	}
+}
+
+// --- chain-preserving propagation (F5): the returned error must carry the cause ---
+
+// %w wrap carries the caught error into the unwrap chain: propagation.
+func okWrapW() error {
+	err := errors.New("x")
+	if err != nil {
+		return fmt.Errorf("ctx: %w", err)
+	}
+	return errors.New("noop")
+}
+
+// errors.Join carries the caught error: propagation.
+func okJoin() error {
+	err := errors.New("x")
+	if err != nil {
+		return errors.Join(errors.New("ctx"), err)
+	}
+	return errors.New("noop")
+}
+
+// %v stringifies the error and breaks the unwrap chain: rethrow without cause.
+func wrapVFires() error {
+	err := errors.New("x")
+	if err != nil { // want `ERC001:.*err=err`
+		return fmt.Errorf("ctx: %v", err)
+	}
+	return errors.New("noop")
+}
+
+// err.Error() flattens the error into a string: the chain is broken.
+func errStringFires() error {
+	err := errors.New("x")
+	if err != nil { // want `ERC001:.*err=err`
+		return errors.New("ctx: " + err.Error())
 	}
 	return errors.New("noop")
 }
