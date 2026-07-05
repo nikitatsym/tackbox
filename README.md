@@ -64,8 +64,9 @@ fetched separately and cached per version:
   runtime, the `opengrep` binary, and the vendored third-party
   `node_modules`. Published as a PyPI wheel but **not** a pip
   dependency of thin. On the first run for a given engine version,
-  tackbox resolves the wheel via the PyPI JSON API, verifies it
-  against the sha256 pins in the thin wheel's `engines.json`, and
+  tackbox resolves the wheel via the PyPI JSON API, verifies its
+  unpacked payload against the tree sha256 pinned in the thin
+  wheel's `engines.json`, and
   unpacks it once into `$XDG_DATA_HOME/tackbox/engines/<version>/`
   (default `~/.local/share/...`; override `TACKBOX_ENGINES_DIR`).
   Every later thin version reuses that one copy, so a stream of

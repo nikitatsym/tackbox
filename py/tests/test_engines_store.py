@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from tackbox import engines
-from tackbox.cache import sha256_file, sha256_tree
+from tackbox.cache import sha256_tree
 
 
 # -- fixture wheel builder -------------------------------------------------
@@ -80,7 +80,6 @@ def _engines_json(
     store_sha: str,
     *,
     platform: str | None = None,
-    wheel_sha: str | None = None,
 ) -> dict:
     plat = platform or _detected_platform()
     return {
@@ -92,7 +91,6 @@ def _engines_json(
         "fat_wheel": {
             "platform": plat,
             "wheel": wheel.name,
-            "sha256": wheel_sha if wheel_sha is not None else sha256_file(wheel),
         },
         "store_sha256": store_sha,
         "engines": [],
@@ -205,30 +203,29 @@ def test_override_dir_short_circuits_fetch(store_env, monkeypatch, tmp_path):
 # -- ensure: adversarial (attack the guarantee) ---------------------------
 
 
-def test_corrupt_wheel_sha_hard_errors_and_leaves_no_store(store_env, monkeypatch):
-    # The pin says one thing; the wheel bytes hash to another. A compromised
-    # PyPI serving a swapped wheel must be caught before unpack, and nothing
-    # may be committed to the store.
-    bad = dict(store_env.data)
-    bad_fat = dict(bad["fat_wheel"])
-    bad_fat["sha256"] = "aa" * 32
-    bad["fat_wheel"] = bad_fat
-    monkeypatch.setattr(engines, "load_engines_json", lambda: bad)
+def test_repacked_container_with_identical_tree_installs(store_env):
+    # The published wheel is a different zip (member order, timestamps,
+    # comment) around the same payload: rebuilds are not zip-reproducible and
+    # PyPI keeps the first upload. Only the payload tree is the pin; the
+    # container bytes must not matter.
+    def repack_fetcher(engines_json: dict, workdir: Path) -> Path:
+        out = workdir / store_env.data["fat_wheel"]["wheel"]
+        with zipfile.ZipFile(out, "w") as zf:
+            zf.comment = b"repacked container, same tree"
+            for rel, content in sorted(store_env.payload.items(), reverse=True):
+                info = zipfile.ZipInfo(f"tackbox_engines/{rel}", date_time=(2020, 1, 2, 3, 4, 6))
+                info.external_attr = (0o755 if rel in _EXEC else 0o644) << 16
+                zf.writestr(info, content)
+        return out
 
-    with pytest.raises(engines.EnginesStoreError) as ei:
-        engines.ensure_engines(fetcher=store_env.fetcher)
-    msg = str(ei.value)
-    assert "aa" * 32 in msg and "sha256" in msg
-    assert not store_env.store_dir.exists()
-    # No half-written temp siblings survive a failed fetch.
-    base = store_env.store_dir.parent
-    assert not base.exists() or list(base.iterdir()) == []
+    root = engines.ensure_engines(fetcher=repack_fetcher)
+    assert root == store_env.store_dir
+    assert sha256_tree(root) == store_env.store_sha
 
 
 def test_corrupt_tree_after_unpack_hard_errors(store_env, monkeypatch):
-    # Second barrier: the wheel matches its own sha pin, but the payload tree
-    # does not match store_sha256 (a legitimately-signed but repacked wheel).
-    # The post-unpack tree verify must still refuse it.
+    # The tree pin is the integrity barrier: a wheel whose payload does not
+    # match store_sha256 must be refused, and nothing committed to the store.
     bad = dict(store_env.data)
     bad["store_sha256"] = "bb" * 32
     monkeypatch.setattr(engines, "load_engines_json", lambda: bad)
@@ -237,6 +234,9 @@ def test_corrupt_tree_after_unpack_hard_errors(store_env, monkeypatch):
         engines.ensure_engines(fetcher=store_env.fetcher)
     assert "tree" in str(ei.value) or "store_sha256" in str(ei.value) or "bb" * 32 in str(ei.value)
     assert not store_env.store_dir.exists()
+    # No half-written temp siblings survive a failed install.
+    base = store_env.store_dir.parent
+    assert not base.exists() or list(base.iterdir()) == []
 
 
 def test_platform_drift_hard_errors_with_both_values_before_fetch(store_env, monkeypatch):
@@ -349,3 +349,30 @@ def test_default_fetcher_missing_wheel_in_index_hard_errors(store_env, monkeypat
     with pytest.raises(engines.EnginesStoreError) as ei:
         engines._download_fat_wheel(store_env.data, workdir)
     assert store_env.wheel.name in str(ei.value)
+
+
+def test_default_fetcher_rejects_download_mismatching_index_digest(store_env, monkeypatch):
+    # Transport barrier: the bytes received differ from what the index itself
+    # claims to serve (truncation, corrupting proxy) - loud error.
+    download_url = "https://files.pythonhosted.org/packages/ab/cd/" + store_env.wheel.name
+    index = {
+        "urls": [
+            {
+                "filename": store_env.wheel.name,
+                "url": download_url,
+                "digests": {"sha256": "cc" * 32},
+            }
+        ]
+    }
+
+    def fake_urlopen(url, timeout=None):
+        if url.endswith("/json"):
+            return io.BytesIO(json.dumps(index).encode())
+        return io.BytesIO(store_env.wheel.read_bytes())
+
+    monkeypatch.setattr(engines, "urlopen", fake_urlopen)
+    workdir = store_env.tmp / "dl3"
+    workdir.mkdir()
+    with pytest.raises(engines.EnginesStoreError) as ei:
+        engines._download_fat_wheel(store_env.data, workdir)
+    assert "cc" * 32 in str(ei.value)

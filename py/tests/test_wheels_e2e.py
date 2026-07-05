@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 from tackbox import engines
-from tackbox.cache import sha256_file, sha256_tree
+from tackbox.cache import sha256_tree
 
 REPO = Path(__file__).resolve().parents[2]
 BUILD_SCRIPT = REPO / "scripts" / "build_wheels.py"
@@ -136,7 +136,7 @@ def test_thin_wheel_does_not_depend_on_fat(wheels):
 
 
 def test_engines_json_carries_store_pins(engines_payload, wheels):
-    """The thin wheel's engines.json must pin the fat wheel (name + sha + this
+    """The thin wheel's engines.json must pin the fat wheel (name + this
     platform) and the unpacked tree, and the pin must match the real payload."""
     with zipfile.ZipFile(wheels["thin"]) as zf:
         ej = json.loads(zf.read("tackbox/engines.json"))
@@ -144,8 +144,7 @@ def test_engines_json_carries_store_pins(engines_payload, wheels):
     fw = ej["fat_wheel"]
     assert fw["wheel"] == wheels["fat"].name
     assert fw["platform"] == engines.detect_platform_key()
-    assert len(fw["sha256"]) == 64
-    assert fw["sha256"] == sha256_file(wheels["fat"])
+    assert "sha256" not in fw
     assert ej["store_sha256"] == sha256_tree(engines_payload)
 
 
