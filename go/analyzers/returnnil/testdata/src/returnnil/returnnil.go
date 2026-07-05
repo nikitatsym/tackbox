@@ -15,6 +15,16 @@ func okErrorType() error {
 	return nil
 }
 
+type probeErr struct{ msg string }
+
+func (e *probeErr) Error() string { return e.msg }
+
+// a concrete error result: nil is the no-error value, the canonical Go
+// contract - not a hidden empty result. Swallows stay on ERC001.
+func okConcreteErrorNil() *probeErr {
+	return nil
+}
+
 func violationPtr() *int {
 	return nil // want `ERC004:.*nil-return`
 }

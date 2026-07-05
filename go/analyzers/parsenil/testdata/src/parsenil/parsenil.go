@@ -94,6 +94,20 @@ func violationPropagateStringConstructor(data []byte) error {
 	return nil
 }
 
+// F5c: a tuple-returning wrapper with an error component carries the parse
+// error object out - arity must not matter.
+func failWith(cause error) (int, error) {
+	return 0, &wrapErr{Cause: cause}
+}
+
+func okPropagateTuple(s string) (int, error) {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return failWith(err)
+	}
+	return n, nil
+}
+
 func violationSchemaDrift(data []byte) {
 	var v map[string]any
 	// parse-skip: schema-drift // want `ERC002:.*schema-drift.*capture instead`

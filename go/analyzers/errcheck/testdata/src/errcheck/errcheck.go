@@ -266,3 +266,65 @@ func okTwoStepWrap() error {
 	}
 	return errors.New("noop")
 }
+
+// --- tuple-returning call propagation (F5c): arity must not matter ---
+
+func failNamed(cause error) (int, error) {
+	return 0, &wrapErr{Cause: cause}
+}
+
+func codeMsg(err error) (int, string) {
+	return 1, err.Error()
+}
+
+// a tuple-returning call with an error component carrying the err object:
+// propagation, same trust as a single-result constructor.
+func okTupleNamed() (int, error) {
+	err := errors.New("x")
+	if err != nil {
+		return failNamed(err)
+	}
+	return 1, nil
+}
+
+// a closure wrapper is the same case: the call's tuple type decides, the
+// callee is never resolved.
+func okTupleClosure() (int, error) {
+	fail := func(cause error) (int, error) {
+		return 0, &wrapErr{Cause: cause}
+	}
+	err := errors.New("x")
+	if err != nil {
+		return fail(err)
+	}
+	return 1, nil
+}
+
+// a tuple without an error component cannot carry the err object out.
+func tupleNoErrorFires() (int, string) {
+	err := errors.New("x")
+	if err != nil { // want `ERC001:.*err=err`
+		return codeMsg(err)
+	}
+	return 1, "ok"
+}
+
+// only the stringified err reaches the tuple call: the chain is broken.
+func tupleStringifiedFires() (int, error) {
+	err := errors.New("x")
+	if err != nil { // want `ERC001:.*err=err`
+		return failNamed(errors.New(err.Error()))
+	}
+	return 1, nil
+}
+
+// --- error-typed single result: the ERC004 exemption must not open a swallow ---
+
+// returning the no-error value while the caught error is live drops it: nil
+// carries no err object, ERC001 owns this regardless of ERC004.
+func concreteErrReturnNilFires(e *parseErr) *wrapErr {
+	if e != nil { // want `ERC001:.*err=e`
+		return nil
+	}
+	return &wrapErr{}
+}
