@@ -309,6 +309,29 @@ def test_canary_uses_uvx_from_pypi(verify_workflow):
     )
 
 
+def test_canary_convergence_gate_is_the_real_command(verify_workflow):
+    """A separate resolve probe proves nothing about the next request (CDN
+    edges flip-flop while the index converges): the doctor loop itself is the
+    gate, retrying only on the definite not-yet-visible resolver error, and
+    lint reuses the tool env doctor resolved - no second resolution to race."""
+    canary = _canary_job(verify_workflow["jobs"])
+    text = _steps_text(canary["steps"])
+    assert "uv pip compile" not in text, (
+        "no separate resolve probe: the doctor loop is the convergence gate"
+    )
+    assert "No solution found" in text and "no version of" in text, (
+        "doctor must retry only on the exact not-yet-visible resolver error"
+    )
+    lint_runs = [
+        str(s.get("run", ""))
+        for s in canary["steps"]
+        if isinstance(s, dict) and "lint" in str(s.get("name", ""))
+    ]
+    assert lint_runs and "--refresh" not in lint_runs[0], (
+        "lint must reuse the tool env doctor resolved (no second resolution)"
+    )
+
+
 def test_canary_runs_after_publish_and_on_schedule(verify_workflow):
     """Ordering vs publish comes from the workflow_run trigger; the cron leg
     keeps @latest verified between releases."""
