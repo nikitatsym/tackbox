@@ -62,6 +62,38 @@ func violationPropagateV(data []byte) error {
 	return nil
 }
 
+// F5b: ERC002 inherits the shared object-flow primitive. A constructor carrying
+// the parse error object propagates; feeding it the stringified error does not.
+type wrapErr struct{ Cause error }
+
+func (w *wrapErr) Error() string { return "wrap" }
+func (w *wrapErr) Unwrap() error { return w.Cause }
+
+func newWrap(cause any) error {
+	if e, ok := cause.(error); ok {
+		return &wrapErr{Cause: e}
+	}
+	return &wrapErr{}
+}
+
+func okPropagateComposite(data []byte) error {
+	var v map[string]any
+	err := json.Unmarshal(data, &v)
+	if err != nil {
+		return &wrapErr{Cause: err}
+	}
+	return nil
+}
+
+func violationPropagateStringConstructor(data []byte) error {
+	var v map[string]any
+	err := json.Unmarshal(data, &v)
+	if err != nil { // want `ERC002:.*json.Unmarshal err-branch must capture`
+		return newWrap(err.Error())
+	}
+	return nil
+}
+
 func violationSchemaDrift(data []byte) {
 	var v map[string]any
 	// parse-skip: schema-drift // want `ERC002:.*schema-drift.*capture instead`

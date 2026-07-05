@@ -213,3 +213,56 @@ func errStringFires() error {
 	}
 	return errors.New("noop")
 }
+
+// --- object-flow propagation (F5b): the err OBJECT reaching an error carrier ---
+
+type wrapErr struct{ Cause error }
+
+func (w *wrapErr) Error() string { return "wrap" }
+func (w *wrapErr) Unwrap() error { return w.Cause }
+
+func newWrap(cause any) error {
+	if e, ok := cause.(error); ok {
+		return &wrapErr{Cause: e}
+	}
+	return &wrapErr{}
+}
+
+// composite literal carrying the err object: propagation (Unwrap contract of
+// the wrapper is trusted, not verified).
+func okCompositeWrap() error {
+	err := errors.New("x")
+	if err != nil {
+		return &wrapErr{Cause: err}
+	}
+	return errors.New("noop")
+}
+
+// constructor call carrying the err object: propagation.
+func okConstructorWrap() error {
+	err := errors.New("x")
+	if err != nil {
+		return newWrap(err)
+	}
+	return errors.New("noop")
+}
+
+// constructor fed the stringified error: every err occurrence is a string, so
+// the chain is broken.
+func constructorStringFires() error {
+	err := errors.New("x")
+	if err != nil { // want `ERC001:.*err=err`
+		return newWrap(err.Error())
+	}
+	return errors.New("noop")
+}
+
+// two-step wrap resolved against the branch: propagation.
+func okTwoStepWrap() error {
+	err := errors.New("x")
+	if err != nil {
+		wrapped := fmt.Errorf("ctx: %w", err)
+		return wrapped
+	}
+	return errors.New("noop")
+}

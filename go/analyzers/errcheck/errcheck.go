@@ -36,14 +36,14 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			}
 			// Type-gate: only guards of an error-assignable identifier are
 			// err-branches. `if conn != nil` on a *net.Conn is not one.
-			if !astutil.IsErrorAssignable(pass.TypesInfo, errIdent) {
+			if !astutil.IsErrorAssignableExpr(pass.TypesInfo, errIdent) {
 				return true
 			}
 			errName := errIdent.Name
 			if m, ok := idx.Above(ifst); ok && m.Kind == markers.NoReport {
 				return true
 			}
-			if propagates(ifst.Body, errName) {
+			if propagates(pass.TypesInfo, ifst.Body, errName) {
 				return true
 			}
 			if captures(pass.TypesInfo, ifst.Body, errName) {
@@ -65,8 +65,8 @@ func run(pass *analysis.Pass) (interface{}, error) {
 // a chain-preserving return (`return err` / `%w` wrap / errors.Join) or a
 // `panic` carrying it. A `%v` / `.Error()` return breaks the unwrap chain and
 // is not propagation (rethrow-without-cause).
-func propagates(body *ast.BlockStmt, errName string) bool {
-	if astutil.BlockPropagatesChain(body, errName) {
+func propagates(info *types.Info, body *ast.BlockStmt, errName string) bool {
+	if astutil.BlockPropagatesChain(info, body, errName) {
 		return true
 	}
 	for _, call := range astutil.BlockCalls(body) {
