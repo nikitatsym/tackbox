@@ -1,0 +1,20 @@
+class TryThrowNotCatch {
+    void m() {
+        try {
+            if (bad()) {
+                throw new IllegalStateException("guard");
+            }
+            risky();
+        } catch (Exception e) { // want "JV001"
+            log(e);
+        }
+    }
+
+    boolean bad() {
+        return false;
+    }
+
+    void risky() throws Exception {}
+
+    void log(Exception e) {}
+}

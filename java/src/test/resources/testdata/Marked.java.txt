@@ -1,0 +1,14 @@
+class Marked {
+    void m() {
+        try {
+            risky();
+        } catch (Exception e) {
+            // no-report: best-effort cleanup; a failure here is not actionable
+            log(e);
+        }
+    }
+
+    void risky() throws Exception {}
+
+    void log(Exception e) {}
+}

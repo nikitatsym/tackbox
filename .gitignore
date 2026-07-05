@@ -27,6 +27,9 @@ __pycache__/
 # tackbox dev-mode binary cache
 .tackbox-dev/
 
+# Maven build output (javalint shaded jar)
+/java/target/
+
 # wheels/publish CI workflow local artifacts
 /.wheels-venv/
 /.smoke-venv/

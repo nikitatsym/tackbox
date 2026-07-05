@@ -3,8 +3,8 @@
 
 One entry point for the same checks locally and in CI. `check` = lint +
 test and is what the pre-commit hook and CI run. Assumes the toolchain is
-present (go, node + npm deps, opengrep, uv); it orchestrates, it does not
-install.
+present (go, node + npm deps, opengrep, uv, java >= 17 + maven); it
+orchestrates, it does not install.
 """
 
 from __future__ import annotations
@@ -47,11 +47,14 @@ def lint() -> int:
 def test() -> int:
     # -count=1 disables the go test cache: golden tests build erclint via a
     # subprocess, so analyzer changes would not otherwise invalidate cached runs.
+    # `mvn verify` builds the shaded javalint.jar and runs its // want harness;
+    # the same jar is what scripts/build_wheels.py packs into the thin wheel.
     return _aggregate(
         [
             _run(["go", "test", "-race", "-count=1", "./go/..."]),
             _run(["npm", "test"]),
             _run(_PYTEST),
+            _run(["mvn", "-q", "-B", "-f", "java/pom.xml", "verify"]),
         ]
     )
 

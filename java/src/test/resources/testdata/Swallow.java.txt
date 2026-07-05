@@ -1,0 +1,13 @@
+class Swallow {
+    void m() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            log(e);
+        }
+    }
+
+    void risky() throws Exception {}
+
+    void log(Exception e) {}
+}
