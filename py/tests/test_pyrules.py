@@ -160,6 +160,32 @@ def test_marker_block_above_first_body_stmt(tmp_path):
     assert r.returncode == 0, r.stdout
 
 
+def test_marker_above_survives_trailing_comment_on_anchor(tmp_path):
+    # The anchor line's own trailing comment must not merge into the marker
+    # block above it and shift the block's bottom line off the anchor.
+    src = (
+        "def cleanup():\n    try:\n        work()\n"
+        "    except ValueError as e:\n"
+        "        # no-report: boundary cleanup, nothing to propagate\n"
+        "        pass  # nothing else to release here\n"
+    )
+    _write(tmp_path, "m.py", src)
+    r = _flake8(tmp_path, "m.py")
+    assert r.returncode == 0, r.stdout
+
+
+def test_trailing_marker_above_anchor_still_flags(tmp_path):
+    # A marker trailing a code line is not a standalone block-above marker.
+    src = (
+        "def h():\n    try:\n        work()\n"
+        "    except ValueError as e:  # no-report: this trails the except header\n"
+        "        pass\n"
+    )
+    _write(tmp_path, "m.py", src)
+    r = _flake8(tmp_path, "m.py")
+    assert r.returncode == 1 and "TBX001" in r.stdout, r.stdout
+
+
 def test_shutdown_carveout_is_clean(tmp_path):
     src = (
         "import subprocess\n\n\ndef stop(proc):\n    try:\n"

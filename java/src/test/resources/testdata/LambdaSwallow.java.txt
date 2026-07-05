@@ -1,0 +1,18 @@
+import java.util.function.Supplier;
+
+class LambdaSwallow {
+    void m() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            Supplier<Integer> s = () -> {
+                throw new RuntimeException(e);
+            };
+            log(e, s);
+        }
+    }
+
+    void risky() throws Exception {}
+
+    void log(Exception e, Supplier<Integer> s) {}
+}

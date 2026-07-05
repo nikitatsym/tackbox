@@ -1,11 +1,13 @@
 package nl.tsym.tackbox.javalint;
 
+import com.github.javaparser.JavaToken;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.comments.Comment;
 import com.github.javaparser.ast.comments.LineComment;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 
 /** Port of go/internal/markers.Index: markers live on any line of the comment
  *  block directly above a node. Only `//` line comments are recognized; the
@@ -28,7 +30,7 @@ public final class MarkerIndex {
     public MarkerIndex(CompilationUnit cu) {
         List<LineComment> comments = new ArrayList<>();
         for (Comment c : cu.getAllContainedComments()) {
-            if (c instanceof LineComment lc && lc.getRange().isPresent()) {
+            if (c instanceof LineComment lc && lc.getRange().isPresent() && isStandalone(lc)) {
                 comments.add(lc);
             }
         }
@@ -68,5 +70,17 @@ public final class MarkerIndex {
             }
         }
         return null;
+    }
+
+    /** True iff only whitespace precedes the comment on its own line: a
+     *  comment trailing code must never join or start a standalone block,
+     *  so it stays invisible to grouping and to marker lookup. */
+    private static boolean isStandalone(LineComment c) {
+        Optional<JavaToken> tok = c.getTokenRange().map(tr -> tr.getBegin());
+        Optional<JavaToken> prev = tok.flatMap(JavaToken::getPreviousToken);
+        while (prev.isPresent() && prev.get().getCategory() == JavaToken.Category.WHITESPACE_NO_EOL) {
+            prev = prev.get().getPreviousToken();
+        }
+        return prev.isEmpty() || prev.get().getCategory() == JavaToken.Category.EOL;
     }
 }
