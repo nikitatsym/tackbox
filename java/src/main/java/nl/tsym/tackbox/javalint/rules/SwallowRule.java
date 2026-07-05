@@ -2,9 +2,14 @@ package nl.tsym.tackbox.javalint.rules;
 
 import com.github.javaparser.Position;
 import com.github.javaparser.ast.CompilationUnit;
+import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.expr.LambdaExpr;
+import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import com.github.javaparser.ast.stmt.BlockStmt;
 import com.github.javaparser.ast.stmt.CatchClause;
+import com.github.javaparser.ast.stmt.LocalClassDeclarationStmt;
 import com.github.javaparser.ast.stmt.ThrowStmt;
+import com.github.javaparser.ast.visitor.VoidVisitorAdapter;
 import java.util.ArrayList;
 import java.util.List;
 import nl.tsym.tackbox.javalint.Finding;
@@ -36,10 +41,49 @@ public final class SwallowRule {
         return out;
     }
 
-    /** Minimal: any `throw` syntactically inside the catch body counts as
-     *  propagation. Path-sensitivity and object-flow tighten this in F8b/F8c. */
+    /** Minimal: any `throw` inside the catch body's own synchronous control
+     *  flow counts as propagation. Path-sensitivity and object-flow tighten
+     *  this in F8b/F8c. */
     private static boolean propagates(CatchClause cc) {
-        return !cc.getBody().findAll(ThrowStmt.class).isEmpty();
+        ThrowFinder finder = new ThrowFinder();
+        cc.getBody().accept(finder, null);
+        return finder.found;
+    }
+
+    /** Finds a `throw` reachable via the catch body's own synchronous frame,
+     *  refusing to descend into a nested scope (lambda, anonymous/local class,
+     *  method) the way go/analyzers/recoverswallow refuses to descend into a
+     *  FuncLit: a throw there executes later, not as part of this catch. */
+    private static final class ThrowFinder extends VoidVisitorAdapter<Void> {
+        private boolean found;
+
+        @Override
+        public void visit(ThrowStmt n, Void arg) {
+            found = true;
+        }
+
+        @Override
+        public void visit(LambdaExpr n, Void arg) {
+            // scope boundary: a lambda body runs in its own frame.
+        }
+
+        @Override
+        public void visit(LocalClassDeclarationStmt n, Void arg) {
+            // scope boundary: a local class's methods run in their own frame.
+        }
+
+        @Override
+        public void visit(MethodDeclaration n, Void arg) {
+            // scope boundary: a nested method runs in its own frame.
+        }
+
+        @Override
+        public void visit(ObjectCreationExpr n, Void arg) {
+            if (n.getAnonymousClassBody().isPresent()) {
+                return; // scope boundary: anonymous class body.
+            }
+            super.visit(n, arg);
+        }
     }
 
     /** A no-report marker directly above the first body statement (or above the

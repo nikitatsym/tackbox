@@ -1,0 +1,21 @@
+class NestedBlockPropagates {
+    void m() {
+        try {
+            risky();
+        } catch (Exception e) {
+            if (fatal(e)) {
+                throw new RuntimeException(e);
+            } else {
+                log(e);
+            }
+        }
+    }
+
+    boolean fatal(Exception e) {
+        return true;
+    }
+
+    void risky() throws Exception {}
+
+    void log(Exception e) {}
+}

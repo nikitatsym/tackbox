@@ -1,0 +1,14 @@
+class TrailingMarkerAboveAnchor {
+    void m() {
+        try {
+            risky();
+        } catch ( // want "JV001"
+                Exception e) { // no-report: a trailing marker must not suppress
+            log(e);
+        }
+    }
+
+    void risky() throws Exception {}
+
+    void log(Exception e) {}
+}

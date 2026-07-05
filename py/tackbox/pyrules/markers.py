@@ -24,6 +24,12 @@ def _marker_reason_ok(comment: str) -> bool:
     return text[len(_PREFIX):].strip() != ""
 
 
+def _is_standalone(tok: tokenize.TokenInfo) -> bool:
+    """True iff only whitespace precedes the comment on its own line: a
+    comment trailing code must never join or start a standalone block."""
+    return tok.line[: tok.start[1]].strip() == ""
+
+
 class MarkerIndex:
     """Bottom lines of comment blocks that carry a valid no-report marker."""
 
@@ -36,7 +42,7 @@ class MarkerIndex:
         comments = sorted(
             (tok.start[0], tok.string)
             for tok in tokens
-            if tok.type == tokenize.COMMENT
+            if tok.type == tokenize.COMMENT and _is_standalone(tok)
         )
         block_rows: list[int] = []
         block_marked = False
