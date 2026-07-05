@@ -242,67 +242,109 @@ func isNil(e ast.Expr) bool {
 	return ok && id.Name == "nil"
 }
 
-// IsErrorAssignable reports whether ident's static type is assignable to the
+// IsErrorAssignableExpr reports whether expr's static type is assignable to the
 // built-in error interface - an error value or a concrete error implementation
-// (e.g. *ParseError). A plain `type == error` check would miss the latter.
-func IsErrorAssignable(info *types.Info, ident *ast.Ident) bool {
+// (e.g. *ParseError). A plain `type == error` check would miss the latter. The
+// type-gate uses it on the guarded identifier; propagation uses it on the
+// returned carrier.
+func IsErrorAssignableExpr(info *types.Info, expr ast.Expr) bool {
 	if info == nil {
 		return false
 	}
-	t := info.TypeOf(ident)
+	t := info.TypeOf(expr)
 	if t == nil {
 		return false
 	}
 	return types.Implements(t, errorType) || types.AssignableTo(t, errorType)
 }
 
-// BlockPropagatesChain reports whether any top-level return in body carries
-// errName into the returned error without breaking the unwrap chain: a bare
-// `return err`, a `fmt.Errorf(<...%w...>, ..., err)`, or `errors.Join(..., err)`.
-// A `%v` / `.Error()` stringification breaks the chain and does not count.
-func BlockPropagatesChain(body *ast.BlockStmt, errName string) bool {
-	for _, ret := range BlockReturns(body) {
-		if ReturnChainPreserves(ret, errName) {
-			return true
-		}
-	}
-	return false
-}
-
-// ReturnChainPreserves reports whether ret carries errName chain-preservingly.
-func ReturnChainPreserves(ret *ast.ReturnStmt, errName string) bool {
+// BlockPropagatesChain reports whether the err-branch body carries the err
+// OBJECT into a returned error-assignable expression without stringifying every
+// occurrence. Object flow through a composite literal, a constructor call, a
+// `%w` wrap, errors.Join, or a bare `return err` is propagation - a
+// constructor's Unwrap contract is trusted (trust-class die/declared), not
+// verified. The chain breaks only when every occurrence of err in the carrier
+// passes through a string (`.Error()`, a non-%w verb, a string conversion). A
+// two-step wrap (`v := ...%w...; return v`) is resolved against body.
+func BlockPropagatesChain(info *types.Info, body *ast.BlockStmt, errName string) bool {
 	if errName == "" {
 		return false
 	}
-	for _, res := range ret.Results {
-		if chainPreservingCarrier(res, errName) {
-			return true
+	for _, ret := range BlockReturns(body) {
+		for _, res := range ret.Results {
+			if returnResultPropagates(info, body, res, errName) {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-func chainPreservingCarrier(res ast.Expr, errName string) bool {
-	if id, ok := res.(*ast.Ident); ok { // bare `return err`, unwrapped
-		return id.Name == errName
+// returnResultPropagates reports whether one returned result carries the err
+// object onward. A bare local carrier (`v` from `v := <wrap>`) is resolved to
+// its assignment in body first, crediting a two-step wrap.
+func returnResultPropagates(info *types.Info, body *ast.BlockStmt, res ast.Expr, errName string) bool {
+	carrier := res
+	if id, ok := res.(*ast.Ident); ok && id.Name != errName {
+		if rhs, ok := localAssignRHS(body, id.Name); ok {
+			carrier = rhs
+		}
 	}
-	call, ok := res.(*ast.CallExpr)
-	if !ok {
+	if !IsErrorAssignableExpr(info, carrier) {
 		return false
 	}
+	return errObjectFlows(carrier, errName)
+}
+
+// errObjectFlows reports whether errName reaches root as a live object: found
+// as a bare identifier outside any stringifying construct. Subtrees that
+// stringify their content (`.Error()`, a fmt string builder, a %w-less
+// fmt.Errorf, a `string(...)` conversion) are pruned - an err inside them is a
+// stringified occurrence, not object flow.
+func errObjectFlows(root ast.Node, errName string) bool {
+	found := false
+	ast.Inspect(root, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		switch x := n.(type) {
+		case *ast.CallExpr:
+			if stringifies(x) {
+				return false
+			}
+		case *ast.Ident:
+			if x.Name == errName {
+				found = true
+				return false
+			}
+		}
+		return true
+	})
+	return found
+}
+
+// stringifies reports whether call converts its arguments to a string, so an
+// err inside is a stringified occurrence: a `.Error()` method call, a fmt
+// string builder, a %w-less fmt.Errorf, or a `string(...)` conversion. A
+// %w-carrying fmt.Errorf wraps and is not a stringifier.
+func stringifies(call *ast.CallExpr) bool {
+	if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Error" && len(call.Args) == 0 {
+		return true
+	}
 	switch QualifiedName(call.Fun) {
-	case "errors.Join":
-		return argFlows(call, errName)
+	case "fmt.Sprintf", "fmt.Sprint", "fmt.Sprintln":
+		return true
 	case "fmt.Errorf":
-		return wrapsWithVerbW(call, errName)
+		return !errorfWraps(call)
+	case "string":
+		return true
 	}
 	return false
 }
 
-// wrapsWithVerbW reports whether a fmt.Errorf call wraps errName with the %w
-// verb: a string-literal format carrying %w, and errName flowing into the
-// arguments. A non-literal format cannot be verified and does not count.
-func wrapsWithVerbW(call *ast.CallExpr, errName string) bool {
+// errorfWraps reports whether a fmt.Errorf call's literal format carries a %w
+// verb. A non-literal format cannot be verified and is treated as non-wrapping.
+func errorfWraps(call *ast.CallExpr) bool {
 	if len(call.Args) == 0 {
 		return false
 	}
@@ -310,11 +352,29 @@ func wrapsWithVerbW(call *ast.CallExpr, errName string) bool {
 	if !ok || lit.Kind != token.STRING {
 		return false
 	}
-	format, err := strconv.Unquote(lit.Value)
-	if err != nil || !containsVerbW(format) {
-		return false
+	// lit is a parser-validated string literal: Unquote cannot fail; on the
+	// impossible error an empty format carries no %w (fail closed).
+	format, _ := strconv.Unquote(lit.Value)
+	return containsVerbW(format)
+}
+
+// localAssignRHS returns the right-hand side of the last top-level assignment
+// to name in body, for resolving a two-step wrap in an err-branch.
+func localAssignRHS(body *ast.BlockStmt, name string) (ast.Expr, bool) {
+	var rhs ast.Expr
+	found := false
+	for _, st := range body.List {
+		assign, ok := st.(*ast.AssignStmt)
+		if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+			continue
+		}
+		id, ok := assign.Lhs[0].(*ast.Ident)
+		if !ok || id.Name != name {
+			continue
+		}
+		rhs, found = assign.Rhs[0], true
 	}
-	return argFlows(call, errName)
+	return rhs, found
 }
 
 // containsVerbW reports whether format contains a %w verb, skipping escaped %%.

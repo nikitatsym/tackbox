@@ -28,14 +28,18 @@ Details per rule:
 
 - ERC001 `errcheck` - in any `if err != nil` branch (guarding an
   error-assignable identifier - a bare `int`/`*Conn` guard is not an
-  err-branch), propagate the error chain-preservingly (`return err`,
-  `fmt.Errorf("...: %w", err)`, `errors.Join(..., err)`), capture it,
-  carry it into a printing terminal, or carry `// no-report: <reason>`.
-  A `%v` / `.Error()` return breaks the unwrap chain and is a rethrow
-  without cause, not propagation.
+  err-branch), propagate the error, capture it, carry it into a
+  printing terminal, or carry `// no-report: <reason>`. Propagation is
+  the err OBJECT reaching a returned error-assignable value: a bare
+  `return err`, a `%w` wrap, `errors.Join`, or a wrapper composite /
+  constructor carrying it (`&E{Cause: err}`, `newE(err)` - the wrapper's
+  Unwrap contract is trusted, not verified). The chain breaks - a
+  rethrow without cause - only when every occurrence of err in the
+  returned value is stringified (`%v`, `.Error()`, `string(...)`). A
+  two-step wrap (`w := fmt.Errorf("...%w", err); return w`) is credited.
 - ERC002 `parsenil` - parser results that fall through to nil must
-  capture, propagate the error chain-preservingly (`return err`, `%w`
-  wrap, `errors.Join`), or carry `// parse-skip: <reason>`.
+  capture, propagate the error (same object-flow rule as ERC001), or
+  carry `// parse-skip: <reason>`.
 - ERC003 `terminal` - `log.Fatal*`, `os.Exit`, project-local `die`
   must be preceded by a capture, carry the error into their own
   arguments (`log.Fatal(err)`, a reported death), resolve to a declared
