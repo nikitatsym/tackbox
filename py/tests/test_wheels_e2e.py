@@ -45,6 +45,7 @@ def wheels(tmp_path_factory) -> dict:
     _needs("npm")
     _needs("go")
     _needs("uv")
+    _needs("mvn")
     outdir = tmp_path_factory.mktemp("dist-wheels")
     env = {**os.environ, "TACKBOX_VERSION": "0.0.0", "TACKBOX_ENGINES_VERSION": "0.0.0"}
     result = subprocess.run(
@@ -119,6 +120,22 @@ def test_thin_and_fat_wheels_built(wheels):
     assert wheels["thin"].is_file()
     assert wheels["fat"].name.endswith(".whl")
     assert wheels["thin"].name.endswith(".whl")
+
+
+def test_thin_wheel_carries_javalint_jar(wheels):
+    """F8a: the thin wheel ships the platform-independent javalint.jar and pins
+    it in engines.json, so doctor checksums it and F8d can dispatch it. A
+    dropped jar must fail the build here, not the consumer."""
+    with zipfile.ZipFile(wheels["thin"]) as zf:
+        names = set(zf.namelist())
+        ej = json.loads(zf.read("tackbox/engines.json"))
+    assert "tackbox/bin/javalint.jar" in names, sorted(
+        n for n in names if n.startswith("tackbox/bin/")
+    )
+    entry = next((e for e in ej["engines"] if e.get("id") == "javalint"), None)
+    assert entry is not None, "engines.json is missing the javalint entry"
+    assert entry["path"] == "tackbox/bin/javalint.jar"
+    assert entry.get("sha256"), "javalint entry must carry a sha256 for doctor"
 
 
 def test_thin_wheel_does_not_depend_on_fat(wheels):

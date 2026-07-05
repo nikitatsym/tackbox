@@ -128,6 +128,25 @@ def copy_binary(src: Path, dest: Path) -> None:
     dest.chmod(st | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+def build_javalint_jar() -> Path:
+    """Build the shaded, platform-independent javalint.jar via maven.
+
+    The jar rides in the thin wheel (one build per platform run; the bytes are
+    arch-independent). Tests already ran in dev.py check, so packaging skips
+    them here.
+    """
+    print("mvn package javalint.jar", file=sys.stderr)
+    mvn = shutil.which("mvn") or "mvn"
+    subprocess.run(
+        [mvn, "-q", "-B", "-f", str(REPO / "java" / "pom.xml"), "-DskipTests", "package"],
+        cwd=REPO, check=True, stdout=sys.stderr,
+    )
+    jar = REPO / "java" / "target" / "javalint.jar"
+    if not jar.is_file():
+        raise SystemExit(f"expected shaded jar at {jar} after mvn package")
+    return jar
+
+
 def wipe_dir(path: Path) -> None:
     if path.exists():
         shutil.rmtree(path)
@@ -309,6 +328,21 @@ def prepare_thin(
             "license": "MIT",
             "license_path": "tackbox/third_party/licenses/tackbox.LICENSE.txt",
         })
+
+    # javalint is a JVM engine: one platform-independent shaded jar, run via the
+    # system `java` toolchain. No exe suffix; doctor checksums it like any binary.
+    jar_src = build_javalint_jar()
+    jar_dest = thin_root / "bin" / "javalint.jar"
+    shutil.copyfile(jar_src, jar_dest)
+    thin_entries.append({
+        "id": "javalint",
+        "kind": "binary",
+        "version": version,
+        "sha256": sha256_file(jar_dest),
+        "path": "tackbox/bin/javalint.jar",
+        "license": "MIT",
+        "license_path": "tackbox/third_party/licenses/tackbox.LICENSE.txt",
+    })
 
     # Rules layout mirrors the dev tree so the bundled node scripts keep
     # their relative require paths (`../eslint.config.preset.js` etc).

@@ -22,6 +22,13 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # javalint builds/tests under dev.py check (mvn verify); maven is
+      # pre-installed on the runner, setup-java supplies the JDK it needs.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
       # opengrep must be on PATH: dev.py lint (erclint-opengrep) and the go
       # hardening tests both shell out to it.
       - name: Install opengrep
