@@ -65,9 +65,12 @@ Full constraints per rule:
 - `no-swallow-catch` - `catch` must throw, call a reporter, or have
   `// no-report: <reason>` above the `try`.
 - `no-swallow-promise-catch` - a promise rejection handler must throw,
-  call a reporter, or carry the marker. The handler is `.catch(onErr)`
-  or the second argument of `.then(onOk, onErr)` (`.then(onOk)` alone
-  propagates the rejection and is not checked).
+  call a reporter, call the enclosing `new Promise(...)` executor's
+  reject parameter (structural resolution, not the name), return the
+  caught error object itself (`e => e` - the rejection-to-value idiom;
+  wrapper objects stay refused), or carry the marker. The handler is
+  `.catch(onErr)` or the second argument of `.then(onOk, onErr)`
+  (`.then(onOk)` alone propagates the rejection and is not checked).
 - `no-swallow-allsettled` - every `Promise.allSettled` call needs at
   least one `.reason` access in the enclosing function, or the rejected
   outcomes are silently dropped (`allSettled` never rejects, so a
