@@ -209,8 +209,10 @@ def test_publish_fat_and_thin_use_distinct_environments(workflow):
 
 
 def test_publish_thin_depends_on_publish_fat(workflow):
-    """Thin pins tackbox-engines==X in Requires-Dist. If fat isn't up on PyPI
-    when thin is uploaded, `uv pip install tackbox` cannot resolve. Sequential."""
+    """Thin no longer pins fat in Requires-Dist (F6), but the runtime store
+    fetches the fat wheel from PyPI on first use. If thin ships before fat is
+    up, the first `uvx tackbox` (and the canary) cannot resolve the engines
+    payload. Sequential fat->thin keeps the fetch target present."""
     thin = _publish_thin_job(workflow["jobs"])
     needs = thin.get("needs") or []
     if isinstance(needs, str):

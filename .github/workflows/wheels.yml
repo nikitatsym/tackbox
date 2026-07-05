@@ -62,7 +62,7 @@ jobs:
           done
           exit "$fail"
 
-      - name: Install thin+fat wheels into fresh venv
+      - name: Install thin wheel; stage engines payload from the built fat wheel
         shell: bash
         run: |
           set -euo pipefail
@@ -71,7 +71,13 @@ jobs:
           thin=$(ls dist/tackbox-0.0.0-*.whl | grep -v tackbox_engines | head -n1)
           echo "fat=$fat"
           echo "thin=$thin"
-          uv pip install --python .wheels-venv "$fat" "$thin"
+          # Thin installs alone: F6 dropped the fat pip dependency.
+          uv pip install --python .wheels-venv "$thin"
+          # The store can't fetch an unpublished version; supply the payload by
+          # unpacking the just-built fat wheel and overriding TACKBOX_ENGINES_DIR.
+          python -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall('engines-payload')" "$fat"
+          chmod -R u+x engines-payload/tackbox_engines/bin || true
+          echo "TACKBOX_ENGINES_DIR=$PWD/engines-payload/tackbox_engines" >> "$GITHUB_ENV"
 
       - name: Materialize fixture repo
         shell: bash

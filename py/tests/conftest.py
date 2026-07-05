@@ -1,10 +1,10 @@
-"""Session-wide TACKBOX_CACHE_HOME redirect.
+"""Session-wide TACKBOX_CACHE_HOME and XDG_DATA_HOME redirects.
 
-Every subprocess started by a test inherits `os.environ`, so pointing
-TACKBOX_CACHE_HOME at a session tmp dir here guarantees no test can write
-into the developer's real `~/.cache/tackbox`. Individual tests that want
-per-test cache isolation override the env var in their subprocess env
-(see test_cli_cache.py).
+Every subprocess started by a test inherits `os.environ`, so pointing these
+at session tmp dirs here guarantees no test can write into the developer's
+real `~/.cache/tackbox` or `~/.local/share/tackbox` (the engine store).
+Individual tests that want tighter isolation override the env vars themselves
+(see test_cli_cache.py, test_engines_store.py).
 """
 
 from __future__ import annotations
@@ -15,9 +15,14 @@ import shutil
 import tempfile
 
 
-def pytest_configure(config):
-    if os.environ.get("TACKBOX_CACHE_HOME"):
+def _redirect(env_var: str, prefix: str) -> None:
+    if os.environ.get(env_var):
         return
-    session_cache = tempfile.mkdtemp(prefix="tackbox-test-cache-")
-    os.environ["TACKBOX_CACHE_HOME"] = session_cache
-    atexit.register(shutil.rmtree, session_cache, ignore_errors=True)
+    tmp = tempfile.mkdtemp(prefix=prefix)
+    os.environ[env_var] = tmp
+    atexit.register(shutil.rmtree, tmp, ignore_errors=True)
+
+
+def pytest_configure(config):
+    _redirect("TACKBOX_CACHE_HOME", "tackbox-test-cache-")
+    _redirect("XDG_DATA_HOME", "tackbox-test-xdg-")

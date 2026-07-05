@@ -24,17 +24,6 @@ from .source_set import (
     parse_ls_files_untracked,
 )
 
-_SUPPORTED_PLATFORMS = {
-    ("linux", "x86_64"): "linux-x86_64",
-    ("linux", "amd64"): "linux-x86_64",
-    ("linux", "aarch64"): "linux-aarch64",
-    ("linux", "arm64"): "linux-aarch64",
-    ("darwin", "arm64"): "macos-aarch64",
-    ("darwin", "aarch64"): "macos-aarch64",
-    ("windows", "x86_64"): "windows-x86_64",
-    ("windows", "amd64"): "windows-x86_64",
-}
-
 
 @dataclass(frozen=True)
 class CheckResult:
@@ -56,6 +45,7 @@ def run(out: TextIO) -> int:
 def _run_all_checks() -> list[CheckResult]:
     return [
         _check_platform(),
+        _check_engines_store(),
         _check_payload_checksums(),
         _check_binaries_start(),
         _check_git_in_path(),
@@ -64,18 +54,11 @@ def _run_all_checks() -> list[CheckResult]:
 
 
 def _check_platform() -> CheckResult:
-    system = sys.platform
-    if system.startswith("linux"):
-        system = "linux"
-    elif system.startswith("win") or system == "cygwin":
-        system = "windows"
-    else:
-        system = "darwin" if system == "darwin" else system
-    machine = platform.machine().lower()
-    resolved = _SUPPORTED_PLATFORMS.get((system, machine))
+    resolved = engines_mod.detect_platform_key()
     if resolved is None:
         return CheckResult(
-            "platform", False, f"unsupported: {system}/{machine}"
+            "platform", False,
+            f"unsupported: {sys.platform}/{platform.machine().lower()}",
         )
     if not engines_mod.is_hermetic():
         return CheckResult(
@@ -89,6 +72,25 @@ def _check_platform() -> CheckResult:
             f"wheel built for {baked}, running on {resolved}",
         )
     return CheckResult("platform", True, resolved)
+
+
+def _check_engines_store() -> CheckResult:
+    """Presence + whole-tree checksum of the engine store. Triggers the
+    fetch-on-absence so a fresh install (and the fresh-runner canary) becomes
+    self-healing rather than failing on a cold store."""
+    if not engines_mod.is_hermetic():
+        return CheckResult("engines-store", True, "skipped (dev mode)")
+    try:
+        root = engines_mod.ensure_engines()
+    except engines_mod.EnginesStoreError as e:
+        # no-report: doctor reports the store error via CheckResult (no short-circuit)
+        return CheckResult("engines-store", False, str(e))
+    if not root.is_dir():
+        return CheckResult("engines-store", False, f"store missing: {root}")
+    want = engines_mod.load_engines_json().get("store_sha256")
+    if want and sha256_tree(root) != want:
+        return CheckResult("engines-store", False, f"payload tree mismatch at {root}")
+    return CheckResult("engines-store", True, str(root))
 
 
 def _check_payload_checksums() -> CheckResult:
