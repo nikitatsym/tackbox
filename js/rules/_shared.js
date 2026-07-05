@@ -378,6 +378,58 @@ function exprRefsIdent(node, name) {
   return found
 }
 
+// stringifyingNode: a construct that coerces its content to a string, so an
+// err inside it is a stringified occurrence, not object flow. The JS analog of
+// the Go astutil.stringifies set: a `.message`/`.stack` property access, a
+// `String(...)` conversion, an `x.toString()` call, a template literal, or `+`
+// concatenation.
+function stringifyingNode(n) {
+  if (
+    n.type === 'MemberExpression' &&
+    !n.computed &&
+    n.property.type === 'Identifier' &&
+    (n.property.name === 'message' || n.property.name === 'stack')
+  ) return true
+  if (n.type === 'CallExpression' && n.callee.type === 'Identifier' && n.callee.name === 'String') return true
+  if (
+    n.type === 'CallExpression' &&
+    n.callee.type === 'MemberExpression' &&
+    !n.callee.computed &&
+    n.callee.property.type === 'Identifier' &&
+    n.callee.property.name === 'toString'
+  ) return true
+  if (n.type === 'TemplateLiteral') return true
+  if (n.type === 'BinaryExpression' && n.operator === '+') return true
+  return false
+}
+
+// errObjectFlows reports whether errName reaches root as a live object: found as
+// a bare identifier outside any stringifying construct. Subtrees that stringify
+// their content are pruned - an err inside them is a stringified occurrence, not
+// object flow. The JS analog of Go astutil.errObjectFlows (F5 object-flow: a
+// composite literal, a constructor argument, or a bare rethrow propagates; the
+// chain breaks only when every occurrence of err passes through a string).
+function errObjectFlows(root, errName) {
+  if (errName == null) return false
+  const stack = [root]
+  while (stack.length) {
+    const n = stack.pop()
+    if (!n || typeof n !== 'object') continue
+    if (Array.isArray(n)) {
+      for (const c of n) stack.push(c)
+      continue
+    }
+    if (stringifyingNode(n)) continue
+    if (n.type === 'Identifier' && n.name === errName) return true
+    for (const key of Object.keys(n)) {
+      if (key === 'parent' || key === 'loc' || key === 'range') continue
+      const child = n[key]
+      if (child && typeof child === 'object') stack.push(child)
+    }
+  }
+  return false
+}
+
 // isBoundaryValue: `{ ok: false, cause|message: <refs err> }`. A bare
 // { ok: false } drops the caught error and does not qualify.
 function isBoundaryValue(expr, errName) {
@@ -490,5 +542,6 @@ module.exports = {
   exprIsSecretRef,
   enclosingFn,
   fnReturnsResultLike,
+  errObjectFlows,
   makeHandledAnalysis,
 }

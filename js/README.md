@@ -55,6 +55,7 @@ npx tackbox-eslint src/**/*.{ts,svelte}
 | `tackbox/valid-dedup-key`          | static `area.suffix[:identifier]`    |
 | `tackbox/no-secret-in-report`      | no secret-named args in reporter     |
 | `tackbox/no-throw-and-report`      | catch may not both throw and report  |
+| `tackbox/no-parse-fallback`        | JSON.parse catch must propagate err  |
 | `tackbox/ts-rethrow-without-cause` | `throw new` in catch needs `{cause}` |
 | `tackbox/ts-useless-catch`         | catch that only re-throws is a no-op |
 | `tackbox/ts-exit-in-catch`         | no `process.exit` inside catch       |
@@ -80,6 +81,13 @@ Full constraints per rule:
 - `no-secret-in-report` - reporter args must not reference
   `token` / `password` / `key` / `secret` / `cookie`.
 - `no-throw-and-report` - `catch` may not both throw and report.
+- `no-parse-fallback` - a `try` containing `JSON.parse` must propagate
+  the parse error on every `catch` path: `throw` the caught error
+  object, or return a Result boundary carrying it (`return { ok: false,
+  cause: <err> }` when the enclosing function returns Result/Attempt). A
+  fallback value, a stringified rethrow, or report-and-continue swallows
+  it (report + fallback is still a finding). Escape with a
+  `// parse-skip: <reason>` marker above the `try`.
 - `ts-rethrow-without-cause` - `throw new X(...)` in a `catch` must
   pass `{ cause: <caught> }` to preserve the stack chain.
 - `ts-useless-catch` - a `catch` whose only statement re-throws the

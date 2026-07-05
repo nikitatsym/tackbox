@@ -198,6 +198,68 @@ test('no-swallow-allsettled (F7b)', () => {
   })
 })
 
+// F7c: a try containing JSON.parse must propagate the parse error - every catch
+// path throws the caught object or converts to a Result boundary carrying it
+// (object-flow principle F5; stringification breaks the chain). A fallback
+// value, a report-and-continue, or a stringified rethrow swallows it
+// (report+default = finding). Escape: `// parse-skip: <reason>` above the try.
+test('no-parse-fallback (F7c)', () => {
+  ruleTester.run('no-parse-fallback', require('../rules/no-parse-fallback'), {
+    valid: [
+      // bare rethrow of the caught error object.
+      'try { const x = JSON.parse(s) } catch (e) { throw e }',
+      // rewrap preserving the object via `cause`.
+      "try { JSON.parse(s) } catch (e) { throw new Error('bad config payload', { cause: e }) }",
+      // report then rethrow: reported AND propagated.
+      R + 'try { JSON.parse(s) } catch (e) { reportError("config parse failed mid-load", e); throw e }',
+      // two-step wrap: the object flows through a local carrier (F5 credits it).
+      "try { JSON.parse(s) } catch (e) { const wrapped = new Error('bad config', { cause: e }); throw wrapped }",
+      // both branches throw the object.
+      "try { JSON.parse(s) } catch (e) { if (x) { throw e } else { throw new Error('parse failed', { cause: e }) } }",
+      // marker escape (the twin below without the marker is a finding).
+      '// parse-skip: optional config, absence is expected\ntry { JSON.parse(s) } catch (e) { useDefault() }',
+      // no catch: the parse error propagates through finally, nothing swallows it.
+      'try { JSON.parse(s) } finally { cleanup() }',
+      // no surrounding try: the error propagates naturally, out of scope.
+      'const x = JSON.parse(s)',
+    ],
+    invalid: [
+      // fallback value instead of propagating.
+      { code: 'function f() { try { JSON.parse(s) } catch (e) { return {} } }', errors: [{ messageId: 'fallback' }] },
+      // stringified rethrow drops the error object (chain break).
+      { code: "try { JSON.parse(s) } catch (e) { throw new Error(e.message) }", errors: [{ messageId: 'fallback' }] },
+      // throw a fresh error that does not carry the caught one.
+      { code: "try { JSON.parse(s) } catch (e) { throw new Error('parse failed') }", errors: [{ messageId: 'fallback' }] },
+      // report + default: reporting does not license the fallback.
+      { code: R + 'function f() { try { JSON.parse(s) } catch (e) { reportError("config parse failed mid-load", e); return {} } }', errors: [{ messageId: 'fallback' }] },
+      // report only, then fall through the end of the catch.
+      { code: R + 'try { JSON.parse(s) } catch (e) { reportError("config parse failed mid-load", e) }', errors: [{ messageId: 'fallback' }] },
+      // throw on one branch only; the other path falls through.
+      { code: 'try { JSON.parse(s) } catch (e) { if (x) { throw e } }', errors: [{ messageId: 'fallback' }] },
+    ],
+  })
+})
+
+// F7c boundary: a Result boundary is a legal parse-error exit only when the
+// enclosing fn is annotated Result/Attempt AND the caught error flows in as an
+// object (a stringified `message: e.message` breaks the chain, like F2).
+test('no-parse-fallback result-boundary (F7c)', () => {
+  tsRuleTester.run('no-parse-fallback', require('../rules/no-parse-fallback'), {
+    valid: [
+      'function f(): Result<T> { try { JSON.parse(s) } catch (e) { return { ok: false, cause: e } } }',
+      'async function f(): Promise<Result<T>> { try { JSON.parse(await read()) } catch (e) { return { ok: false, cause: e } } }',
+    ],
+    invalid: [
+      // stringified boundary: message carries only the text, not the object.
+      { code: 'function f(): Result<T> { try { JSON.parse(s) } catch (e) { return { ok: false, message: e.message } } }', errors: [{ messageId: 'fallback' }] },
+      // no Result annotation on the enclosing fn: no boundary credit.
+      { code: 'function f() { try { JSON.parse(s) } catch (e) { return { ok: false, cause: e } } }', errors: [{ messageId: 'fallback' }] },
+      // bare { ok: false } drops the caught error.
+      { code: 'function f(): Result<T> { try { JSON.parse(s) } catch (e) { return { ok: false } } }', errors: [{ messageId: 'fallback' }] },
+    ],
+  })
+})
+
 test('no-console-error', () => {
   ruleTester.run('no-console-error', require('../rules/no-console-error'), {
     valid: [
