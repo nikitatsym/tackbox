@@ -1,7 +1,8 @@
 """Engine registry, dispatch, and parallel subprocess runner.
 
 Two registries share the dispatch shape: DEV_ENGINES (source checkout)
-and HERMETIC_ENGINES (installed wheel with tackbox_engines).
+and HERMETIC_ENGINES (installed thin wheel; engine binaries come from the
+machine-versioned store, see ensure_engines).
 
 Signal-killed subprocess exit code is normalized to `128 + sig`
 (Python maps signal-kill to `-sig`).
@@ -10,16 +11,21 @@ Signal-killed subprocess exit code is normalized to `128 + sig`
 from __future__ import annotations
 
 import concurrent.futures
-import importlib.util
 import json
 import os
+import platform
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+from urllib.request import urlopen
 
+from .hashing import sha256_file, sha256_tree
 from .pyrules.codes import CODE_TO_ID
 from .source_set import (
     files_to_go_packages,
@@ -35,15 +41,219 @@ ArgvBuilder = Callable[
 
 _TACKBOX_PKG_ROOT = Path(__file__).parent
 
+# Runtime (system, machine) -> platform key. Mirrors doctor and build_wheels;
+# the store's platform assert and doctor name a host/wheel drift identically.
+_PLATFORM_KEYS = {
+    ("linux", "x86_64"): "linux-x86_64",
+    ("linux", "amd64"): "linux-x86_64",
+    ("linux", "aarch64"): "linux-aarch64",
+    ("linux", "arm64"): "linux-aarch64",
+    ("darwin", "arm64"): "macos-aarch64",
+    ("darwin", "aarch64"): "macos-aarch64",
+    ("windows", "x86_64"): "windows-x86_64",
+    ("windows", "amd64"): "windows-x86_64",
+}
+
+ENGINES_DIR_ENV = "TACKBOX_ENGINES_DIR"
+
+
+class EnginesStoreError(RuntimeError):
+    """The engine store could not be resolved, fetched, or verified."""
+
+
+def detect_platform_key() -> str | None:
+    system = sys.platform
+    if system.startswith("linux"):
+        system = "linux"
+    elif system.startswith("win") or system == "cygwin":
+        system = "windows"
+    return _PLATFORM_KEYS.get((system, platform.machine().lower()))
+
 
 def is_hermetic() -> bool:
+    """True when running from an installed thin wheel, False in a source checkout.
+
+    engines.json is baked into the wheel and absent from a clean checkout, but a
+    local `build_wheels.py` run leaves a gitignored copy behind - so presence
+    alone is not enough. A checkout is the tree whose repo root (two levels up)
+    still carries the engine sources and dev.py; a site-packages install never
+    does.
+    """
     if not (_TACKBOX_PKG_ROOT / "engines.json").is_file():
         return False
-    return importlib.util.find_spec("tackbox_engines") is not None
+    repo = _TACKBOX_PKG_ROOT.parent.parent
+    if (repo / "dev.py").is_file() and (repo / "go").is_dir():
+        return False
+    return True
+
+
+def engines_store_base() -> Path:
+    """`$XDG_DATA_HOME/tackbox/engines` (default `~/.local/share/...`)."""
+    xdg = os.environ.get("XDG_DATA_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".local" / "share"
+    return base / "tackbox" / "engines"
 
 
 def hermetic_engines_root() -> Path:
-    return importlib.import_module("tackbox_engines").root()
+    """The engine payload root (holds bin/ vendor/ third_party/).
+
+    TACKBOX_ENGINES_DIR overrides it with a directly-supplied payload (tests,
+    CI, pre-publish smoke); otherwise it is the versioned store directory. Pure
+    path resolver - ensure_engines() is what fetches on absence.
+    """
+    override = os.environ.get(ENGINES_DIR_ENV)
+    if override:
+        return Path(override)
+    return engines_store_base() / str(load_engines_json()["engines_version"])
+
+
+# Fetcher seam: (engines.json, workdir) -> local path of the downloaded fat
+# wheel. Injected in tests; _download_fat_wheel is the PyPI default.
+Fetcher = Callable[[dict, Path], Path]
+
+
+def ensure_engines(fetcher: "Fetcher | None" = None) -> Path:
+    """Guarantee the engine payload exists locally; return its root.
+
+    Fetches the fat wheel from PyPI once per engines version, verifies it
+    against the engines.json pins, and installs it atomically into the store.
+    A present store (or a TACKBOX_ENGINES_DIR override) short-circuits with no
+    network. Every failure is loud - there is no silent fallback.
+    """
+    if os.environ.get(ENGINES_DIR_ENV):
+        return Path(os.environ[ENGINES_DIR_ENV])
+    data = load_engines_json()
+    _assert_runtime_platform(data)
+    root = engines_store_base() / str(data["engines_version"])
+    if root.is_dir():
+        return root
+    _fetch_and_install(data, root, fetcher or _download_fat_wheel)
+    _gc_store_siblings(root)
+    return root
+
+
+def _assert_runtime_platform(data: dict) -> None:
+    """Refuse a fat wheel pinned for a different platform than this host.
+
+    Catches a wrong-wheel install (manual, or an x86 interpreter under Rosetta
+    on arm64) before any download - both platforms named in the error.
+    """
+    pinned = (data.get("fat_wheel") or {}).get("platform")
+    detected = detect_platform_key()
+    if pinned and detected and pinned != detected:
+        raise EnginesStoreError(
+            f"platform drift: engines.json pins the fat wheel for {pinned!r} "
+            f"but this host resolves to {detected!r} (wrong wheel installed, "
+            f"or an emulated interpreter?)"
+        )
+
+
+def _fetch_and_install(data: dict, root: Path, fetcher: "Fetcher") -> None:
+    base = root.parent
+    base.mkdir(parents=True, exist_ok=True)
+    # Dot-prefixed so a concurrent fetch's temp is skipped by _gc_store_siblings.
+    work = Path(tempfile.mkdtemp(prefix=".ensure-", dir=base))
+    try:
+        wheel = fetcher(data, work)
+        want_wheel_sha = data["fat_wheel"]["sha256"]
+        got = sha256_file(wheel)
+        if got != want_wheel_sha:
+            raise EnginesStoreError(
+                f"fat wheel sha256 mismatch: pinned {want_wheel_sha}, got {got} "
+                f"({wheel.name})"
+            )
+        staged = work / "store"
+        _unpack_tackbox_engines(wheel, staged)
+        tree = sha256_tree(staged)
+        if tree != data["store_sha256"]:
+            raise EnginesStoreError(
+                f"engines payload tree sha256 mismatch after unpack: pinned "
+                f"{data['store_sha256']}, got {tree}"
+            )
+        try:
+            os.rename(staged, root)
+        except OSError:
+            # Lost the race to another process: its store is committed and
+            # verified identically, so use it and drop ours.
+            if not root.is_dir():
+                raise
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def _unpack_tackbox_engines(wheel: Path, dest: Path) -> None:
+    """Extract the wheel's `tackbox_engines/` subtree into dest, restoring the
+    executable bit the wheel recorded (node / opengrep must stay runnable)."""
+    prefix = "tackbox_engines/"
+    dest.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(wheel) as zf:
+        members = [
+            n for n in zf.namelist() if n.startswith(prefix) and not n.endswith("/")
+        ]
+        if not members:
+            raise EnginesStoreError(f"fat wheel {wheel.name} has no {prefix} payload")
+        for name in members:
+            info = zf.getinfo(name)
+            target = dest / name[len(prefix):]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info) as src, target.open("wb") as out:
+                shutil.copyfileobj(src, out)
+            mode = (info.external_attr >> 16) & 0o777
+            if mode:
+                os.chmod(target, mode)
+
+
+def engines_payload_tree_sha256(wheel: Path) -> str:
+    """sha256_tree of a fat wheel's tackbox_engines payload, computed exactly as
+    the store verifies it at install time. The build stamps this into
+    engines.json (store_sha256); ensure/doctor recompute it against the store,
+    so both sides go through the same unpack + digest and can never drift."""
+    with tempfile.TemporaryDirectory() as td:
+        staged = Path(td) / "store"
+        _unpack_tackbox_engines(wheel, staged)
+        return sha256_tree(staged)
+
+
+def _gc_store_siblings(current: Path) -> None:
+    """Drop every version sibling except `current` (gc_stale_engines policy for
+    the store). Dot-prefixed entries are in-flight fetches - never touched."""
+    base = current.parent
+    for entry in base.iterdir():
+        if (
+            entry.is_dir()
+            and entry.name != current.name
+            and not entry.name.startswith(".")
+        ):
+            shutil.rmtree(entry, ignore_errors=True)
+
+
+_PYPI_ENGINES_JSON = "https://pypi.org/pypi/tackbox-engines/{version}/json"
+
+
+def _download_fat_wheel(data: dict, workdir: Path) -> Path:
+    """Resolve the fat wheel for this version via the PyPI JSON API and download
+    it (stdlib only). Loud on any transport or lookup failure."""
+    version = str(data["engines_version"])
+    want_name = data["fat_wheel"]["wheel"]
+    index_url = _PYPI_ENGINES_JSON.format(version=version)
+    try:
+        with urlopen(index_url, timeout=60) as r:
+            meta = json.loads(r.read().decode("utf-8"))
+    except (OSError, ValueError) as e:
+        raise EnginesStoreError(f"cannot fetch engines index {index_url}: {e}") from e
+    entry = next(
+        (u for u in meta.get("urls", []) if u.get("filename") == want_name), None
+    )
+    if entry is None or not entry.get("url"):
+        raise EnginesStoreError(f"engines wheel {want_name} not found in {index_url}")
+    dl_url = entry["url"]
+    dest = workdir / want_name
+    try:
+        with urlopen(dl_url, timeout=300) as r, dest.open("wb") as out:
+            shutil.copyfileobj(r, out)
+    except OSError as e:
+        raise EnginesStoreError(f"cannot download engines wheel {dl_url}: {e}") from e
+    return dest
 
 
 def hermetic_env(base: dict[str, str] | None = None) -> dict[str, str]:

@@ -1,9 +1,14 @@
-"""Session-scoped e2e: build thin/fat wheels, install into a fresh venv,
-run tackbox lint/doctor against the shared materialized fixture repo.
+"""Session-scoped e2e: build thin/fat wheels, install the thin wheel alone
+into a fresh venv, and drive tackbox against the shared fixture repo with the
+engine payload supplied via TACKBOX_ENGINES_DIR.
 
-Fixture materialization lives in `scripts/materialize_fixture.py` so the
-same seeded violations drive both this pytest session and the wheels CI
-matrix (per platform).
+F6: the thin wheel no longer depends on tackbox-engines; the engine binaries
+come from the machine store, fetched from PyPI at runtime. A CI/e2e run can't
+fetch an unpublished version, so it points TACKBOX_ENGINES_DIR at the unpacked
+fat wheel - the store's override path - which also keeps the runtime offline.
+
+Fixture materialization lives in `scripts/materialize_fixture.py` so the same
+seeded violations drive both this pytest session and the wheels CI matrix.
 """
 
 from __future__ import annotations
@@ -13,9 +18,13 @@ import os
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
+
+from tackbox import engines
+from tackbox.cache import sha256_file, sha256_tree
 
 REPO = Path(__file__).resolve().parents[2]
 BUILD_SCRIPT = REPO / "scripts" / "build_wheels.py"
@@ -52,25 +61,38 @@ def wheels(tmp_path_factory) -> dict:
 
 @pytest.fixture(scope="session")
 def hermetic_venv(tmp_path_factory, wheels) -> Path:
+    """A fresh venv with ONLY the thin wheel installed.
+
+    Installing thin alone (no fat) is itself the F6 contract check: if thin
+    still pinned tackbox-engines in its metadata, uv would fail to resolve.
+    """
     v = tmp_path_factory.mktemp("hermetic-venv")
-    # `uv venv` because `python -m venv` off a uv-managed interpreter
-    # leaves libpython unresolvable via dyld @rpath on macOS.
+    # `uv venv` because `python -m venv` off a uv-managed interpreter leaves
+    # libpython unresolvable via dyld @rpath on macOS.
     env = {k: val for k, val in os.environ.items() if k != "VIRTUAL_ENV"}
     subprocess.run(
         ["uv", "venv", str(v)],
         check=True, capture_output=True, text=True, env=env,
     )
     result = subprocess.run(
-        ["uv", "pip", "install", "--python", str(v / "bin" / "python"),
-         str(wheels["fat"]), str(wheels["thin"])],
+        ["uv", "pip", "install", "--python", str(v / "bin" / "python"), str(wheels["thin"])],
         capture_output=True, text=True, env=env,
     )
     if result.returncode != 0:
         raise AssertionError(
-            f"uv pip install failed with exit {result.returncode}\n"
+            f"installing the thin wheel alone failed with exit {result.returncode}\n"
             f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
         )
     return v
+
+
+@pytest.fixture(scope="session")
+def engines_payload(tmp_path_factory, wheels) -> Path:
+    """The fat wheel's payload unpacked into a store-override directory, using
+    the same unpack the runtime uses (exec bits restored)."""
+    d = tmp_path_factory.mktemp("engines-payload") / "tackbox_engines"
+    engines._unpack_tackbox_engines(wheels["fat"], d)
+    return d
 
 
 @pytest.fixture(scope="session")
@@ -84,6 +106,14 @@ def fixture_repo(tmp_path_factory) -> Path:
     return root
 
 
+def _tackbox(venv: Path) -> Path:
+    return venv / "bin" / "tackbox"
+
+
+def _hermetic_env(engines_payload: Path) -> dict:
+    return {**os.environ, "TACKBOX_ENGINES_DIR": str(engines_payload)}
+
+
 def test_thin_and_fat_wheels_built(wheels):
     assert wheels["fat"].is_file()
     assert wheels["thin"].is_file()
@@ -91,26 +121,56 @@ def test_thin_and_fat_wheels_built(wheels):
     assert wheels["thin"].name.endswith(".whl")
 
 
-def test_hermetic_doctor_exits_zero(hermetic_venv, fixture_repo):
-    tackbox = hermetic_venv / "bin" / "tackbox"
-    result = _run([str(tackbox), "doctor"], cwd=fixture_repo)
+def test_thin_wheel_does_not_depend_on_fat(wheels):
+    """F6: thin must not carry a Requires-Dist on tackbox-engines - the engine
+    payload is a machine-store fetch, not a pip dependency."""
+    with zipfile.ZipFile(wheels["thin"]) as zf:
+        meta_name = next(n for n in zf.namelist() if n.endswith(".dist-info/METADATA"))
+        metadata = zf.read(meta_name).decode("utf-8")
+    requires = [ln for ln in metadata.splitlines() if ln.startswith("Requires-Dist:")]
+    assert not any("tackbox-engines" in r or "tackbox_engines" in r for r in requires), (
+        f"thin wheel still pins fat: {requires}"
+    )
+    # flake8 stays a real dependency (hosts the pyrules plugin).
+    assert any("flake8" in r for r in requires), f"thin must still require flake8: {requires}"
+
+
+def test_engines_json_carries_store_pins(engines_payload, wheels):
+    """The thin wheel's engines.json must pin the fat wheel (name + sha + this
+    platform) and the unpacked tree, and the pin must match the real payload."""
+    with zipfile.ZipFile(wheels["thin"]) as zf:
+        ej = json.loads(zf.read("tackbox/engines.json"))
+    assert ej["engines_version"] == "0.0.0"
+    fw = ej["fat_wheel"]
+    assert fw["wheel"] == wheels["fat"].name
+    assert fw["platform"] == engines.detect_platform_key()
+    assert len(fw["sha256"]) == 64
+    assert fw["sha256"] == sha256_file(wheels["fat"])
+    assert ej["store_sha256"] == sha256_tree(engines_payload)
+
+
+def test_hermetic_doctor_exits_zero(hermetic_venv, fixture_repo, engines_payload):
+    result = _run(
+        [str(_tackbox(hermetic_venv)), "doctor"],
+        cwd=fixture_repo, env=_hermetic_env(engines_payload),
+    )
     assert result.returncode == 0, (
         f"doctor failed: {result.returncode}\n"
         f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
     )
-    assert "doctor: 5 checks, 0 failed" in result.stdout
+    assert "doctor: 6 checks, 0 failed" in result.stdout
     assert "ok platform:" in result.stdout
+    assert "ok engines-store:" in result.stdout
     assert "ok payload-checksums:" in result.stdout
     assert "ok binaries-start:" in result.stdout
     assert "ok git-in-path:" in result.stdout
     assert "ok go-toolchain:" in result.stdout
 
 
-def test_hermetic_lint_finds_all_engine_violations(hermetic_venv, fixture_repo):
-    tackbox = hermetic_venv / "bin" / "tackbox"
+def test_hermetic_lint_finds_all_engine_violations(hermetic_venv, fixture_repo, engines_payload):
     result = _run(
-        [str(tackbox), "lint", ".", "--no-cache"],
-        cwd=fixture_repo,
+        [str(_tackbox(hermetic_venv)), "lint", ".", "--no-cache"],
+        cwd=fixture_repo, env=_hermetic_env(engines_payload),
     )
     assert result.returncode == 1, (
         f"expected exit 1, got {result.returncode}\n"
@@ -129,21 +189,22 @@ def test_hermetic_lint_finds_all_engine_violations(hermetic_venv, fixture_repo):
     assert "MD-ASCII" in result.stdout or "no-non-ascii" in result.stdout
 
 
-def test_doctor_fails_on_patched_vendored_transitive_dep(hermetic_venv, fixture_repo):
-    """A byte flipped anywhere in the vendored tree must turn doctor red.
+def test_doctor_fails_on_patched_vendored_transitive_dep(hermetic_venv, fixture_repo, engines_payload):
+    """A byte flipped anywhere in the store payload must turn doctor red.
 
     Targets a transitive dep specifically: those are covered only by the
-    vendor-tree entry, which is exactly the hole this test pins shut.
+    vendor-tree entry and the whole-tree store_sha256 - exactly the holes these
+    two checks pin shut.
     """
-    tackbox = hermetic_venv / "bin" / "tackbox"
-    site = next((hermetic_venv / "lib").glob("python*/site-packages"))
-    engines_json = json.loads((site / "tackbox" / "engines.json").read_text())
+    tackbox = _tackbox(hermetic_venv)
+    env = _hermetic_env(engines_payload)
+    engines_json = json.loads((_site_packages(hermetic_venv) / "tackbox" / "engines.json").read_text())
     top_level = {
         e["path"].split("node_modules/")[-1].split("/")[0]
         for e in engines_json["engines"]
         if e.get("kind") == "npm"
     }
-    vendor = site / "tackbox_engines" / "vendor" / "node_modules"
+    vendor = engines_payload / "vendor" / "node_modules"
     victim = next(
         p for p in sorted(vendor.rglob("*.js"))
         if p.is_file() and p.relative_to(vendor).parts[0] not in top_level
@@ -151,22 +212,22 @@ def test_doctor_fails_on_patched_vendored_transitive_dep(hermetic_venv, fixture_
     original = victim.read_bytes()
     try:
         victim.write_bytes(original + b"\n// locally patched\n")
-        result = _run([str(tackbox), "doctor"], cwd=fixture_repo)
+        result = _run([str(tackbox), "doctor"], cwd=fixture_repo, env=env)
         assert result.returncode == 1, (
             f"patched vendored dep must fail doctor\nSTDOUT:\n{result.stdout}"
         )
+        assert "fail engines-store:" in result.stdout
         assert "fail payload-checksums:" in result.stdout
     finally:
         victim.write_bytes(original)
-    result = _run([str(tackbox), "doctor"], cwd=fixture_repo)
+    result = _run([str(tackbox), "doctor"], cwd=fixture_repo, env=env)
     assert result.returncode == 0, "doctor must recover after restore"
 
 
-def test_hermetic_banner_carries_engines_sha_and_versions(hermetic_venv, fixture_repo):
-    tackbox = hermetic_venv / "bin" / "tackbox"
+def test_hermetic_banner_carries_engines_sha_and_versions(hermetic_venv, fixture_repo, engines_payload):
     result = _run(
-        [str(tackbox), "lint", ".", "--no-cache"],
-        cwd=fixture_repo,
+        [str(_tackbox(hermetic_venv)), "lint", ".", "--no-cache"],
+        cwd=fixture_repo, env=_hermetic_env(engines_payload),
     )
     banner = None
     for line in result.stderr.splitlines():
@@ -179,3 +240,7 @@ def test_hermetic_banner_carries_engines_sha_and_versions(hermetic_venv, fixture
     assert "node=22.18.0" in banner
     assert "eslint=" in banner
     assert "markdownlint=" in banner
+
+
+def _site_packages(venv: Path) -> Path:
+    return next((venv / "lib").glob("python*/site-packages"))

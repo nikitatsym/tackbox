@@ -14,8 +14,10 @@ uvx tackbox@latest lint .
 ```
 
 The wheel is hermetic: a consumer needs only `git` on PATH (plus a Go
-toolchain if the repo has `.go` files). Rules roll out via `@latest` -
-a new safety rule reaches every repo on its next run.
+toolchain if the repo has `.go` files) and, the first time a given
+engine version runs, network access to fetch the engine payload once.
+Rules roll out via `@latest` - a new safety rule reaches every repo on
+its next run.
 
 Covers ERC001-007 (Go, via `erclint`), ERC006 fingerprint rules (Go,
 Python, JS, TS, via the `opengrep` wrapper), frontend swallow rules
@@ -51,21 +53,31 @@ repos:
 
 ## Distribution
 
-tackbox ships as two PyPI wheels, so `uvx tackbox@latest` brings the
-whole stack with no other install step:
+`uvx tackbox@latest` installs one small wheel; the engine payload is
+fetched separately and cached per version:
 
 - `tackbox` (thin) - the Python CLI, the `erclint` /
   `erclint-opengrep` binaries, the opengrep rule yamls, and the
-  ESLint and markdownlint plugins and presets. Bumped on every push.
-- `tackbox-engines` (fat) - the bundled Node runtime, the `opengrep`
-  binary, and the vendored third-party `node_modules`. Bumped only
-  when an engine changes; the thin wheel pins it exactly.
+  ESLint and markdownlint plugins and presets. Platform-specific,
+  bumped on every push.
+- `tackbox-engines` (fat, ~350 MB unpacked) - the bundled Node
+  runtime, the `opengrep` binary, and the vendored third-party
+  `node_modules`. Published as a PyPI wheel but **not** a pip
+  dependency of thin. On the first run for a given engine version,
+  tackbox resolves the wheel via the PyPI JSON API, verifies it
+  against the sha256 pins in the thin wheel's `engines.json`, and
+  unpacks it once into `$XDG_DATA_HOME/tackbox/engines/<version>/`
+  (default `~/.local/share/...`; override `TACKBOX_ENGINES_DIR`).
+  Every later thin version reuses that one copy, so a stream of
+  `@latest` patch bumps never re-materializes the engines. Bumped only
+  when an engine changes.
 
-Platform wheels cover Linux x86_64/arm64 (manylinux), macOS
-x86_64/arm64, and Windows x86_64. `engines.json` in the thin wheel
-records the source, version, sha256, and license of every bundled
-binary and dependency; `tackbox doctor` verifies the payload against
-it.
+After the first fetch tackbox runs fully offline until the engine
+version changes. Platform wheels cover Linux x86_64/arm64 (manylinux),
+macOS x86_64/arm64, and Windows x86_64. `engines.json` in the thin
+wheel records the source, version, sha256, and license of every
+bundled binary and dependency; `tackbox doctor` fetches the store if
+absent and verifies the payload against it.
 
 ## What the rules enforce
 

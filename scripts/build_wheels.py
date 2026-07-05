@@ -29,6 +29,7 @@ PY_DIR = REPO / "py"
 
 sys.path.insert(0, str(PY_DIR))
 from tackbox.cache import sha256_tree  # noqa: E402
+from tackbox.engines import engines_payload_tree_sha256  # noqa: E402
 JS_ROOT = REPO
 CACHE_DIR = Path(os.environ.get("TACKBOX_BUILD_CACHE", str(Path.home() / ".cache" / "tackbox-build")))
 
@@ -254,7 +255,13 @@ def prepare_fat(pl: Platform, manifest: dict, engines_version: str) -> tuple[Pat
     return fat_root, entries
 
 
-def prepare_thin(pl: Platform, engines_entries: list[dict], version: str) -> tuple[Path, list[dict], str]:
+def prepare_thin(
+    pl: Platform,
+    engines_entries: list[dict],
+    version: str,
+    engines_version: str,
+    fat_wheel: Path,
+) -> tuple[Path, list[dict], str]:
     thin_root = PY_DIR / "tackbox"
     wipe_dir(thin_root / "bin")
     wipe_dir(thin_root / "rules")
@@ -344,9 +351,19 @@ def prepare_thin(pl: Platform, engines_entries: list[dict], version: str) -> tup
 
     engines_json = {
         "schema": 1,
+        "engines_version": engines_version,
         "payload_sha256": payload_sha,
         "platform": pl.key,
         "wheel_plat": pl.wheel_plat,
+        # The store fetches this exact fat wheel by name and verifies both the
+        # wheel file (fat_wheel.sha256) and the unpacked payload (store_sha256).
+        # platform lets the store refuse a wrong-arch wheel before downloading.
+        "fat_wheel": {
+            "platform": pl.key,
+            "wheel": fat_wheel.name,
+            "sha256": sha256_file(fat_wheel),
+        },
+        "store_sha256": engines_payload_tree_sha256(fat_wheel),
         "engines": all_entries,
     }
     (thin_root / "engines.json").write_text(json.dumps(engines_json, indent=2, sort_keys=True))
@@ -458,7 +475,7 @@ def main() -> int:
         fat_wheel, ENGINES_DIR / "src" / "tackbox_engines", "tackbox_engines"
     )
 
-    prepare_thin(pl, engines_entries, version)
+    prepare_thin(pl, engines_entries, version, engines_version, fat_wheel)
 
     thin_wheel = build_wheel(
         PY_DIR,

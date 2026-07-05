@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .engines import iter_json_objects
+from .hashing import sha256_file, sha256_tree
 from .source_set import group_go_packages_by_module, module_relative
 
 
@@ -114,31 +115,6 @@ def mark_clean(key: CacheKey, root: Path) -> None:
     except OSError:
         # no-report: cache is transparent - a write miss is never a run failure
         pass
-
-
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def sha256_tree(root: Path) -> str:
-    """Deterministic digest of a directory tree: sorted rel paths + content.
-
-    Shared by the wheel builder (stamping engines.json) and doctor
-    (verifying it) - one implementation so the two can never drift.
-    """
-    h = hashlib.sha256()
-    for f in sorted(root.rglob("*")):
-        if not f.is_file():
-            continue
-        h.update(f.relative_to(root).as_posix().encode())
-        h.update(b"\0")
-        h.update(sha256_file(f).encode())
-        h.update(b"\0")
-    return h.hexdigest()
 
 
 def gc_stale_engines(current: str, root: Path) -> None:

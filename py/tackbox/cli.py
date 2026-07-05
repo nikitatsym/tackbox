@@ -14,10 +14,12 @@ from pathlib import Path
 from . import __version__, cache, doctor, reporters
 from .engines import (
     EngineResult,
+    EnginesStoreError,
     EngineSpec,
     active_engines,
     dispatch,
     engines_hash_hermetic,
+    ensure_engines,
     erclint_compile_broken_pkgs,
     is_hermetic,
     located_findings,
@@ -71,6 +73,7 @@ def _dispatch(argv: list[str] | None) -> int:
             ChangedScopeError,
             cache.GoListError,
             reporters.ReportersError,
+            EnginesStoreError,
         ) as e:
             # no-report: CLI boundary: surface as message + exit 2; a traceback here is the bug
             print(f"tackbox: {e}", file=sys.stderr)
@@ -141,6 +144,11 @@ def _lint_results(
     plan, go_orphans = _drop_go_orphans(plan, repo_root)
     if not plan:
         return [], warnings, go_orphans
+
+    # Materialize the engine store once before the parallel run so worker
+    # threads find it in place (dev mode has no store).
+    if is_hermetic():
+        ensure_engines()
 
     # Self-lint: tackbox lints itself. Cache is disabled so tackbox never
     # self-caches its own bugs (plan: "чтобы tackbox не самокэшировал").
@@ -536,6 +544,7 @@ def _hook_post(event: dict) -> int:
         ChangedScopeError,
         cache.GoListError,
         reporters.ReportersError,
+        EnginesStoreError,
         subprocess.CalledProcessError,
         ValueError,  # a non-compile erclint analyzer-load error
     ) as e:
