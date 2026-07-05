@@ -245,17 +245,39 @@ func isNil(e ast.Expr) bool {
 // IsErrorAssignableExpr reports whether expr's static type is assignable to the
 // built-in error interface - an error value or a concrete error implementation
 // (e.g. *ParseError). A plain `type == error` check would miss the latter. The
-// type-gate uses it on the guarded identifier; propagation uses it on the
-// returned carrier.
+// type-gate uses it on the guarded identifier.
 func IsErrorAssignableExpr(info *types.Info, expr ast.Expr) bool {
 	if info == nil {
 		return false
 	}
-	t := info.TypeOf(expr)
+	return typeIsErrorAssignable(info.TypeOf(expr))
+}
+
+func typeIsErrorAssignable(t types.Type) bool {
 	if t == nil {
 		return false
 	}
 	return types.Implements(t, errorType) || types.AssignableTo(t, errorType)
+}
+
+// IsErrorCarryingExpr reports whether expr can hand an error to the caller:
+// its type is error-assignable, or it is a multi-value call with an
+// error-assignable component. Arity must not matter - `return 0, wrap(err)`
+// and `return wrap2(err)` are the same carrier shape.
+func IsErrorCarryingExpr(info *types.Info, expr ast.Expr) bool {
+	if info == nil {
+		return false
+	}
+	t := info.TypeOf(expr)
+	if tup, ok := t.(*types.Tuple); ok {
+		for i := 0; i < tup.Len(); i++ {
+			if typeIsErrorAssignable(tup.At(i).Type()) {
+				return true
+			}
+		}
+		return false
+	}
+	return typeIsErrorAssignable(t)
 }
 
 // BlockPropagatesChain reports whether the err-branch body carries the err
@@ -282,7 +304,9 @@ func BlockPropagatesChain(info *types.Info, body *ast.BlockStmt, errName string)
 
 // returnResultPropagates reports whether one returned result carries the err
 // object onward. A bare local carrier (`v` from `v := <wrap>`) is resolved to
-// its assignment in body first, crediting a two-step wrap.
+// its assignment in body first, crediting a two-step wrap. A tuple-returning
+// call with an error component (`return fail(err)`) is the same carrier shape
+// as `return 0, wrap(err)` - the callee is trusted, not resolved.
 func returnResultPropagates(info *types.Info, body *ast.BlockStmt, res ast.Expr, errName string) bool {
 	carrier := res
 	if id, ok := res.(*ast.Ident); ok && id.Name != errName {
@@ -290,7 +314,7 @@ func returnResultPropagates(info *types.Info, body *ast.BlockStmt, res ast.Expr,
 			carrier = rhs
 		}
 	}
-	if !IsErrorAssignableExpr(info, carrier) {
+	if !IsErrorCarryingExpr(info, carrier) {
 		return false
 	}
 	return errObjectFlows(carrier, errName)
