@@ -4,6 +4,7 @@
 
 const noSwallowCatch = require('./rules/no-swallow-catch')
 const noSwallowPromiseCatch = require('./rules/no-swallow-promise-catch')
+const noSwallowAllsettled = require('./rules/no-swallow-allsettled')
 const noConsoleError = require('./rules/no-console-error')
 const validErrorReport = require('./rules/valid-error-report')
 const noThrowAndReport = require('./rules/no-throw-and-report')
@@ -16,6 +17,7 @@ const tsExitInCatch = require('./rules/ts-exit-in-catch')
 const rules = {
   'no-swallow-catch': noSwallowCatch,
   'no-swallow-promise-catch': noSwallowPromiseCatch,
+  'no-swallow-allsettled': noSwallowAllsettled,
   'no-console-error': noConsoleError,
   'valid-error-report': validErrorReport,
   'no-throw-and-report': noThrowAndReport,
