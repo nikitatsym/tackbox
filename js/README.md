@@ -68,10 +68,11 @@ Full constraints per rule:
   call a reporter, or carry the marker. The handler is `.catch(onErr)`
   or the second argument of `.then(onOk, onErr)` (`.then(onOk)` alone
   propagates the rejection and is not checked).
-- `no-swallow-allsettled` - a bound `Promise.allSettled` result must
-  have at least one `.reason` access in the enclosing function, or the
-  rejected outcomes are silently dropped. Passing the result whole to a
-  helper is opaque and counts as a swallow. Escape with a
+- `no-swallow-allsettled` - every `Promise.allSettled` call needs at
+  least one `.reason` access in the enclosing function, or the rejected
+  outcomes are silently dropped (`allSettled` never rejects, so a
+  discarded result is the quietest swallow). Passing the result whole
+  to a helper is opaque and counts as a swallow. Escape with a
   `// no-report: <reason>` marker above.
 - `no-console-error` - `console.error` is banned; use `reportError`.
 - `valid-error-report` - static 15-200 char msg, cause non-null,
