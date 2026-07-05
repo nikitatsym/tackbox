@@ -49,6 +49,7 @@ npx tackbox-eslint src/**/*.{ts,svelte}
 |------------------------------------|--------------------------------------|
 | `tackbox/no-swallow-catch`         | catch must throw, report, or marker  |
 | `tackbox/no-swallow-promise-catch` | .catch/.then rejection handler       |
+| `tackbox/no-swallow-allsettled`    | allSettled result must read .reason  |
 | `tackbox/no-console-error`         | banned; use `reportError`            |
 | `tackbox/valid-error-report`       | static msg + cause + tags + dedupKey |
 | `tackbox/valid-dedup-key`          | static `area.suffix[:identifier]`    |
@@ -66,6 +67,11 @@ Full constraints per rule:
   call a reporter, or carry the marker. The handler is `.catch(onErr)`
   or the second argument of `.then(onOk, onErr)` (`.then(onOk)` alone
   propagates the rejection and is not checked).
+- `no-swallow-allsettled` - a bound `Promise.allSettled` result must
+  have at least one `.reason` access in the enclosing function, or the
+  rejected outcomes are silently dropped. Passing the result whole to a
+  helper is opaque and counts as a swallow. Escape with a
+  `// no-report: <reason>` marker above.
 - `no-console-error` - `console.error` is banned; use `reportError`.
 - `valid-error-report` - static 15-200 char msg, cause non-null,
   tags non-empty, dedupKey required.

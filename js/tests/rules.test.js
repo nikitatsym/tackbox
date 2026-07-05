@@ -166,6 +166,38 @@ test('no-swallow-promise-catch two-arg then (F7a)', () => {
   })
 })
 
+// F7b: a bound/used Promise.allSettled result launders rejections into values;
+// it is a finding unless the enclosing function contains at least one syntactic
+// `.reason` access (fail closed, per F2b - allSettled is rare enough that the
+// coarse gate is acceptable). Passing the result whole to a helper is opaque
+// (no visible `.reason`) and is a finding. Escape: `// no-report: <reason>`.
+test('no-swallow-allsettled (F7b)', () => {
+  ruleTester.run('no-swallow-allsettled', require('../rules/no-swallow-allsettled'), {
+    valid: [
+      // rejected reasons are inspected in the same scope.
+      "const rs = await Promise.allSettled(ps); for (const r of rs) { if (r.status === 'rejected') report(r.reason) }",
+      // `.reason` reached inside a nested callback (the scan descends into it).
+      "async function f() { const rs = await Promise.allSettled(ps); rs.filter(r => r.status === 'rejected').forEach(r => log(r.reason)) }",
+      // computed `.reason` access also counts.
+      "const rs = await Promise.allSettled(ps); rs.forEach(r => handle(r['reason']))",
+      // fire-and-forget: the result is discarded, not bound - out of scope.
+      'await Promise.allSettled(ps)',
+      // marker escape (would be a finding without it - see the invalid twin).
+      '// no-report: partial batch, failures surfaced by the caller\nconst rs = await Promise.allSettled(ps); use(rs)',
+    ],
+    invalid: [
+      // only fulfilled values are read; rejected reasons are dropped.
+      { code: "const rs = await Promise.allSettled(ps); const ok = rs.filter(r => r.status === 'fulfilled').map(r => r.value)", errors: [{ messageId: 'swallow' }] },
+      // the result is handed whole to a helper: opaque, no visible `.reason`.
+      { code: 'async function f() { const rs = await Promise.allSettled(ps); return processAll(rs) }', errors: [{ messageId: 'swallow' }] },
+      // bound through a .then continuation with no `.reason` touch.
+      { code: 'Promise.allSettled(ps).then(rs => { doStuff(rs) })', errors: [{ messageId: 'swallow' }] },
+      // only the count is used.
+      { code: 'const rs = await Promise.allSettled(ps); log(rs.length)', errors: [{ messageId: 'swallow' }] },
+    ],
+  })
+})
+
 test('no-console-error', () => {
   ruleTester.run('no-console-error', require('../rules/no-console-error'), {
     valid: [
