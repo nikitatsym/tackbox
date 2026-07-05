@@ -51,6 +51,9 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	astutil.EachFile(pass, func(f *ast.File) {
 		idx := markers.Build(pass.Fset, f)
 		ast.Inspect(f, func(n ast.Node) bool {
+			if fn, ok := n.(*ast.FuncDecl); ok && astutil.IsDeclaredBody(pass.TypesInfo, fn) {
+				return false
+			}
 			switch x := n.(type) {
 			case *ast.BlockStmt:
 				handleBlock(pass, idx, x)
@@ -130,7 +133,7 @@ func handleErrParserAssign(pass *analysis.Pass, idx *markers.Index, assign *ast.
 			callee, errName)
 		return
 	}
-	if !hasCaptureInBody(pass.TypesInfo, ifst.Body, errName) && !astutil.BlockPropagatesChain(pass.TypesInfo, ifst.Body, errName) {
+	if !errBranchHandled(pass.TypesInfo, ifst.Body, errName) {
 		pass.Reportf(ifst.Pos(),
 			"ERC002: %s err-branch must capture, propagate the error chain-preservingly, or carry `// parse-skip: <reason>` (err=%s)",
 			callee, errName)
@@ -151,11 +154,28 @@ func handleErrParserShort(pass *analysis.Pass, idx *markers.Index, ifst *ast.IfS
 	if astutil.ErrIdentFromIfCond(ifst.Cond) != errName {
 		return
 	}
-	if !hasCaptureInBody(pass.TypesInfo, ifst.Body, errName) && !astutil.BlockPropagatesChain(pass.TypesInfo, ifst.Body, errName) {
+	if !errBranchHandled(pass.TypesInfo, ifst.Body, errName) {
 		pass.Reportf(ifst.Pos(),
 			"ERC002: %s err-branch must capture, propagate the error chain-preservingly, or carry `// parse-skip: <reason>` (err=%s)",
 			callee, errName)
 	}
+}
+
+// errBranchHandled mirrors the ERC001 exits: capture, chain-preserving
+// propagation, or a reported death (a printing terminal carrying the parse
+// error) - checked through errors.As aliases of the guarded error.
+func errBranchHandled(info *types.Info, body *ast.BlockStmt, errName string) bool {
+	for _, name := range astutil.ErrAliases(body, errName) {
+		if hasCaptureInBody(info, body, name) || astutil.BlockPropagatesChain(info, body, name) {
+			return true
+		}
+		for _, call := range astutil.BlockCalls(body) {
+			if astutil.IsPrintingTerminal(call) && astutil.ArgFlows(call, name) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func handleParseIPAssign(pass *analysis.Pass, idx *markers.Index, assign *ast.AssignStmt, rest []ast.Stmt) {

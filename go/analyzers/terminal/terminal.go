@@ -28,6 +28,9 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		idx := markers.Build(pass.Fset, f)
 		branchErr := enclosingErrNames(f)
 		ast.Inspect(f, func(n ast.Node) bool {
+			if fn, ok := n.(*ast.FuncDecl); ok && astutil.IsDeclaredBody(pass.TypesInfo, fn) {
+				return false
+			}
 			block, ok := n.(*ast.BlockStmt)
 			if !ok {
 				return true

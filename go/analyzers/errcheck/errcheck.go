@@ -8,7 +8,6 @@ package errcheck
 import (
 	"go/ast"
 	"go/types"
-	"strings"
 
 	"golang.org/x/tools/go/analysis"
 
@@ -26,6 +25,9 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	astutil.EachFile(pass, func(f *ast.File) {
 		idx := markers.Build(pass.Fset, f)
 		ast.Inspect(f, func(n ast.Node) bool {
+			if fn, ok := n.(*ast.FuncDecl); ok && astutil.IsDeclaredBody(pass.TypesInfo, fn) {
+				return false
+			}
 			ifst, ok := n.(*ast.IfStmt)
 			if !ok {
 				return true
@@ -43,14 +45,14 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			if m, ok := idx.Above(ifst); ok && m.Kind == markers.NoReport {
 				return true
 			}
-			if propagates(pass.TypesInfo, ifst.Body, errName) {
-				return true
-			}
-			if captures(pass.TypesInfo, ifst.Body, errName) {
-				return true
-			}
-			if reportsDeath(ifst.Body, errName) {
-				return true
+			// errors.As aliases hold the same error object: any exit
+			// through an alias is an exit of the guarded error.
+			for _, name := range astutil.ErrAliases(ifst.Body, errName) {
+				if propagates(pass.TypesInfo, ifst.Body, name) ||
+					captures(pass.TypesInfo, ifst.Body, name) ||
+					reportsDeath(ifst.Body, name) {
+					return true
+				}
 			}
 			pass.Reportf(ifst.Pos(),
 				"ERC001: err-branch must propagate, capture, carry the error into a terminal exit, or carry `// no-report: <reason>` (err=%s)",
@@ -96,21 +98,9 @@ func captures(info *types.Info, body *ast.BlockStmt, errName string) bool {
 // prints it and never returns, so the branch is handled.
 func reportsDeath(body *ast.BlockStmt, errName string) bool {
 	for _, call := range astutil.BlockCalls(body) {
-		if isPrintingTerminal(call) && astutil.ArgFlows(call, errName) {
+		if astutil.IsPrintingTerminal(call) && astutil.ArgFlows(call, errName) {
 			return true
 		}
 	}
 	return false
-}
-
-// isPrintingTerminal reports whether call is a terminal that prints its
-// arguments (`log.Fatal*` or the in-repo `die`). os.Exit is excluded: it prints
-// nothing, so carrying the error into it reports nothing, and name-based
-// ArgFlows would otherwise accept `os.Exit(len(err.Error()))`.
-func isPrintingTerminal(call *ast.CallExpr) bool {
-	if strings.HasPrefix(astutil.QualifiedName(call.Fun), "log.Fatal") {
-		return true
-	}
-	id, ok := call.Fun.(*ast.Ident)
-	return ok && id.Name == "die"
 }

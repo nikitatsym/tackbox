@@ -22,3 +22,28 @@ func declaredNoArgFlowFires() error {
 	}
 	return errors.New("noop")
 }
+
+type pathErr struct{ msg string }
+
+func (e *pathErr) Error() string { return e.msg }
+
+// capture through the errors.As alias is capture of the guarded error.
+func okDeclaredCaptureViaAsAlias() error {
+	err := errors.New("x")
+	if err != nil {
+		var pe *pathErr
+		if errors.As(err, &pe) {
+			myReport(pe)
+		}
+		return errors.New("wrap")
+	}
+	return errors.New("noop")
+}
+
+// myDie is declared (installed by the test): the body is the trust boundary,
+// reviewed at declaration time - analyzers do not look inside (B3c).
+func myDie(err error) {
+	if err != nil {
+		_ = "reviewed at declaration, not analyzed"
+	}
+}

@@ -27,6 +27,9 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	astutil.EachFile(pass, func(f *ast.File) {
 		idx := markers.Build(pass.Fset, f)
 		ast.Inspect(f, func(n ast.Node) bool {
+			if fn, ok := n.(*ast.FuncDecl); ok && astutil.IsDeclaredBody(pass.TypesInfo, fn) {
+				return false
+			}
 			switch x := n.(type) {
 			case *ast.IfStmt:
 				handleIf(pass, idx, x)

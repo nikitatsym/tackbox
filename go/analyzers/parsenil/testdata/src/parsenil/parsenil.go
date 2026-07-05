@@ -3,6 +3,7 @@ package parsenil
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"strconv"
 
@@ -106,6 +107,25 @@ func okPropagateTuple(s string) (int, error) {
 		return failWith(err)
 	}
 	return n, nil
+}
+
+// F5d: a printing terminal carrying the parse error is a reported death -
+// the same exit ERC001 credits.
+func okFatalCarriesParseErr(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		log.Fatalf("bad count %q: %v", s, err)
+	}
+	return n
+}
+
+// static message drops the live parse error: not a reported death.
+func violationFatalStaticMsg(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil { // want `ERC002:.*strconv.Atoi err-branch must capture`
+		log.Fatal("bad count")
+	}
+	return n
 }
 
 func violationSchemaDrift(data []byte) {

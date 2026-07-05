@@ -48,3 +48,20 @@ func errSinkReturnFires() error {
 	}
 	return errors.New("noop")
 }
+
+type wireErr struct{ msg string }
+
+func (e *wireErr) Error() string { return e.msg }
+
+// returning the errors.As alias after the capture hands the same error object
+// upward: the upstream handler re-captures it.
+func aliasReturnAfterCaptureFires() error {
+	err := errors.New("x")
+	if err != nil { // want `ERC005:.*err=err`
+		var we *wireErr
+		errors.As(err, &we)
+		_ = myErrReport(err)
+		return we
+	}
+	return errors.New("noop")
+}

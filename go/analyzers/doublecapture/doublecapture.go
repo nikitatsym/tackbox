@@ -23,6 +23,9 @@ var Analyzer = &analysis.Analyzer{
 func run(pass *analysis.Pass) (interface{}, error) {
 	astutil.EachFile(pass, func(f *ast.File) {
 		ast.Inspect(f, func(n ast.Node) bool {
+			if fn, ok := n.(*ast.FuncDecl); ok && astutil.IsDeclaredBody(pass.TypesInfo, fn) {
+				return false
+			}
 			ifst, ok := n.(*ast.IfStmt)
 			if !ok {
 				return true
@@ -31,10 +34,14 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			if errName == "" {
 				return true
 			}
-			if !hasCaptureNotPanic(pass.TypesInfo, ifst.Body, errName) {
-				return true
+			// errors.As aliases hold the same error object on both legs.
+			names := astutil.ErrAliases(ifst.Body, errName)
+			captured, returned := false, false
+			for _, name := range names {
+				captured = captured || hasCaptureNotPanic(pass.TypesInfo, ifst.Body, name)
+				returned = returned || hasReturnReferencingErr(pass.TypesInfo, ifst.Body, name)
 			}
-			if !hasReturnReferencingErr(pass.TypesInfo, ifst.Body, errName) {
+			if !captured || !returned {
 				return true
 			}
 			pass.Reportf(ifst.Pos(),
