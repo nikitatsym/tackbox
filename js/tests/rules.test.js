@@ -180,12 +180,15 @@ test('no-swallow-allsettled (F7b)', () => {
       "async function f() { const rs = await Promise.allSettled(ps); rs.filter(r => r.status === 'rejected').forEach(r => log(r.reason)) }",
       // computed `.reason` access also counts.
       "const rs = await Promise.allSettled(ps); rs.forEach(r => handle(r['reason']))",
-      // fire-and-forget: the result is discarded, not bound - out of scope.
-      'await Promise.allSettled(ps)',
       // marker escape (would be a finding without it - see the invalid twin).
       '// no-report: partial batch, failures surfaced by the caller\nconst rs = await Promise.allSettled(ps); use(rs)',
+      // marker-escaped fire-and-forget.
+      '// no-report: best-effort broadcast, outcomes intentionally dropped\nawait Promise.allSettled(ps)',
     ],
     invalid: [
+      // fire-and-forget discards every outcome: allSettled never rejects, so
+      // this is the quietest swallow of all.
+      { code: 'await Promise.allSettled(ps)', errors: [{ messageId: 'swallow' }] },
       // only fulfilled values are read; rejected reasons are dropped.
       { code: "const rs = await Promise.allSettled(ps); const ok = rs.filter(r => r.status === 'fulfilled').map(r => r.value)", errors: [{ messageId: 'swallow' }] },
       // the result is handed whole to a helper: opaque, no visible `.reason`.

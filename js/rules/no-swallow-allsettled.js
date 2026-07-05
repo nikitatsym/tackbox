@@ -15,17 +15,6 @@ function isAllSettledCall(node) {
   )
 }
 
-// resultIsBound: the allSettled result flows somewhere (assigned, returned,
-// passed as an argument, or continued with `.then`) rather than being a
-// discarded statement expression. A bare `await Promise.allSettled(x)`
-// fire-and-forget is not bound and is out of scope (plan: binding of the result).
-function resultIsBound(node) {
-  let cur = node
-  if (cur.parent && cur.parent.type === 'AwaitExpression') cur = cur.parent
-  const p = cur.parent
-  return !!p && p.type !== 'ExpressionStatement'
-}
-
 // refsReason: root's subtree contains a `.reason` access (dot or computed
 // string). Descends into nested functions - `.reason` is usually read inside a
 // .forEach / .filter callback over the settled results, so the scan must not
@@ -58,9 +47,9 @@ function refsReason(root) {
 module.exports = {
   meta: {
     type: 'problem',
-    docs: { description: 'a bound Promise.allSettled result must have at least one `.reason` access in the enclosing function, else rejected outcomes are silently dropped. Escape with a // no-report: marker.' },
+    docs: { description: 'every Promise.allSettled call needs at least one `.reason` access in the enclosing function, else rejected outcomes are silently dropped - allSettled never rejects, so a discarded result is the quietest swallow. Escape with a // no-report: marker.' },
     messages: {
-      swallow: 'Promise.allSettled result is bound but no `.reason` is read in the enclosing function: rejected outcomes are silently dropped. Read `.reason` on the rejected entries, or carry `// no-report: <reason>` above',
+      swallow: 'Promise.allSettled swallows rejections: no `.reason` is read in the enclosing function, and allSettled never rejects on its own. Read `.reason` on the rejected entries, or carry `// no-report: <reason>` above',
     },
     schema: [],
   },
@@ -69,7 +58,6 @@ module.exports = {
     return {
       CallExpression(node) {
         if (!isAllSettledCall(node)) return
-        if (!resultIsBound(node)) return
         if (hasMarkerAbove(context, node, 'no-report')) return
         if (refsReason(enclosingFn(node) || sc.ast)) return
         context.report({ node, messageId: 'swallow' })
