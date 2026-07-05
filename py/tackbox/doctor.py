@@ -164,8 +164,11 @@ def _check_binaries_start() -> CheckResult:
     failures: list[str] = []
     for name, argv, require_zero in probes:
         try:
+            # 120s: the probe checks startability, not latency - the first
+            # exec of a binary just unpacked into the store can sit behind
+            # the Windows antivirus scan far past any interactive timeout.
             completed = subprocess.run(
-                argv, capture_output=True, timeout=15, env=env
+                argv, capture_output=True, timeout=120, env=env
             )
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as e:
             # no-report: doctor collects every failure to report them all (no short-circuit)
