@@ -30,7 +30,7 @@ module.exports = {
         if (handler.type !== 'ArrowFunctionExpression' && handler.type !== 'FunctionExpression') return
         if (hasMarkerAbove(context, node, 'no-report')) return
         const errName = handler.params[0] && handler.params[0].type === 'Identifier' ? handler.params[0].name : null
-        if (makeHandledAnalysis({ context, errName, allowBoundary: false }).handled(handler.body)) return
+        if (makeHandledAnalysis({ context, errName, allowBoundary: false, returnIdentity: true }).handled(handler.body)) return
         context.report({ node, messageId: 'swallow' })
       },
     }

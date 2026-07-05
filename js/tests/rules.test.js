@@ -166,6 +166,54 @@ test('no-swallow-promise-catch two-arg then (F7a)', () => {
   })
 })
 
+// F7cal: two consumer-calibration exits. (1) calling the enclosing `new
+// Promise(...)` executor's reject parameter is the promise's own rethrow -
+// resolution is structural (the scope binding must be that parameter), a
+// free-standing function named `reject` earns nothing. (2) an identity onErr
+// (`e => e`) settles the chain with the caught error object itself - the
+// recognized rejection-to-value idiom; any wrapper object stays a swallow
+// (the F2 boundary refusal is untouched).
+test('no-swallow-promise-catch executor-reject and identity (F7cal)', () => {
+  ruleTester.run('no-swallow-promise-catch', require('../rules/no-swallow-promise-catch'), {
+    valid: [
+      // reject(e): the executor's second parameter, err object flows in.
+      'new Promise((resolve, reject) => { doThing().then(v => resolve(v), e => reject(e)) })',
+      // reject with a wrapped error still carries the object (cause).
+      'new Promise((resolve, reject) => { doThing().then(v => resolve(v), e => { cleanup(); reject(new Error("op failed", { cause: e })) }) })',
+      // identity onErr: the settled value IS the caught error object.
+      'const failure = op.then(() => null, err => err)',
+      'p.catch(e => e)',
+      // identity on one path, rethrow on the other: both terminate.
+      'p.then(v => use(v), e => { if (transient(e)) return e; throw e })',
+    ],
+    invalid: [
+      // a free-standing function named reject is not the executor parameter.
+      { code: 'function reject(e) { count += 1 }\np.then(v => use(v), e => reject(e))', errors: [{ messageId: 'swallow' }] },
+      // reject fed the stringified error: the object dies on the way out.
+      { code: 'new Promise((resolve, reject) => { p.then(v => resolve(v), e => reject(e.message)) })', errors: [{ messageId: 'swallow' }] },
+      // stringified identity is not identity.
+      { code: 'const failure = op.then(() => null, err => err.message)', errors: [{ messageId: 'swallow' }] },
+      // a fall-through path drops the rejection.
+      { code: 'op.then(() => null, err => { if (x) return err; })', errors: [{ messageId: 'swallow' }] },
+      // a plain-object carrier is not the error itself (F2 refusal holds).
+      { code: 'op.then(() => null, err => ({ wrapped: err }))', errors: [{ messageId: 'swallow' }] },
+    ],
+  })
+})
+
+// F7cal: reject(e) is equally the terminal exit of a sync catch inside the
+// executor.
+test('no-swallow-catch executor-reject (F7cal)', () => {
+  ruleTester.run('no-swallow-catch', require('../rules/no-swallow-catch'), {
+    valid: [
+      'new Promise((resolve, reject) => { try { resolve(f()) } catch (e) { reject(e) } })',
+    ],
+    invalid: [
+      { code: 'function reject(e) { count += 1 }\nnew Promise((resolve, rej) => { try { resolve(f()) } catch (e) { reject(e) } })', errors: [{ messageId: 'swallow' }] },
+    ],
+  })
+})
+
 // F7b: a bound/used Promise.allSettled result launders rejections into values;
 // it is a finding unless the enclosing function contains at least one syntactic
 // `.reason` access (fail closed, per F2b - allSettled is rare enough that the

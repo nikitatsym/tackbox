@@ -467,23 +467,67 @@ function isReporterExpr(context, expr, errName) {
   return !!e && e.type === 'CallExpression' && isReporterCall(context, e, errName)
 }
 
+// isExecutorRejectCall: a call to the enclosing `new Promise((resolve,
+// reject) => ...)` executor's second parameter carrying the err object - the
+// promise's own rethrow channel. Resolution is structural (the scope binding
+// must be that exact parameter); a free-standing function named `reject`
+// earns nothing, and a stringified argument breaks the chain.
+function isExecutorRejectCall(context, expr, errName) {
+  let e = expr
+  while (e && e.type === 'AwaitExpression') e = e.argument
+  if (!e || e.type !== 'CallExpression' || e.callee.type !== 'Identifier') return false
+  if (!e.arguments.length || !errObjectFlows(e.arguments, errName)) return false
+  const sc = context.sourceCode || context.getSourceCode()
+  let variable = null
+  for (let s = sc.getScope(e.callee); s && !variable; s = s.upper) {
+    variable = s.variables.find(v => v.name === e.callee.name) || null
+  }
+  if (!variable || variable.defs.length !== 1) return false
+  const def = variable.defs[0]
+  if (def.type !== 'Parameter') return false
+  const fn = def.node
+  if (!fn.params || fn.params[1] !== def.name) return false
+  const parent = fn.parent
+  return (
+    !!parent &&
+    parent.type === 'NewExpression' &&
+    parent.callee.type === 'Identifier' &&
+    parent.callee.name === 'Promise' &&
+    parent.arguments[0] === fn
+  )
+}
+
+// isBareErrReturn: the returned expression IS the caught error object (an
+// await-unwrapped bare identifier). The settled value being the error itself
+// is the recognized rejection-to-value idiom; any wrapper object is not the
+// error and stays refused (the F2 boundary refusal in promise handlers).
+function isBareErrReturn(expr, errName) {
+  let e = expr
+  while (e && e.type === 'AwaitExpression') e = e.argument
+  return !!errName && !!e && e.type === 'Identifier' && e.name === errName
+}
+
 // makeHandledAnalysis: path-sensitive walk of a catch / rejection handler.
 // Per-statement verdict: 'terminal' (no path falls past - throw or boundary
 // return), 'bad' (some path exits unhandled), { reported } (falls through;
 // reported true when every falling path passed the sticky event). Constructs
 // not modeled (switch, loops, nested try) are opaque: a hidden return fails
-// closed, reporters inside do not count. Ported from gmux.
+// closed, reporters inside do not count. Ported from gmux. returnIdentity
+// credits `return <errName>` as terminal (promise handlers only: the settled
+// value is the error object itself).
 function makeHandledAnalysis(opts) {
-  const { context, errName, allowBoundary } = opts
+  const { context, errName, allowBoundary, returnIdentity } = opts
   function analyzeStmt(stmt, reported) {
     if (!stmt) return { reported }
     if (stmt.type === 'ExpressionStatement') {
+      if (isExecutorRejectCall(context, stmt.expression, errName)) return 'terminal'
       return isReporterExpr(context, stmt.expression, errName) ? { reported: true } : { reported }
     }
     if (stmt.type === 'ThrowStatement') return 'terminal'
     if (stmt.type === 'ReturnStatement') {
       if (reported) return 'terminal'
       if (allowBoundary && isBoundaryValue(stmt.argument, errName)) return 'terminal'
+      if (returnIdentity && isBareErrReturn(stmt.argument, errName)) return 'terminal'
       return 'bad'
     }
     if (stmt.type === 'BlockStatement') return analyzeList(stmt.body, reported)
@@ -509,6 +553,8 @@ function makeHandledAnalysis(opts) {
     if (!body) return false
     if (body.type !== 'BlockStatement') {
       if (isReporterExpr(context, body, errName)) return true
+      if (isExecutorRejectCall(context, body, errName)) return true
+      if (returnIdentity && isBareErrReturn(body, errName)) return true
       return !!allowBoundary && isBoundaryValue(body, errName)
     }
     const r = analyzeList(body.body, false)
