@@ -83,39 +83,44 @@ jobs:
           rm -rf fixture-repo
           python scripts/materialize_fixture.py fixture-repo
 
-      # Only uv's own resolve proves visibility; HTML/JSON index variants drift.
-      # --python-version: runner's ambient python can sit below requires-python.
-      - name: Wait until uv can resolve ${{ needs.target.outputs.pip }}
+      # The real command is its own convergence gate: a separate resolve probe
+      # proves nothing about the next request (CDN edges flip-flop while the
+      # index converges). Repeat uvx ONLY while the failure is the definite
+      # not-yet-visible resolver error for this exact version; anything else
+      # fails immediately. --refresh bypasses cached tool installs on a re-run.
+      - name: uvx doctor (waits out index convergence)
         shell: bash
+        working-directory: fixture-repo
         env:
+          UVX_SPEC: ${{ needs.target.outputs.uvx }}
           PIP_SPEC: ${{ needs.target.outputs.pip }}
         run: |
           set -euo pipefail
           out=""
           for i in $(seq 1 360); do
-            if out=$(echo "${PIP_SPEC}" | uv pip compile --refresh --no-header -q --python-version 3.11 - 2>&1); then
-              echo "${PIP_SPEC} resolvable after $(((i - 1) * 10))s"
+            rc=0
+            out=$(uvx --refresh "${UVX_SPEC}" doctor 2>&1) || rc=$?
+            if [ "$rc" = "0" ]; then
+              echo "$out"
+              echo "doctor green after $(((i - 1) * 10))s"
               exit 0
             fi
+            if ! printf '%s' "$out" | grep -q "No solution found" \
+               || ! printf '%s' "$out" | grep -q "no version of ${PIP_SPEC}"; then
+              echo "$out"
+              exit "$rc"
+            fi
             if [ $((i % 30)) -eq 0 ]; then
-              echo "still not visible after $((i * 10))s"
+              echo "index not converged after $((i * 10))s"
             fi
             sleep 10
           done
-          echo "${PIP_SPEC} not resolvable after 3600s; last resolver error:" >&2
+          echo "${UVX_SPEC} not resolvable after 3600s; last resolver error:" >&2
           echo "$out" >&2
           exit 1
 
-      # --refresh bypasses cached tool installs even on a re-run.
-      - name: uvx doctor
-        shell: bash
-        working-directory: fixture-repo
-        env:
-          UVX_SPEC: ${{ needs.target.outputs.uvx }}
-        run: |
-          set -euo pipefail
-          uvx --refresh "${UVX_SPEC}" doctor
-
+      # No --refresh: reuses the tool env doctor resolved in this job, so
+      # there is no second resolution to race the index.
       - name: uvx lint (expect exit 1)
         shell: bash
         working-directory: fixture-repo
@@ -124,7 +129,7 @@ jobs:
         run: |
           set -eo pipefail
           set +e
-          uvx --refresh "${UVX_SPEC}" lint . --no-cache
+          uvx "${UVX_SPEC}" lint . --no-cache
           rc=$?
           set -e
           echo "lint exit=$rc"
