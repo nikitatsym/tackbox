@@ -328,3 +328,29 @@ func concreteErrReturnNilFires(e *parseErr) *wrapErr {
 	}
 	return &wrapErr{}
 }
+
+// --- errors.As aliases (F5d): the derived binding is the same error object ---
+
+// the terminal prints the errors.As-derived alias: a reported death of the
+// guarded error.
+func okFatalViaAsAlias() error {
+	err := errors.New("x")
+	if err != nil {
+		var pe *parseErr
+		errors.As(err, &pe)
+		log.Fatalf("parse failure: %v", pe)
+	}
+	return errors.New("noop")
+}
+
+// an alias derived from a DIFFERENT error carries nothing of the guarded one.
+func aliasOfOtherErrFires() error {
+	err := errors.New("x")
+	other := errors.New("y")
+	if err != nil { // want `ERC001:.*err=err`
+		var pe *parseErr
+		errors.As(other, &pe)
+		log.Fatalf("other failure: %v", pe)
+	}
+	return errors.New("noop")
+}

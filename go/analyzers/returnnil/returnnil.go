@@ -29,6 +29,9 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			if !ok || fn.Body == nil {
 				continue
 			}
+			if astutil.IsDeclaredBody(pass.TypesInfo, fn) {
+				continue
+			}
 			if !candidateSignature(fn.Type) {
 				continue
 			}

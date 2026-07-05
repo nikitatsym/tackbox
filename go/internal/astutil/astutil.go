@@ -111,6 +111,63 @@ func IsCaptureErr(info *types.Info, call *ast.CallExpr, errName string) bool {
 	return captureKind(info, call, errName) == capErr
 }
 
+// IsDeclaredBody reports whether fn is a declared reporter: its body is the
+// trust boundary, reviewed at declaration time - analyzers do not look
+// inside. A die-helper's own os.Exit is what the declaration vouches for.
+func IsDeclaredBody(info *types.Info, fn *ast.FuncDecl) bool {
+	if info == nil || fn.Name == nil {
+		return false
+	}
+	obj, ok := info.Defs[fn.Name].(*types.Func)
+	if !ok || obj.Pkg() == nil {
+		return false
+	}
+	for _, d := range declaredReporters {
+		if d.PkgPath == obj.Pkg().Path() && d.Name == obj.Name() {
+			return true
+		}
+	}
+	return false
+}
+
+// ErrAliases returns errName plus every identifier bound to the same error
+// object via `errors.As(errName, &x)` within body: x IS the guarded error,
+// so capture or argument-flow through x is capture of the guarded error.
+func ErrAliases(body *ast.BlockStmt, errName string) []string {
+	names := []string{errName}
+	if errName == "" || body == nil {
+		return names
+	}
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || QualifiedName(call.Fun) != "errors.As" || len(call.Args) != 2 {
+			return true
+		}
+		src, ok := call.Args[0].(*ast.Ident)
+		if !ok || src.Name != errName {
+			return true
+		}
+		if ue, ok := call.Args[1].(*ast.UnaryExpr); ok && ue.Op == token.AND {
+			if id, ok := ue.X.(*ast.Ident); ok {
+				names = append(names, id.Name)
+			}
+		}
+		return true
+	})
+	return names
+}
+
+// IsPrintingTerminal reports whether call is a terminal that prints its
+// arguments (`log.Fatal*` or the in-repo `die`). os.Exit is excluded: it
+// prints nothing, so carrying the error into it reports nothing.
+func IsPrintingTerminal(call *ast.CallExpr) bool {
+	if strings.HasPrefix(QualifiedName(call.Fun), "log.Fatal") {
+		return true
+	}
+	id, ok := call.Fun.(*ast.Ident)
+	return ok && id.Name == "die"
+}
+
 // CalleeName extracts the final identifier name of a call's Fun
 // expression. Returns "" for unsupported shapes (function values,
 // method values on non-trivial receivers, etc.).
