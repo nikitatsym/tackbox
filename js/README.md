@@ -48,7 +48,7 @@ npx tackbox-eslint src/**/*.{ts,svelte}
 | Rule                               | Summary                              |
 |------------------------------------|--------------------------------------|
 | `tackbox/no-swallow-catch`         | catch must throw, report, or marker  |
-| `tackbox/no-swallow-promise-catch` | .catch(h) must throw, report, marker |
+| `tackbox/no-swallow-promise-catch` | .catch/.then rejection handler       |
 | `tackbox/no-console-error`         | banned; use `reportError`            |
 | `tackbox/valid-error-report`       | static msg + cause + tags + dedupKey |
 | `tackbox/valid-dedup-key`          | static `area.suffix[:identifier]`    |
@@ -62,8 +62,10 @@ Full constraints per rule:
 
 - `no-swallow-catch` - `catch` must throw, call a reporter, or have
   `// no-report: <reason>` above the `try`.
-- `no-swallow-promise-catch` - `.catch(handler)` must throw, call a
-  reporter, or carry the marker.
+- `no-swallow-promise-catch` - a promise rejection handler must throw,
+  call a reporter, or carry the marker. The handler is `.catch(onErr)`
+  or the second argument of `.then(onOk, onErr)` (`.then(onOk)` alone
+  propagates the rejection and is not checked).
 - `no-console-error` - `console.error` is banned; use `reportError`.
 - `valid-error-report` - static 15-200 char msg, cause non-null,
   tags non-empty, dedupKey required.
