@@ -134,6 +134,38 @@ test('no-swallow-promise-catch path-sensitive (F2b)', () => {
   })
 })
 
+// F7a: the rejection handler of a two-arg .then(onOk, onErr) is a full
+// rejection handler - run through the SAME path-sensitive analysis as .catch
+// (allowBoundary:false). .then(ok) alone propagates the rejection (not a
+// finding); .then(null, onErr) is .catch-equivalent; a non-function second arg
+// (e.g. null) is .then(ok)-equivalent.
+test('no-swallow-promise-catch two-arg then (F7a)', () => {
+  ruleTester.run('no-swallow-promise-catch', require('../rules/no-swallow-promise-catch'), {
+    valid: [
+      // single-arg then: the rejection propagates naturally, no handler to check.
+      'p.then(v => use(v))',
+      // onErr rethrows on every path.
+      'p.then(v => use(v), e => { throw e })',
+      // onErr reports (reporter resolved through the tackbox import).
+      R + 'p.then(v => use(v), e => { reportError("api call failed mid-flight", e) })',
+      // .then(null, onErr) is .catch-equivalent; a handled onErr is clean.
+      'p.then(null, e => { throw e })',
+      // second arg is not a function literal (null) -> equivalent to .then(ok).
+      'p.then(v => use(v), null)',
+    ],
+    invalid: [
+      // onErr ignores the rejection entirely: swallow.
+      { code: 'p.then(v => use(v), e => {})', errors: [{ messageId: 'swallow' }] },
+      { code: 'p.then(v => use(v), e => { cleanup() })', errors: [{ messageId: 'swallow' }] },
+      // .then(null, onErr) that only logs: swallow.
+      { code: 'p.then(null, e => { console.log(e) })', errors: [{ messageId: 'swallow' }] },
+      // fail closed: a reportError NOT imported from tackbox does not resolve to
+      // a reporter (name-only match is dead), so this onErr swallows.
+      { code: 'p.then(v => use(v), e => { reportError("api call failed mid-flight", e) })', errors: [{ messageId: 'swallow' }] },
+    ],
+  })
+})
+
 test('no-console-error', () => {
   ruleTester.run('no-console-error', require('../rules/no-console-error'), {
     valid: [
