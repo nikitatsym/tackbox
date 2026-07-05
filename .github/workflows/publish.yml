@@ -44,6 +44,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # build_wheels.py packs the shaded javalint.jar via `mvn package`; maven
+      # is pre-installed on all runner images, setup-java supplies the JDK.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
