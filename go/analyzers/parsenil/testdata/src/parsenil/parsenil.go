@@ -2,6 +2,7 @@ package parsenil
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"strconv"
 
@@ -30,11 +31,33 @@ func violationDiscard(data []byte) {
 	_ = json.Unmarshal(data, &v) // want `ERC002:.*json.Unmarshal err discarded`
 }
 
-func violationNoCapture(data []byte) error {
+// F5: chain-preserving propagation of a parse error is valid handling - the
+// caller reports it. Bare `return err` was a false positive before F5.
+func okPropagateBare(data []byte) error {
+	var v map[string]any
+	err := json.Unmarshal(data, &v)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// %w wrap carries the parse error into the unwrap chain: propagation.
+func okPropagateWrapW(data []byte) error {
+	var v map[string]any
+	err := json.Unmarshal(data, &v)
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	return nil
+}
+
+// %v stringifies the parse error and breaks the chain: still requires capture.
+func violationPropagateV(data []byte) error {
 	var v map[string]any
 	err := json.Unmarshal(data, &v)
 	if err != nil { // want `ERC002:.*json.Unmarshal err-branch must capture`
-		return err
+		return fmt.Errorf("config: %v", err)
 	}
 	return nil
 }
@@ -61,8 +84,9 @@ func okShortFormMarker(s string) {
 	}
 }
 
-func violationShortFormNoCapture(s string) error {
-	if _, err := strconv.Atoi(s); err != nil { // want `ERC002:.*strconv.Atoi err-branch must capture`
+// F5: short-form bare `return err` propagates chain-preservingly - clean.
+func okShortFormPropagate(s string) error {
+	if _, err := strconv.Atoi(s); err != nil {
 		return err
 	}
 	return nil

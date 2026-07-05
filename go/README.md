@@ -17,7 +17,7 @@ uvx tackbox@latest lint .
 | Code   | Name          | Summary                              |
 |--------|---------------|--------------------------------------|
 | ERC001 | errcheck      | err branch must propagate or capture |
-| ERC002 | parsenil      | parser err must capture or mark      |
+| ERC002 | parsenil      | parser err: capture, propagate, mark |
 | ERC003 | terminal      | Fatal/Exit/die must capture or report|
 | ERC004 | returnnil     | bare nil return needs marker or pair |
 | ERC005 | doublecapture | no capture and `return err` together |
@@ -26,10 +26,16 @@ uvx tackbox@latest lint .
 
 Details per rule:
 
-- ERC001 `errcheck` - in any `if err != nil` branch, propagate,
-  capture, or carry `// no-report: <reason>`.
+- ERC001 `errcheck` - in any `if err != nil` branch (guarding an
+  error-assignable identifier - a bare `int`/`*Conn` guard is not an
+  err-branch), propagate the error chain-preservingly (`return err`,
+  `fmt.Errorf("...: %w", err)`, `errors.Join(..., err)`), capture it,
+  carry it into a printing terminal, or carry `// no-report: <reason>`.
+  A `%v` / `.Error()` return breaks the unwrap chain and is a rethrow
+  without cause, not propagation.
 - ERC002 `parsenil` - parser results that fall through to nil must
-  capture or carry `// parse-skip: <reason>`.
+  capture, propagate the error chain-preservingly (`return err`, `%w`
+  wrap, `errors.Join`), or carry `// parse-skip: <reason>`.
 - ERC003 `terminal` - `log.Fatal*`, `os.Exit`, project-local `die`
   must be preceded by a capture, carry the error into their own
   arguments (`log.Fatal(err)`, a reported death), resolve to a declared

@@ -30,10 +30,16 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			if !ok {
 				return true
 			}
-			errName := astutil.ErrIdentFromIfCond(ifst.Cond)
-			if errName == "" {
+			errIdent, ok := astutil.ErrIdentExprFromIfCond(ifst.Cond)
+			if !ok {
 				return true
 			}
+			// Type-gate: only guards of an error-assignable identifier are
+			// err-branches. `if conn != nil` on a *net.Conn is not one.
+			if !astutil.IsErrorAssignable(pass.TypesInfo, errIdent) {
+				return true
+			}
+			errName := errIdent.Name
 			if m, ok := idx.Above(ifst); ok && m.Kind == markers.NoReport {
 				return true
 			}
@@ -55,23 +61,21 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	return nil, nil
 }
 
+// propagates reports whether the err-branch carries the checked error onward:
+// a chain-preserving return (`return err` / `%w` wrap / errors.Join) or a
+// `panic` carrying it. A `%v` / `.Error()` return breaks the unwrap chain and
+// is not propagation (rethrow-without-cause).
 func propagates(body *ast.BlockStmt, errName string) bool {
-	for _, ret := range astutil.BlockReturns(body) {
-		for _, res := range ret.Results {
-			if astutil.ContainsIdent(res, errName) {
-				return true
-			}
-		}
+	if astutil.BlockPropagatesChain(body, errName) {
+		return true
 	}
 	for _, call := range astutil.BlockCalls(body) {
 		id, ok := call.Fun.(*ast.Ident)
 		if !ok || id.Name != "panic" {
 			continue
 		}
-		for _, arg := range call.Args {
-			if astutil.ContainsIdent(arg, errName) {
-				return true
-			}
+		if astutil.ArgFlows(call, errName) {
+			return true
 		}
 	}
 	return false

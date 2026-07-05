@@ -130,9 +130,9 @@ func handleErrParserAssign(pass *analysis.Pass, idx *markers.Index, assign *ast.
 			callee, errName)
 		return
 	}
-	if !hasCaptureInBody(pass.TypesInfo, ifst.Body, errName) {
+	if !hasCaptureInBody(pass.TypesInfo, ifst.Body, errName) && !astutil.BlockPropagatesChain(ifst.Body, errName) {
 		pass.Reportf(ifst.Pos(),
-			"ERC002: %s err-branch must capture or carry `// parse-skip: <reason>` (err=%s)",
+			"ERC002: %s err-branch must capture, propagate the error chain-preservingly, or carry `// parse-skip: <reason>` (err=%s)",
 			callee, errName)
 	}
 }
@@ -151,9 +151,9 @@ func handleErrParserShort(pass *analysis.Pass, idx *markers.Index, ifst *ast.IfS
 	if astutil.ErrIdentFromIfCond(ifst.Cond) != errName {
 		return
 	}
-	if !hasCaptureInBody(pass.TypesInfo, ifst.Body, errName) {
+	if !hasCaptureInBody(pass.TypesInfo, ifst.Body, errName) && !astutil.BlockPropagatesChain(ifst.Body, errName) {
 		pass.Reportf(ifst.Pos(),
-			"ERC002: %s err-branch must capture or carry `// parse-skip: <reason>` (err=%s)",
+			"ERC002: %s err-branch must capture, propagate the error chain-preservingly, or carry `// parse-skip: <reason>` (err=%s)",
 			callee, errName)
 	}
 }
