@@ -2,7 +2,8 @@
 // function whose single result is `*T`, `[]T`, or `map[K]V` must
 // carry a `// nil-return: <reason>` marker on the line directly
 // above. The alternative is to widen the signature to
-// `(val, ok)` / `(val, err)`.
+// `(val, ok)` / `(val, err)`. Error-assignable results are exempt:
+// their nil is the no-error contract.
 package returnnil
 
 import (
@@ -29,6 +30,11 @@ func run(pass *analysis.Pass) (interface{}, error) {
 				continue
 			}
 			if !candidateSignature(fn.Type) {
+				continue
+			}
+			// nil from an error-assignable result is the no-error contract,
+			// not a hidden empty value; err-branch swallows stay on ERC001.
+			if astutil.IsErrorAssignableExpr(pass.TypesInfo, fn.Type.Results.List[0].Type) {
 				continue
 			}
 			checkBody(pass, idx, fn.Body)
