@@ -1,0 +1,19 @@
+// reporters: Tier2ReporterDecl.java.txt#InternalLog.logInternal
+package com.other;
+
+import static com.consumer.x.InternalLog.logInternal;
+
+// Explicit static import: the unqualified logInternal(e) resolves source-only to
+// (com.consumer.x, InternalLog) through the static import, matching the
+// declaration - a capture, no finding.
+class Tier2StaticImport {
+    void staticImportIsCapture() {
+        try {
+            risky();
+        } catch (Exception e) {
+            logInternal("boom", e);
+        }
+    }
+
+    void risky() throws Exception {}
+}

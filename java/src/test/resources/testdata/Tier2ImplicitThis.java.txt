@@ -1,0 +1,29 @@
+// reporters: Tier2ImplicitThis.java.txt#Service.report
+package com.consumer.svc;
+
+// Implicit this: report(e) with no receiver resolves to a method the enclosing
+// type declares, origin (com.consumer.svc, Service) - matching the declaration
+// that names this file's own method, so the capture holds. An unqualified call
+// to a name the type does not declare (and is not statically imported) has no
+// origin and swallows.
+class Service {
+    void report(Throwable cause) {}
+
+    void declaredIsCapture() {
+        try {
+            risky();
+        } catch (Exception e) {
+            report(e);
+        }
+    }
+
+    void undeclaredNameSwallows() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            undeclared(e);
+        }
+    }
+
+    void risky() throws Exception {}
+}

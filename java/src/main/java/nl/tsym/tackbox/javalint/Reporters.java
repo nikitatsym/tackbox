@@ -19,6 +19,14 @@ public final class Reporters {
      *  call site is matched against. */
     public record Resolved(String packageName, String className, String method) {}
 
+    /** A malformed `--reporters` value or a dead declared symbol. The CLI turns
+     *  it into exit 2, matching erclint's reporters.Resolve. */
+    public static final class ReportersException extends RuntimeException {
+        public ReportersException(String message) {
+            super(message);
+        }
+    }
+
     private Reporters() {}
 
     public static List<Declared> parse(String spec) {
@@ -31,7 +39,7 @@ public final class Reporters {
             int hash = e.lastIndexOf('#');
             int dot = e.lastIndexOf('.');
             if (hash <= 0 || dot <= hash + 1 || dot == e.length() - 1) {
-                throw new IllegalArgumentException(
+                throw new ReportersException(
                         "--reporters: malformed declaration '" + e + "' (want <file>#<Class.method>)");
             }
             out.add(new Declared(e.substring(0, hash), e.substring(hash + 1, dot), e.substring(dot + 1)));
@@ -44,9 +52,23 @@ public final class Reporters {
      *  are taken from the entry; the python CLI already checked the file exists. */
     public static Resolved resolve(Declared d, String fileContent) {
         CompilationUnit cu = new JavaParser().parse(fileContent).getResult().orElseThrow(
-                () -> new IllegalArgumentException(
+                () -> new ReportersException(
                         "--reporters: cannot parse declared file " + d.file()));
         String pkg = cu.getPackageDeclaration().map(pd -> pd.getNameAsString()).orElse("");
+        if (!declaresMethod(cu, d.className(), d.method())) {
+            throw new ReportersException(
+                    "--reporters: no method " + d.className() + "." + d.method() + " in " + d.file());
+        }
         return new Resolved(pkg, d.className(), d.method());
+    }
+
+    /** A top-level type named `className` that declares a method named `method`.
+     *  Parity with go reporters.Resolve: existence by name, any visibility - an
+     *  unexported/private sink still resolves; a dead symbol is a hard error. */
+    private static boolean declaresMethod(CompilationUnit cu, String className, String method) {
+        return cu.getTypes().stream()
+                .filter(td -> td.getNameAsString().equals(className))
+                .anyMatch(td -> td.getMethods().stream()
+                        .anyMatch(m -> m.getNameAsString().equals(method)));
     }
 }
