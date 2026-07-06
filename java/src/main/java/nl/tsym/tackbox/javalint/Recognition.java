@@ -3,7 +3,9 @@ package nl.tsym.tackbox.javalint;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.ImportDeclaration;
 import com.github.javaparser.ast.Node;
+import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.FieldDeclaration;
+import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.Parameter;
 import com.github.javaparser.ast.body.TypeDeclaration;
 import com.github.javaparser.ast.body.VariableDeclarator;
@@ -11,6 +13,7 @@ import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.FieldAccessExpr;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
+import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import com.github.javaparser.ast.expr.ThisExpr;
 import com.github.javaparser.ast.expr.VariableDeclarationExpr;
 import com.github.javaparser.ast.nodeTypes.NodeWithParameters;
@@ -154,16 +157,38 @@ public final class Recognition {
     }
 
     /** The nearest enclosing type that declares a method named `m`, as (this
-     *  file's package, that type's name). Empty when no enclosing type does. */
+     *  file's package, that type's name). Once the walk crosses a static-nested,
+     *  local, or anonymous type boundary, implicit-this no longer carries an
+     *  enclosing instance - a match beyond that point is credited only if it is
+     *  itself static, matching javac's own rule. Empty when no reachable
+     *  enclosing type declares `m`. */
     private static Optional<Origin> enclosingTypeOrigin(CompilationUnit cu, Node use, String m) {
+        boolean crossedStatic = false;
         for (Node cur = use; cur != null; cur = cur.getParentNode().orElse(null)) {
-            if (cur instanceof TypeDeclaration<?> td
-                    && td.getMethods().stream().anyMatch(md -> md.getNameAsString().equals(m))) {
-                String pkg = cu.getPackageDeclaration().map(pd -> pd.getNameAsString()).orElse("");
-                return Optional.of(new Origin(pkg, td.getNameAsString()));
+            if (cur instanceof TypeDeclaration<?> td) {
+                Optional<MethodDeclaration> match = td.getMethods().stream()
+                        .filter(md -> md.getNameAsString().equals(m))
+                        .findFirst();
+                if (match.isPresent()) {
+                    if (crossedStatic && !match.get().isStatic()) {
+                        return Optional.empty();
+                    }
+                    String pkg = cu.getPackageDeclaration().map(pd -> pd.getNameAsString()).orElse("");
+                    return Optional.of(new Origin(pkg, td.getNameAsString()));
+                }
+                crossedStatic = crossedStatic || crossesStaticBoundary(td);
+            } else if (cur instanceof ObjectCreationExpr oce && oce.getAnonymousClassBody().isPresent()) {
+                crossedStatic = true;
             }
         }
         return Optional.empty();
+    }
+
+    /** A static-nested type, or a local type (conservatively treated the same
+     *  as static, since resolving whether its enclosing method is itself
+     *  static/instance is out of scope here - fail closed). */
+    private static boolean crossesStaticBoundary(TypeDeclaration<?> td) {
+        return td.isStatic() || (td instanceof ClassOrInterfaceDeclaration cid && cid.isLocalClassDeclaration());
     }
 
     /** The (package, Class) owner of an explicit `import static pkg.Class.m`, or

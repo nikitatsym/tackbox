@@ -1,0 +1,7 @@
+package com.consumer.inherit;
+
+// Tier-2 declared target inherited by a subclass in the same package - see
+// Tier2InheritanceDodge.java.txt for the fail-closed pin on the bare call.
+public class Base {
+    public void report(Throwable cause) {}
+}

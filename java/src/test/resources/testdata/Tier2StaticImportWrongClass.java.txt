@@ -1,0 +1,19 @@
+// reporters: Tier2ReporterDecl.java.txt#InternalLog.logInternal
+package com.other;
+
+import static com.consumer.y.OtherLog.logInternal;
+
+// The static import names OtherLog, not the declared InternalLog - same
+// method name, wrong owner - so the resolved origin does not match and the
+// catch swallows.
+class Tier2StaticImportWrongClass {
+    void wrongOwnerSwallows() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            logInternal("boom", e);
+        }
+    }
+
+    void risky() throws Exception {}
+}

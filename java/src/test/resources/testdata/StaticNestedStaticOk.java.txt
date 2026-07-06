@@ -1,0 +1,20 @@
+// reporters: StaticNestedStaticOk.java.txt#Outer.reportStatic
+package com.consumer.staticnest;
+
+// Legal implicit reference: a STATIC nested type can reach a STATIC method of
+// the enclosing type through implicit this - must stay clean, not regress.
+class Outer {
+    static void reportStatic(Throwable cause) {}
+
+    static class Nested {
+        void m() {
+            try {
+                risky();
+            } catch (Exception e) {
+                reportStatic(e);
+            }
+        }
+
+        void risky() throws Exception {}
+    }
+}

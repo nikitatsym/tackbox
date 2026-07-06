@@ -1,0 +1,21 @@
+// reporters: NonStaticInnerCapturesOuter.java.txt#Outer.reportInstance
+package com.consumer.staticnest;
+
+// Existing behavior, pinned: a non-static inner class keeps an implicit
+// reference to its enclosing instance, so a bare call reaching an instance
+// method the outer type declares is a real capture - stays clean.
+class Outer {
+    void reportInstance(Throwable cause) {}
+
+    class Inner {
+        void m() {
+            try {
+                risky();
+            } catch (Exception e) {
+                reportInstance(e);
+            }
+        }
+
+        void risky() throws Exception {}
+    }
+}

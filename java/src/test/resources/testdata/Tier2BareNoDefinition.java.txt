@@ -1,0 +1,16 @@
+// reporters: Tier2ReporterDecl.java.txt#InternalLog.logInternal
+package com.bare;
+
+// Bare call to a name this file neither declares nor statically imports: no
+// origin can be established at all, so the catch swallows.
+class Tier2BareNoDefinition {
+    void bareUndeclaredSwallows() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            logInternal(e);
+        }
+    }
+
+    void risky() throws Exception {}
+}
