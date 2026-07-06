@@ -1,0 +1,21 @@
+// reporters: StaticNestedInstanceDodge.java.txt#Outer.reportInstance
+package com.consumer.staticnest;
+
+// Regression: implicit-this from inside a STATIC nested type cannot reach an
+// INSTANCE method of the enclosing type (no enclosing-instance reference
+// exists there) - the bare call must swallow, not capture.
+class Outer {
+    void reportInstance(Throwable cause) {}
+
+    static class Nested {
+        void m() {
+            try {
+                risky();
+            } catch (Exception e) { // want "JV001"
+                reportInstance(e);
+            }
+        }
+
+        void risky() throws Exception {}
+    }
+}

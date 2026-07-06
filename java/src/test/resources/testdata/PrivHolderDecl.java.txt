@@ -1,0 +1,8 @@
+package com.consumer.priv;
+
+// Tier-2 declared target with a private method - resolution is by name, any
+// visibility. See Tier2PrivateQualifiedCapture.java.txt for the real call-site
+// capture this drives (cal4-parity: unexported/private sinks still resolve).
+public class PrivHolder {
+    private void reportPriv(Throwable cause) {}
+}

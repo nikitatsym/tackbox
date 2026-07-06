@@ -1,0 +1,17 @@
+// reporters: Tier2InheritanceBaseDecl.java.txt#Base.report
+package com.consumer.inherit;
+
+// Fail-closed default: Derived inherits report(...) from Base but does not
+// declare it itself, so the enclosing-type walk (own declared methods only)
+// never finds it - the bare call to an inherited declared method swallows.
+class Derived extends Base {
+    void m() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            report(e);
+        }
+    }
+
+    void risky() throws Exception {}
+}

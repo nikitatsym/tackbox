@@ -1,0 +1,7 @@
+package com.consumer.y;
+
+// A same-name, same-method decoy in a different class - used to pin that a
+// static import is matched by its resolved owner, not by the method name alone.
+public class OtherLog {
+    public static void logInternal(String msg, Throwable cause) {}
+}

@@ -1,0 +1,20 @@
+// reporters: PrivHolderDecl.java.txt#PrivHolder.reportPriv
+package com.other;
+
+import com.consumer.priv.PrivHolder;
+
+// A real call site in another class, qualified through a variable of the
+// declared type: the private declared method still resolves and matches -
+// a capture, no finding.
+class Tier2PrivateQualifiedCapture {
+    void m() {
+        PrivHolder holder = new PrivHolder();
+        try {
+            risky();
+        } catch (Exception e) {
+            holder.reportPriv(e);
+        }
+    }
+
+    void risky() throws Exception {}
+}
