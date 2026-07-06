@@ -49,6 +49,18 @@ JS_SWALLOW = """try {
 }
 """
 
+# JV001: catch swallows the exception. Exercises the hermetic `java -jar
+# javalint.jar` path (the engine consumers run) end to end.
+JAVA_SWALLOW = """class Handler {
+    void run() {
+        try {
+            work();
+        } catch (Exception e) {
+        }
+    }
+}
+"""
+
 MD_NON_ASCII = "# Title \u2014 dash goes here\n"
 
 
@@ -63,6 +75,7 @@ def materialize(root: Path) -> None:
     (root / "pkgb").mkdir()
     (root / "pkgb" / "secret.go").write_text(GO_ERC006)
     (root / "swallow.js").write_text(JS_SWALLOW)
+    (root / "Handler.java").write_text(JAVA_SWALLOW)
     (root / "notes.md").write_text(MD_NON_ASCII)
 
     _git(root, "init", "-q", "-b", "main")

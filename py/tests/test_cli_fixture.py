@@ -110,7 +110,7 @@ def import_inside():
     return json
 """
 
-# One violation per migrated java rule; also pins .java dispatch.
+# One violation per javalint rule; also pins .java dispatch to the javalint engine.
 JAVA_VIOLATIONS = """class Violations {
     void swallowed() {
         try { work(); } catch (Exception e) {}
@@ -287,12 +287,13 @@ def test_banner_shape_on_stderr(fixture_repo):
     ), f"unexpected banner: {banner!r}"
 
 
-def test_all_five_engine_sections_present(fixture_repo):
+def test_all_six_engine_sections_present(fixture_repo):
     result = _run_tackbox(fixture_repo)
     sections = _split_engine_sections(result.stdout)
     assert set(sections) == {
         "erclint",
         "erclint-opengrep",
+        "javalint",
         "pyrules",
         "tackbox-eslint",
         "tackbox-mdlint",
@@ -339,6 +340,7 @@ def test_engine_sections_appear_in_alphabetical_order(fixture_repo):
     assert ids == [
         "erclint",
         "erclint-opengrep",
+        "javalint",
         "pyrules",
         "tackbox-eslint",
         "tackbox-mdlint",
@@ -431,17 +433,13 @@ def test_pyrules_reports_every_python_rule(sections):
         assert rule in py, f"missing {rule} in pyrules section:\n{py}"
 
 
-def test_opengrep_reports_every_java_rule(sections):
-    og = _nows(sections["erclint-opengrep"])
-    assert "Violations.java" in og, f".java not dispatched:\n{og}"
-    for rule in (
-        "java-swallowed-exception",
-        "java-catch-throwable",
-        "java-rethrow-without-cause",
-        "java-useless-catch",
-        "java-exit-in-catch",
-    ):
-        assert rule in og, f"missing {rule} in opengrep section:\n{og}"
+def test_javalint_reports_every_java_rule(sections):
+    jl = _nows(sections["javalint"])
+    assert "Violations.java" in jl, f".java not dispatched to javalint:\n{jl}"
+    # JAVA_VIOLATIONS plants one method per rule: swallow (JV001), throwable
+    # (JV003), rethrow-without-cause (JV002), useless-catch (JV004), exit (JV005).
+    for rule in ("JV001", "JV002", "JV003", "JV004", "JV005"):
+        assert rule in jl, f"missing {rule} in javalint section:\n{jl}"
 
 
 def test_opengrep_reports_go_exit_in_recover(sections):

@@ -203,6 +203,30 @@ def test_parse_erclint_findings_analyzer_error_bubbles():
         parse_erclint_findings(payload)
 
 
+def test_parse_erclint_findings_parses_javalint_json():
+    """Regression: javalint emits erclint-shaped JSON (JsonWriter) so the CLI
+    parses both engines through the one parse_erclint_findings path. The outer
+    key is the repo-relative file, the inner key the JVNNN rule id."""
+    # Verbatim JsonWriter shape (pretty-printed, file key = path as passed).
+    payload = (
+        "{\n"
+        '  "java/Foo.java": {\n'
+        '    "JV001": [\n'
+        '      {"posn": "java/Foo.java:2:40", "end": "java/Foo.java:2:40", "message": "JV001: ..."}\n'
+        "    ],\n"
+        '    "JV002": [\n'
+        '      {"posn": "java/Foo.java:3:67", "end": "java/Foo.java:3:67", "message": "JV002: ..."}\n'
+        "    ]\n"
+        "  }\n"
+        "}\n"
+    )
+    findings = parse_erclint_findings(payload)
+    assert {(f["pkg"], f["analyzer"], f["posn"]) for f in findings} == {
+        ("java/Foo.java", "JV001", "java/Foo.java:2:40"),
+        ("java/Foo.java", "JV002", "java/Foo.java:3:67"),
+    }
+
+
 # -- DEV_ENGINES registry (shape checks, not behavior) --------------------
 
 
@@ -210,6 +234,7 @@ def test_dev_engines_registry_order_locked():
     assert [e.id for e in DEV_ENGINES] == [
         "erclint",
         "erclint-opengrep",
+        "javalint",
         "tackbox-eslint",
         "tackbox-mdlint",
         "pyrules",
@@ -241,16 +266,38 @@ def test_dev_engines_opengrep_covers_multi_language():
     og = next(e for e in DEV_ENGINES if e.id == "erclint-opengrep")
     assert ".go" in og.extensions
     assert ".py" in og.extensions
-    assert ".java" in og.extensions
     assert ".ts" in og.extensions
-    # svelte parser not available in opengrep - excluded.
+    # java moved to the javalint engine; svelte has no opengrep parser.
+    assert ".java" not in og.extensions
     assert ".svelte" not in og.extensions
 
 
-def test_dispatch_dev_engines_routes_java_to_opengrep():
-    opengrep = next(e for e in DEV_ENGINES if e.id == "erclint-opengrep")
+def test_dispatch_dev_engines_routes_java_to_javalint():
+    javalint = next(e for e in DEV_ENGINES if e.id == "javalint")
     plan = dispatch(["src/Main.java"], DEV_ENGINES)
-    assert plan == [(opengrep, ["src/Main.java"])]
+    assert plan == [(javalint, ["src/Main.java"])]
+
+
+def test_dev_engines_javalint_extension_is_only_java():
+    jl = next(e for e in DEV_ENGINES if e.id == "javalint")
+    assert jl.extensions == frozenset([".java"])
+    # per-file (not package_mode) and erclint-shaped JSON, not machine NDJSON.
+    assert jl.package_mode is False
+    assert jl.machine_flag is False
+
+
+def test_hermetic_javalint_argv_uses_system_java_and_thin_jar():
+    jl = next(e for e in engines.HERMETIC_ENGINES if e.id == "javalint")
+    argv = jl.build_argv(
+        Path("/repo"), Path("/tb"), ["a.java"], (("Rep.java", "Rep.report"),)
+    )
+    assert argv[:3] == [
+        "java", "-jar", str(engines._TACKBOX_PKG_ROOT / "bin" / "javalint.jar")
+    ]
+    # reporter path stays repo-relative (javalint reads it cwd-relative, unlike
+    # erclint's absolute paths); the java sink is passed through.
+    assert "--reporters=Rep.java#Rep.report" in argv
+    assert argv[-1] == "a.java"
 
 
 def test_dev_engines_eslint_covers_ts_and_svelte():

@@ -21,7 +21,9 @@ FILENAME = ".tackbox-reporters"
 
 _JS_EXTS = frozenset([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".svelte"])
 _GO_EXTS = frozenset([".go"])
-# python -> pyrules, java -> opengrep; symbol existence is the engine's job.
+# python -> pyrules, java -> javalint; symbol existence is the engine's job.
+# .java stays a known decl extension (javalint resolves the tier-2 symbol); the
+# opengrep->javalint cutover changed the owner, not whether java sinks are valid.
 _ENGINE_DECL_EXTS = frozenset([".py", ".java"])
 _KNOWN_EXTS = _JS_EXTS | _GO_EXTS | _ENGINE_DECL_EXTS
 
