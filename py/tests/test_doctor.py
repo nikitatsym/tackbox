@@ -27,7 +27,7 @@ def test_dev_mode_summary_and_exit_zero():
     text = out.getvalue()
     assert rc == 0
     lines = text.strip().splitlines()
-    assert lines[-1].startswith("doctor: 6 checks, 0 failed")
+    assert lines[-1].startswith("doctor: 7 checks, 0 failed")
     ids = {ln.split(" ", 2)[1].rstrip(":") for ln in lines[:-1]}
     assert ids == {
         "platform",
@@ -36,6 +36,7 @@ def test_dev_mode_summary_and_exit_zero():
         "binaries-start",
         "git-in-path",
         "go-toolchain",
+        "java-toolchain",
     }
     assert all(ln.startswith("ok ") for ln in lines[:-1])
 
@@ -80,7 +81,7 @@ def test_hermetic_platform_mismatch_flags_check(tmp_path, monkeypatch):
     text = out.getvalue()
     assert "fail platform:" in text
     assert f"wheel built for {_foreign_platform_key()}" in text
-    assert "doctor: 6 checks, " in text
+    assert "doctor: 7 checks, " in text
 
 
 def test_hermetic_payload_mismatch_flags_check(tmp_path, monkeypatch):
@@ -163,6 +164,78 @@ def test_go_toolchain_ok_when_source_set_has_no_go(tmp_path, monkeypatch):
         result = doctor._check_go_toolchain()
     assert result.ok is True
     assert "not needed" in result.detail
+
+
+# -- java-toolchain check --------------------------------------------------
+
+
+def _java_repo(tmp_path: Path) -> None:
+    """Commit one .java file so the source set needs the java toolchain."""
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "Handler.java").write_text("class Handler {}\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
+        cwd=tmp_path, check=True, capture_output=True,
+    )
+
+
+def test_java_toolchain_ok_when_source_set_has_no_java(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "hello.py").write_text("print('hi')\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
+        cwd=tmp_path, check=True, capture_output=True,
+    )
+    with mock.patch("shutil.which", side_effect=lambda n: {"git": "/usr/bin/git", "java": None}.get(n)):
+        result = doctor._check_java_toolchain()
+    assert result.ok is True
+    assert "not needed" in result.detail
+
+
+def test_java_toolchain_fails_when_needed_but_absent(tmp_path, monkeypatch):
+    # Adversarial: source set has .java but `java` is off PATH -> loud fail,
+    # never a silent pass that lets javalint be skipped.
+    monkeypatch.chdir(tmp_path)
+    _java_repo(tmp_path)
+    with mock.patch("shutil.which", side_effect=lambda n: {"git": "/usr/bin/git", "java": None}.get(n)):
+        result = doctor._check_java_toolchain()
+    assert result.ok is False
+    assert "not on PATH" in result.detail
+
+
+def test_java_toolchain_fails_on_old_version(tmp_path, monkeypatch):
+    # Adversarial: java present but below the 17 floor javalint compiles to ->
+    # fail here rather than as an opaque UnsupportedClassVersionError mid-lint.
+    monkeypatch.chdir(tmp_path)
+    _java_repo(tmp_path)
+    monkeypatch.setattr(doctor, "_java_major_version", lambda java: 11)
+    with mock.patch("shutil.which", side_effect=lambda n: {"git": "/usr/bin/git", "java": "/usr/bin/java"}.get(n)):
+        result = doctor._check_java_toolchain()
+    assert result.ok is False
+    assert "17" in result.detail and "11" in result.detail
+
+
+@pytest.mark.parametrize(
+    "banner, major",
+    [
+        ('openjdk version "21.0.11" 2026-04-21 LTS\n', 21),
+        ('openjdk version "17.0.8" 2023-07-18\n', 17),
+        ('java version "1.8.0_401"\n', 8),
+    ],
+)
+def test_java_major_version_parses_modern_and_legacy(monkeypatch, banner, major):
+    class _Fake:
+        stdout = ""
+
+        def __init__(self, err):
+            self.stderr = err
+
+    # `java -version` writes to stderr; the parser must read it there.
+    monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: _Fake(banner))
+    assert doctor._java_major_version("/usr/bin/java") == major
 
 
 # -- engines-store check ---------------------------------------------------

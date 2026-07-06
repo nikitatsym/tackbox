@@ -24,27 +24,6 @@ func Good(ctx X, msg string, err error, tags T) {
 }
 `
 
-const javaSwallow = `class Handler {
-    void run() {
-        try {
-            doWork();
-        } catch (Exception e) {
-        }
-    }
-}
-`
-
-const javaDeclaredCapture = `class Handler {
-    void run() {
-        try {
-            doWork();
-        } catch (Exception e) {
-            reportIt(e);
-        }
-    }
-}
-`
-
 func TestExplicitTestsDirFileYieldsFinding(t *testing.T) {
 	requireOpengrepOnPath(t)
 	bin := buildOpengrepWrapper(t)
@@ -123,38 +102,6 @@ func TestPathsRewrittenToRepoRelative(t *testing.T) {
 	}
 	if !strings.Contains(stripWhitespace(stdout), "pkg/bad.go") {
 		t.Fatalf("expected repo-relative path pkg/bad.go in stdout:\n%s", stdout)
-	}
-}
-
-func TestJavaSwallowedExceptionYieldsFinding(t *testing.T) {
-	requireOpengrepOnPath(t)
-	bin := buildOpengrepWrapper(t)
-	repo := makeRepo(t)
-	if err := os.WriteFile(filepath.Join(repo, "Handler.java"), []byte(javaSwallow), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	stdout, stderr, runErr := runWrapper(t, bin, repo, "Handler.java")
-	if runErr == nil {
-		t.Fatalf("expected finding for swallowed java catch; got clean\nstdout=%s\nstderr=%s", stdout, stderr)
-	}
-	if !strings.Contains(stdout, "java-swallowed-exception") {
-		t.Fatalf("expected java-swallowed-exception in stdout:\n%s", stdout)
-	}
-}
-
-func TestJavaDeclaredReporterSuppresses(t *testing.T) {
-	requireOpengrepOnPath(t)
-	bin := buildOpengrepWrapper(t)
-	repo := makeRepo(t)
-	if err := os.WriteFile(filepath.Join(repo, "Handler.java"), []byte(javaDeclaredCapture), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	stdout, stderr, runErr := runWrapper(t, bin, repo, "--reporters=Handler.java#reportIt", "Handler.java")
-	if runErr != nil {
-		t.Fatalf("declared java reporter with $E must suppress; got findings\nstdout=%s\nstderr=%s", stdout, stderr)
-	}
-	if strings.Contains(stdout, "java-swallowed-exception") {
-		t.Fatalf("declared java reporter did not suppress the finding:\n%s", stdout)
 	}
 }
 

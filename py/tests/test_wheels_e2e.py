@@ -174,13 +174,14 @@ def test_hermetic_doctor_exits_zero(hermetic_venv, fixture_repo, engines_payload
         f"doctor failed: {result.returncode}\n"
         f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
     )
-    assert "doctor: 6 checks, 0 failed" in result.stdout
+    assert "doctor: 7 checks, 0 failed" in result.stdout
     assert "ok platform:" in result.stdout
     assert "ok engines-store:" in result.stdout
     assert "ok payload-checksums:" in result.stdout
     assert "ok binaries-start:" in result.stdout
     assert "ok git-in-path:" in result.stdout
     assert "ok go-toolchain:" in result.stdout
+    assert "ok java-toolchain:" in result.stdout
 
 
 def test_hermetic_lint_finds_all_engine_violations(hermetic_venv, fixture_repo, engines_payload):
@@ -194,11 +195,16 @@ def test_hermetic_lint_finds_all_engine_violations(hermetic_venv, fixture_repo, 
     )
     assert "== erclint ==" in result.stdout
     assert "== erclint-opengrep ==" in result.stdout
+    assert "== javalint ==" in result.stdout
     assert "== tackbox-eslint ==" in result.stdout
     assert "== tackbox-mdlint ==" in result.stdout
     # erclint ERC001 on pkga/violate.go
     assert "ERC001" in result.stdout
     assert "pkga" in result.stdout
+    # javalint JV001 (swallowed catch) on Handler.java - the hermetic `java -jar`
+    # path end to end, from the jar packed into the thin wheel.
+    assert "JV001" in result.stdout
+    assert "Handler.java" in result.stdout
     # eslint no-swallow-catch on swallow.js
     assert "no-swallow-catch" in result.stdout
     # markdownlint MD-ASCII on notes.md

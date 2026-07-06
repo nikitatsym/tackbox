@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -50,6 +51,7 @@ def _run_all_checks() -> list[CheckResult]:
         _check_binaries_start(),
         _check_git_in_path(),
         _check_go_toolchain(),
+        _check_java_toolchain(),
     ]
 
 
@@ -193,7 +195,7 @@ def _check_git_in_path() -> CheckResult:
 
 
 def _check_go_toolchain() -> CheckResult:
-    needed = _source_set_has_go()
+    needed = _source_set_has_ext(".go")
     found = shutil.which("go")
     if not needed:
         return CheckResult(
@@ -208,7 +210,61 @@ def _check_go_toolchain() -> CheckResult:
     return CheckResult("go-toolchain", True, found)
 
 
-def _source_set_has_go() -> bool:
+_JAVA_MIN_MAJOR = 17
+
+
+def _check_java_toolchain() -> CheckResult:
+    """javalint runs on the system `java` (like erclint on `go`); the jar targets
+    Java 17. Gate presence AND version so a too-old JVM fails loudly here rather
+    than as an opaque class-version error mid-lint."""
+    needed = _source_set_has_ext(".java")
+    found = shutil.which("java")
+    if not needed:
+        return CheckResult(
+            "java-toolchain", True,
+            found or "not needed (no .java files in source set)",
+        )
+    if not found:
+        return CheckResult(
+            "java-toolchain", False,
+            "source set has .java files but `java` not on PATH",
+        )
+    major = _java_major_version(found)
+    if major is None:
+        return CheckResult(
+            "java-toolchain", False, f"cannot determine java version from {found}"
+        )
+    if major < _JAVA_MIN_MAJOR:
+        return CheckResult(
+            "java-toolchain", False,
+            f"java {major} < {_JAVA_MIN_MAJOR} required for javalint ({found})",
+        )
+    return CheckResult("java-toolchain", True, f"{found} (java {major})")
+
+
+def _java_major_version(java: str) -> int | None:
+    """Major version from `java -version` (which prints to stderr, e.g.
+    `openjdk version "21.0.11"` or legacy `java version "1.8.0_..."`), or None
+    when it cannot be run or parsed."""
+    try:
+        completed = subprocess.run(
+            [java, "-version"], capture_output=True, text=True, timeout=60
+        )
+    except (OSError, subprocess.SubprocessError):
+        # no-report: doctor reports the unparseable/absent java via CheckResult
+        return None
+    text = completed.stderr or completed.stdout
+    m = re.search(r'version "(\d+)(?:\.(\d+))?', text)
+    if not m:
+        return None
+    major = int(m.group(1))
+    # Legacy scheme `1.N` (1.8 = Java 8); modern scheme is the feature number.
+    if major == 1 and m.group(2):
+        return int(m.group(2))
+    return major
+
+
+def _source_set_has_ext(ext: str) -> bool:
     try:
         repo_root = Path(
             subprocess.run(
@@ -217,7 +273,7 @@ def _source_set_has_go() -> bool:
             ).stdout.strip()
         )
     except (FileNotFoundError, subprocess.CalledProcessError):
-        # no-report: git absent or failed - treat as no go sources; the go-toolchain probe surfaces it
+        # no-report: git absent or failed - treat as no such sources; the toolchain probe surfaces it
         return False
     try:
         stage_raw = subprocess.run(
@@ -229,7 +285,7 @@ def _source_set_has_go() -> bool:
             cwd=repo_root, capture_output=True, check=True,
         ).stdout
     except (FileNotFoundError, subprocess.CalledProcessError):
-        # no-report: git ls-files failed - doctor degrades to "no go sources", not a run failure
+        # no-report: git ls-files failed - doctor degrades to "no such sources", not a run failure
         return False
     files, _ = filter_source_set(
         parse_ls_files_stage(stage_raw),
@@ -238,7 +294,7 @@ def _source_set_has_go() -> bool:
         exists=lambda p: (repo_root / p).exists(),
         is_symlink=lambda p: (repo_root / p).is_symlink(),
     )
-    return any(f.endswith(".go") for f in files)
+    return any(f.endswith(ext) for f in files)
 
 
 def _sha256_file(path: Path) -> str:

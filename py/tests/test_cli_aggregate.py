@@ -63,3 +63,16 @@ def test_promotion_only_for_erclint_not_other_engines():
     # A hypothetical zero-exit engine with findings-shaped stdout should NOT be promoted.
     result = _r("tackbox-eslint", 0, stdout=finding_shape)
     assert _aggregate_exit([result]) == 0
+
+
+def test_javalint_exit_zero_with_findings_promotes_to_one():
+    # javalint mirrors erclint: exit 0 even with findings (erclint-shaped JSON).
+    finding = (
+        '{"java/Foo.java": {"JV001": [{"posn": "java/Foo.java:3:5", '
+        '"end": "java/Foo.java:3:5", "message": "m"}]}}'
+    )
+    assert _aggregate_exit([_r("javalint", 0, stdout=finding)]) == 1
+
+
+def test_javalint_exit_zero_with_empty_json_stays_zero():
+    assert _aggregate_exit([_r("javalint", 0, stdout="{}\n")]) == 0

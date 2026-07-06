@@ -62,6 +62,9 @@ class CacheKey:
 
 
 # Engine payload in dev mode: everything that shapes findings, nothing else.
+# java/src/main + java/pom.xml (not java/ whole - that would pull in the
+# gitignored, per-build target/) so a javalint rule change invalidates markers;
+# the built jar is a pure function of those.
 _DEV_PAYLOAD = (
     "go",
     "js",
@@ -69,6 +72,8 @@ _DEV_PAYLOAD = (
     "eslint.config.preset.js",
     "package.json",
     "package-lock.json",
+    "java/src/main",
+    "java/pom.xml",
 )
 
 

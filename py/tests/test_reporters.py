@@ -68,6 +68,19 @@ def test_validate_unsupported_extension(tmp_path):
         reporters.validate_paths([Declaration("a.rb", "F", "r")], tmp_path)
 
 
+def test_validate_java_reporter_supported(tmp_path):
+    # java sinks resolve via javalint (tier-2 file#Class.method). .java must stay
+    # a known decl extension after the opengrep->javalint cutover, or a java
+    # reporter declaration would be rejected at the CLI boundary before the
+    # engine ever runs. Symbol existence is javalint's job, not validate_paths'.
+    (tmp_path / "Rep.java").write_text(
+        "class Rep { static void report(Throwable e) {} }\n"
+    )
+    reporters.validate_paths(
+        [Declaration("Rep.java", "Rep.report", "java sink")], tmp_path
+    )
+
+
 def test_load_absent_file_no_declarations(tmp_path):
     assert reporters.load(tmp_path) == []
 

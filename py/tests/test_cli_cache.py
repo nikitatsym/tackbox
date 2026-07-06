@@ -360,3 +360,25 @@ def test_missing_digest_still_lints_and_never_caches(monkeypatch, tmp_path):
     clean = EngineResult(engine_id="erclint", exit_code=0, stdout="{}", stderr="")
     cli._mark_clean_units([clean], pending, "h", cache_root)
     assert [p.name for p in sorted((cache_root / "h").iterdir())] == ["d1.erclint"]
+
+
+# -- javalint: exit 0 always, so attribution must come from the findings ----
+
+
+def test_clean_args_javalint_excludes_files_with_findings():
+    """javalint returns exit 0 even with findings (erclint-shaped JSON), so a
+    generic 'exit 0 -> everything clean' rule would falsely cache a java file
+    that has a finding. Attribution must read the finding file keys instead."""
+    findings = (
+        '{"java/Bad.java": {"JV001": [{"posn": "java/Bad.java:2:9", '
+        '"end": "java/Bad.java:2:9", "message": "m"}]}}'
+    )
+    r = EngineResult(engine_id="javalint", exit_code=0, stdout=findings, stderr="")
+    info = {"arg_digest": [("java/Bad.java", "d1"), ("java/Ok.java", "d2")]}
+    assert cli._clean_args(r, info) == ["java/Ok.java"]
+
+
+def test_clean_args_javalint_all_clean_when_no_findings():
+    r = EngineResult(engine_id="javalint", exit_code=0, stdout="{}\n", stderr="")
+    info = {"arg_digest": [("java/A.java", "d1"), ("java/B.java", "d2")]}
+    assert cli._clean_args(r, info) == ["java/A.java", "java/B.java"]

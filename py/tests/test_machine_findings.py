@@ -72,6 +72,20 @@ def test_located_findings_dispatches_erclint_vs_machine():
     ]
 
 
+def test_located_findings_javalint_keeps_repo_relative_file():
+    """javalint emits repo-relative file keys (unlike erclint's absolute posn),
+    so its located file must be the key verbatim - no relpath. The repo_root here
+    is deliberately unrelated: an erclint-style relpath would mangle the path."""
+    jl = (
+        '{\n  "java/Foo.java": {\n    "JV001": [\n'
+        '      {"posn": "java/Foo.java:5:9", "end": "java/Foo.java:5:9", "message": "m"}\n'
+        "    ]\n  }\n}\n"
+    )
+    assert located_findings("javalint", jl, Path("/some/unrelated/root")) == [
+        Finding(rule="JV001", file="java/Foo.java", line=5)
+    ]
+
+
 # ---- integration: each engine reports the planted line -------------------
 
 GO_MOD = "module mf\n\ngo 1.24\n"

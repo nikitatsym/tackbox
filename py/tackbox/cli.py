@@ -326,22 +326,40 @@ def _clean_args(r: EngineResult, info: dict) -> list[str]:
             a for a in args
             if ip_map.get(a) is not None and ip_map[a] not in dirty_ips
         ]
+    if r.engine_id == "javalint":
+        # javalint always exits 0, so the exit code says nothing about cleanness;
+        # attribute per file. Each finding's outer JSON key is the repo-relative
+        # file (the arg verbatim), so a file with a finding is never cached clean.
+        try:
+            findings = parse_erclint_findings(r.stdout)
+        except ValueError:
+            # no-report: unparseable javalint json -> attribute nothing, never a false clean
+            return []
+        dirty_files = {f.get("pkg") for f in findings}
+        return [a for a in args if a not in dirty_files]
     if r.exit_code == 0:
         return args
     return []
 
 
-def _aggregate_exit(results: list[EngineResult]) -> int:
-    """Aggregate engine exit codes; promote erclint findings to nonzero.
+_JSON_FINDING_ENGINES = frozenset({"erclint", "javalint"})
 
-    erclint in `-json` mode returns exit 0 even when findings exist -
-    handover #2 pinned this contract. tackbox is the layer that translates
-    findings into a failing aggregate exit.
+
+def _aggregate_exit(results: list[EngineResult]) -> int:
+    """Aggregate engine exit codes; promote erclint/javalint findings to nonzero.
+
+    Both emit findings as JSON and exit 0 regardless (erclint's `-json` mode,
+    handover #2; javalint mirrors it). tackbox is the layer that translates
+    those findings into a failing aggregate exit.
     """
     max_code = 0
     for r in results:
         code = r.exit_code
-        if code == 0 and r.engine_id == "erclint" and _erclint_has_findings(r.stdout):
+        if (
+            code == 0
+            and r.engine_id in _JSON_FINDING_ENGINES
+            and _erclint_has_findings(r.stdout)
+        ):
             code = 1
         if code > max_code:
             max_code = code

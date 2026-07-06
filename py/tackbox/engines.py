@@ -11,6 +11,7 @@ Signal-killed subprocess exit code is normalized to `128 + sig`
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import json
 import os
 import platform
@@ -536,6 +537,18 @@ def erclint_located_findings(stdout: str, repo_root: Path) -> list[Finding]:
     return out
 
 
+def javalint_located_findings(stdout: str, _repo_root: Path) -> list[Finding]:
+    """javalint's JSON outer key is the repo-relative file it was handed (python
+    passes repo-relative paths, cwd at the repo root), so - unlike erclint's
+    absolute posn - the file is taken verbatim, no relpath. Only the line comes
+    from posn."""
+    out: list[Finding] = []
+    for f in parse_erclint_findings(stdout):
+        _, line = _split_posn(f.get("posn", ""))
+        out.append(Finding(rule=f.get("analyzer", ""), file=f.get("pkg"), line=line))
+    return out
+
+
 # flake8's `path:row:col: CODE msg`. file is non-greedy so a windows drive colon
 # stays with the path; only the TBX code is tokenized (the message carries colons).
 _FLAKE8_LINE = re.compile(r"^(?P<file>.+?):(?P<line>\d+):\d+: (?P<code>TBX\d+) ")
@@ -561,9 +574,12 @@ def pyrules_located_findings(stdout: str, _repo_root: Path) -> list[Finding]:
 
 def located_findings(engine_id: str, stdout: str, repo_root: Path) -> list[Finding]:
     """Located findings from one engine's output: erclint from its -json posn,
-    pyrules from flake8's text, every other engine from its machine NDJSON."""
+    javalint from its erclint-shaped JSON (repo-relative keys), pyrules from
+    flake8's text, every other engine from its machine NDJSON."""
     if engine_id == "erclint":
         return erclint_located_findings(stdout, repo_root)
+    if engine_id == "javalint":
+        return javalint_located_findings(stdout, repo_root)
     if engine_id == "pyrules":
         return pyrules_located_findings(stdout, repo_root)
     return parse_machine_findings(stdout)
@@ -602,15 +618,15 @@ _JS_EXTS = frozenset(
 _MD_EXTS = frozenset([".md"])
 _GO_EXTS = frozenset([".go"])
 _PY_EXTS = frozenset([".py"])
+_JAVA_EXTS = frozenset([".java"])
 # Extensions matched by any bundled opengrep rule (svelte omitted - no parser).
 # .py stays: opengrep still scans it for the erc006 fingerprint rules even though
-# the python exception rules moved to the pyrules engine.
+# the python exception rules moved to the pyrules engine. .java moved out to the
+# javalint engine (typed model + tier-1/2 reporter resolution); opengrep no
+# longer scans it, so it substitutes no reporter declarations of its own.
 _OPENGREP_EXTS = frozenset(
-    [".go", ".py", ".java", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"]
+    [".go", ".py", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"]
 )
-# Reporter declarations the opengrep wrapper substitutes: java only. Go -> erclint,
-# JS/TS -> eslint, python -> pyrules each own their own declaration resolution.
-_OPENGREP_DECL_EXTS = frozenset([".java"])
 
 
 def _built_go_binary(tackbox_root: Path, name: str) -> Path:
@@ -692,8 +708,59 @@ def _erclint_opengrep_argv(
     _repo_root: Path, tackbox_root: Path, files: list[str], reporters=()
 ) -> list[str]:
     bin_ = _built_go_binary(tackbox_root, "erclint-opengrep")
-    flag = _reporters_flag(reporters, _OPENGREP_DECL_EXTS, lambda f: f)
-    return [str(bin_), *flag, *files]
+    return [str(bin_), *files]
+
+
+def _javalint_src_hash(tackbox_root: Path) -> str:
+    """Digest of the java sources + pom that determine the shaded jar. Keys the
+    dev-jar cache slot and (via cache._DEV_PAYLOAD) invalidates consumer content
+    caches when a java rule changes."""
+    h = hashlib.sha256()
+    h.update(b"javalint-src-v1\n")
+    src = tackbox_root / "java" / "src" / "main"
+    if src.is_dir():
+        h.update(sha256_tree(src).encode())
+    h.update(b"\t")
+    pom = tackbox_root / "java" / "pom.xml"
+    if pom.is_file():
+        h.update(sha256_file(pom).encode())
+    return h.hexdigest()
+
+
+def _built_javalint_jar(tackbox_root: Path) -> Path:
+    """Build the shaded javalint.jar with maven, cached by java-source hash in
+    .tackbox-dev. Unlike the go dev binaries (rebuilt each run, fast via go's
+    own cache), `mvn package` has no cheap no-op, so a source change alone
+    triggers a rebuild; the jar is the same one build_wheels.py packs into thin."""
+    build_dir = tackbox_root / ".tackbox-dev"
+    build_dir.mkdir(parents=True, exist_ok=True)
+    jar = build_dir / f"javalint-{_javalint_src_hash(tackbox_root)}.jar"
+    if jar.is_file():
+        return jar
+    mvn = shutil.which("mvn") or "mvn"
+    subprocess.run(
+        [mvn, "-q", "-B", "-f", str(tackbox_root / "java" / "pom.xml"),
+         "-DskipTests", "package"],
+        cwd=tackbox_root,
+        check=True,
+    )
+    built = tackbox_root / "java" / "target" / "javalint.jar"
+    if not built.is_file():
+        raise FileNotFoundError(f"expected shaded jar at {built} after mvn package")
+    # Publish into the hash-named slot atomically so a concurrent lint never
+    # reads a half-copied jar.
+    tmp = build_dir / f".javalint-{os.getpid()}.jar.tmp"
+    shutil.copyfile(built, tmp)
+    os.replace(tmp, jar)
+    return jar
+
+
+def _javalint_argv(
+    _repo_root: Path, tackbox_root: Path, files: list[str], reporters=()
+) -> list[str]:
+    jar = _built_javalint_jar(tackbox_root)
+    flag = _reporters_flag(reporters, _JAVA_EXTS, lambda f: f)
+    return ["java", "-jar", str(jar), *flag, *files]
 
 
 def _tackbox_eslint_argv(
@@ -746,6 +813,11 @@ DEV_ENGINES: list[EngineSpec] = [
         machine_flag=True,
     ),
     EngineSpec(
+        id="javalint",
+        extensions=_JAVA_EXTS,
+        build_argv=_javalint_argv,
+    ),
+    EngineSpec(
         id="tackbox-eslint",
         extensions=_JS_EXTS,
         build_argv=_tackbox_eslint_argv,
@@ -795,8 +867,18 @@ def _erclint_argv_hermetic(
 def _erclint_opengrep_argv_hermetic(
     _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=()
 ) -> list[str]:
-    flag = _reporters_flag(reporters, _OPENGREP_DECL_EXTS, lambda f: f)
-    return [str(_hermetic_erclint_bin("erclint-opengrep")), *flag, *files]
+    return [str(_hermetic_erclint_bin("erclint-opengrep")), *files]
+
+
+def _javalint_argv_hermetic(
+    _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=()
+) -> list[str]:
+    """`java` is the system toolchain (like go), not a bundled binary; the jar
+    rides in the thin wheel. hermetic_env keeps the system PATH so java resolves;
+    doctor's java-toolchain check gates its presence + version."""
+    jar = _TACKBOX_PKG_ROOT / "bin" / "javalint.jar"
+    flag = _reporters_flag(reporters, _JAVA_EXTS, lambda f: f)
+    return ["java", "-jar", str(jar), *flag, *files]
 
 
 def _tackbox_eslint_argv_hermetic(
@@ -835,6 +917,11 @@ HERMETIC_ENGINES: list[EngineSpec] = [
         build_argv=_erclint_opengrep_argv_hermetic,
         path_filter=_drop_go_testdata,
         machine_flag=True,
+    ),
+    EngineSpec(
+        id="javalint",
+        extensions=_JAVA_EXTS,
+        build_argv=_javalint_argv_hermetic,
     ),
     EngineSpec(
         id="tackbox-eslint",
