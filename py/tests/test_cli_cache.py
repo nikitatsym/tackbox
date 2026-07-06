@@ -382,3 +382,126 @@ def test_clean_args_javalint_all_clean_when_no_findings():
     r = EngineResult(engine_id="javalint", exit_code=0, stdout="{}\n", stderr="")
     info = {"arg_digest": [("java/A.java", "d1"), ("java/B.java", "d2")]}
     assert cli._clean_args(r, info) == ["java/A.java", "java/B.java"]
+
+
+# -- A crashed engine run must never be attributed clean ---------------------
+#
+# erclint's -json mode and javalint both normally exit 0 with findings, so
+# _clean_args parses stdout to attribute cleanness per unit. But a crash (go
+# panic, javalint's tier-2 dead-symbol / malformed --reporters exit 2) leaves
+# stdout empty; parse_erclint_findings("") returns [] without raising, so an
+# unguarded parse would read "no findings" as "everything clean" and cache a
+# batch the engine never actually analyzed.
+
+
+def test_clean_args_erclint_crash_caches_nothing():
+    r = EngineResult(engine_id="erclint", exit_code=2, stdout="", stderr="panic: boom")
+    info = {"arg_digest": [("pkg", "d1")], "arg_ip": {"pkg": "example.com/pkg"}}
+    assert cli._clean_args(r, info) == []
+
+
+def test_clean_args_javalint_crash_caches_nothing():
+    r = EngineResult(engine_id="javalint", exit_code=2, stdout="", stderr="javalint: boom")
+    info = {"arg_digest": [("java/Bad.java", "d1")]}
+    assert cli._clean_args(r, info) == []
+
+
+def test_erclint_crash_writes_no_marker_and_next_run_still_reports(tmp_path):
+    cache_root = tmp_path / "cacheroot"
+    pending = {"arg_digest": [("pkg", "d1")], "arg_ip": {"pkg": "example.com/pkg"}}
+
+    crashed = EngineResult(engine_id="erclint", exit_code=2, stdout="", stderr="panic: boom")
+    cli._mark_clean_units([crashed], {"erclint": pending}, "h", cache_root)
+    assert not (cache_root / "h").exists() or list((cache_root / "h").iterdir()) == []
+
+    # Follow-up probe: a real finding on the same unit must still surface -
+    # the crash must not have poisoned the cache with a false clean marker.
+    probe = EngineResult(
+        engine_id="erclint",
+        exit_code=0,
+        stdout='{"example.com/pkg": {"errcheck": [{"pkg": "example.com/pkg"}]}}',
+        stderr="",
+    )
+    assert cli._clean_args(probe, pending) == []
+
+
+def test_javalint_crash_writes_no_marker_and_next_run_still_reports(tmp_path):
+    cache_root = tmp_path / "cacheroot"
+    pending = {"arg_digest": [("java/Bad.java", "d1")]}
+
+    crashed = EngineResult(engine_id="javalint", exit_code=2, stdout="", stderr="javalint: boom")
+    cli._mark_clean_units([crashed], {"javalint": pending}, "h", cache_root)
+    assert not (cache_root / "h").exists() or list((cache_root / "h").iterdir()) == []
+
+    # Follow-up probe: a real finding on the same unit must still surface.
+    probe = EngineResult(
+        engine_id="javalint",
+        exit_code=0,
+        stdout=(
+            '{"java/Bad.java": {"JV001": [{"posn": "java/Bad.java:2:9", '
+            '"end": "java/Bad.java:2:9", "message": "m"}]}}'
+        ),
+        stderr="",
+    )
+    assert cli._clean_args(probe, pending) == []
+
+
+# -- CLI-level repro: a crashed run must not mask a real finding later ------
+
+
+JAVA_SWALLOW_WITH_REPORTER = """class Handler {
+    void run() {
+        try {
+            work();
+        } catch (Exception e) {
+        }
+    }
+    void work() {}
+    static void report(Throwable t) {}
+}
+"""
+
+
+def _needs_java():
+    if shutil.which("java") is None or shutil.which("mvn") is None:
+        pytest.fail("java/mvn not installed; install it, do not skip")
+
+
+@pytest.fixture
+def java_swallow_repo(tmp_path) -> Path:
+    _needs_java()
+    (tmp_path / "Handler.java").write_text(JAVA_SWALLOW_WITH_REPORTER)
+    # Typo: "repot" instead of "report" - a dead declared symbol, exit 2.
+    (tmp_path / ".tackbox-reporters").write_text(
+        "Handler.java#Handler.repot: swallow log helper\n"
+    )
+    _init_repo(tmp_path)
+    _commit_all(tmp_path)
+    return tmp_path
+
+
+def test_reporters_typo_crash_does_not_hide_swallow_after_fix(java_swallow_repo, tmp_path):
+    """Exact reproduced scenario: a real java swallow plus a typo'd
+    `.tackbox-reporters` (dead declared symbol) crashes javalint loudly (exit
+    2). Fixing the typo must make the next run see the still-unfixed swallow,
+    not a false-clean cache marker left by the crashed run."""
+    cache_home = tmp_path / "cache"
+
+    crashed = _run_tackbox(java_swallow_repo, cache_home)
+    assert crashed.returncode == 2, (
+        f"expected the dead reporter symbol to crash loudly\n"
+        f"stdout={crashed.stdout!r}\nstderr={crashed.stderr!r}"
+    )
+    assert "repot" in crashed.stderr
+
+    (java_swallow_repo / ".tackbox-reporters").write_text(
+        "Handler.java#Handler.report: swallow log helper\n"
+    )
+
+    result = _run_tackbox(java_swallow_repo, cache_home)
+    assert result.returncode != 0, (
+        f"the swallow must still be reported, not hidden by a stale cache marker\n"
+        f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
+    )
+    assert "JV001" in result.stdout
+    assert "Handler.java" in result.stdout

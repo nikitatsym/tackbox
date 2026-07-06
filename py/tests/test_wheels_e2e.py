@@ -205,6 +205,10 @@ def test_hermetic_lint_finds_all_engine_violations(hermetic_venv, fixture_repo, 
     # path end to end, from the jar packed into the thin wheel.
     assert "JV001" in result.stdout
     assert "Handler.java" in result.stdout
+    # same JV001, one directory deep: the repo-relative key must use "/" even
+    # on a Windows runner (javasub/Deep.java, not javasub\Deep.java).
+    assert "javasub/Deep.java" in result.stdout
+    assert "javasub\\Deep.java" not in result.stdout
     # eslint no-swallow-catch on swallow.js
     assert "no-swallow-catch" in result.stdout
     # markdownlint MD-ASCII on notes.md
