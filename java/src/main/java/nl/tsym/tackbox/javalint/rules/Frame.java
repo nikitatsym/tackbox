@@ -2,8 +2,10 @@ package nl.tsym.tackbox.javalint.rules;
 
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.VariableDeclarator;
+import com.github.javaparser.ast.expr.AssignExpr;
 import com.github.javaparser.ast.expr.LambdaExpr;
 import com.github.javaparser.ast.expr.MethodCallExpr;
+import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import com.github.javaparser.ast.stmt.BlockStmt;
 import com.github.javaparser.ast.stmt.LocalClassDeclarationStmt;
@@ -51,6 +53,23 @@ final class Frame extends VoidVisitorAdapter<Void> {
                 localNews.put(n.getNameAsString(), oce);
             }
         });
+        super.visit(n, arg);
+    }
+
+    /** A reassignment to a simple name: port of the go astutil precedent
+     *  (localAssignRHS) - the LAST assignment wins. A `new` replaces the
+     *  binding; any other value (factory call, ternary, null) is unknown, so
+     *  the binding is dropped rather than left stale - fail open, not a false
+     *  JV002. */
+    @Override
+    public void visit(AssignExpr n, Void arg) {
+        if (n.getTarget() instanceof NameExpr ne) {
+            if (n.getValue() instanceof ObjectCreationExpr oce) {
+                localNews.put(ne.getNameAsString(), oce);
+            } else {
+                localNews.remove(ne.getNameAsString());
+            }
+        }
         super.visit(n, arg);
     }
 

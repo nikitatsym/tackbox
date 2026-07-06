@@ -40,6 +40,17 @@ class Jv004Useless {
         }
     }
 
+    // The lone throw names a pre-existing variable, not the caught - not a
+    // no-op wrapper, so JV004 stays silent.
+    void rethrowUnrelatedVariable() {
+        Exception saved = new Exception("pre-existing");
+        try {
+            risky();
+        } catch (Exception e) {
+            throw saved;
+        }
+    }
+
     void risky() throws Exception {}
 
     void touch(Exception e) {}
