@@ -7,12 +7,12 @@ class Rethrow {
         }
     }
 
-    // Bare rethrow propagates, so minimal JV001 is clean here. The no-op-wrapper
-    // case (JV004) and cause-less chain (JV002) arrive in F8c.
+    // A bare rethrow propagates, so JV001 is clean, but the catch catches only to
+    // rethrow the same exception unchanged - a no-op wrapper JV004 flags.
     void bare() {
         try {
             risky();
-        } catch (Exception e) {
+        } catch (Exception e) { // want "JV004"
             throw e;
         }
     }

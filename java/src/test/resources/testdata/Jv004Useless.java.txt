@@ -1,0 +1,46 @@
+// JV004 (useless catch, port of java-useless-catch): a catch whose entire body is
+// `throw <caught>;` is a no-op wrapper - it catches only to rethrow the same
+// exception unchanged. Remove the try/catch and let the exception propagate.
+class Jv004Useless {
+    void bareRethrow() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV004"
+            throw e;
+        }
+    }
+
+    // Multi-catch union, still a no-op wrapper: the caught is rethrown unchanged.
+    void unionRethrow() {
+        try {
+            risky();
+        } catch (IllegalStateException | IllegalArgumentException e) { // want "JV004"
+            throw e;
+        }
+    }
+
+    // Wrapping in a new exception is not useless - a cause is added. Clean for
+    // JV004 (and for JV002, since the caught flows in as the cause).
+    void wrapIsNotUseless() {
+        try {
+            risky();
+        } catch (Exception e) {
+            throw new RuntimeException("wrap", e);
+        }
+    }
+
+    // A side effect precedes the rethrow, so the body is not the lone-rethrow
+    // shape and JV004 does not fire.
+    void notLoneRethrow() {
+        try {
+            risky();
+        } catch (Exception e) {
+            touch(e);
+            throw e;
+        }
+    }
+
+    void risky() throws Exception {}
+
+    void touch(Exception e) {}
+}

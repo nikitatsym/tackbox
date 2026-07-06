@@ -70,6 +70,14 @@ public final class Recognition {
                 || declaredCaptures(cu, call, caught);
     }
 
+    /** A tier-1 / tier-2 capture of the caught, excluding printing terminals: the
+     *  ways that hand the error to a reporting backend (slf4j error/warn, a
+     *  declared reporter), which an upstream handler would count a second time.
+     *  A stderr print is visible but not backend-reported, so it is not here. */
+    public boolean captures(CompilationUnit cu, MethodCallExpr call, String caught) {
+        return slf4jCaptures(cu, call, caught) || declaredCaptures(cu, call, caught);
+    }
+
     // --- tier-1: slf4j ------------------------------------------------------
 
     private boolean slf4jCaptures(CompilationUnit cu, MethodCallExpr call, String caught) {
