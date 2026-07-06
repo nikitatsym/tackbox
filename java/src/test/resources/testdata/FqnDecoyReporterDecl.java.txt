@@ -1,0 +1,6 @@
+package leak.own;
+
+// Tier-2 FQN declared target: package leak.own, class Reporter, method report.
+public class Reporter {
+    public static void report(Throwable cause) {}
+}

@@ -19,6 +19,7 @@ import com.github.javaparser.ast.stmt.ExpressionStmt;
 import com.github.javaparser.ast.stmt.Statement;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import com.github.javaparser.ast.type.Type;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -45,8 +46,15 @@ public final class Recognition {
     private static final String SLF4J_PACKAGE = "org.slf4j";
     private static final String SLF4J_LOGGER = "Logger";
 
-    /** A resolved call target: the package and class its qualifier denotes. */
-    private record Origin(String packageName, String className) {}
+    /** A resolved call target: the package and class its qualifier denotes.
+     *  tier1Eligible is false only for a bare FQN-shaped dotted qualifier
+     *  (package.Class.method()) - slf4j error/warn are instance methods, so a
+     *  static-shaped call can never be a real capture, only a tier-2 candidate. */
+    private record Origin(String packageName, String className, boolean tier1Eligible) {
+        Origin(String packageName, String className) {
+            this(packageName, className, true);
+        }
+    }
 
     private final List<Reporters.Resolved> reporters;
 
@@ -70,7 +78,8 @@ public final class Recognition {
             return false;
         }
         Origin o = callOrigin(cu, call).orElse(null);
-        return o != null && o.packageName().equals(SLF4J_PACKAGE) && o.className().equals(SLF4J_LOGGER);
+        return o != null && o.tier1Eligible()
+                && o.packageName().equals(SLF4J_PACKAGE) && o.className().equals(SLF4J_LOGGER);
     }
 
     // --- tier-2: declared reporters -----------------------------------------
@@ -115,7 +124,101 @@ public final class Recognition {
             if (fa.getScope() instanceof ThisExpr) {
                 return declaredTypeOf(fa.getNameAsString(), call).flatMap(t -> typeOrigin(cu, t));
             }
-            return Optional.of(new Origin(fa.getScope().toString(), fa.getNameAsString()));
+            return dottedQualifierOrigin(cu, fa);
+        }
+        return Optional.empty();
+    }
+
+    /** A dotted qualifier `S...N` before `.method(...)`, resolved source-only -
+     *  never the raw AST text. An FQN-shaped chain (lowercase segments then an
+     *  uppercase Class) is a tier-2-only candidate, gated by the same-file-reject
+     *  pin; a bare `Holder.FIELD` head that resolves to a type declared in this
+     *  file resolves the field's declared type through the normal type-origin
+     *  machinery; anything else - a cross-file class-qualified field, a chained
+     *  expression - fails closed. */
+    private Optional<Origin> dottedQualifierOrigin(CompilationUnit cu, FieldAccessExpr fa) {
+        List<String> parts = dottedSegments(fa).orElse(null);
+        if (parts == null) {
+            return Optional.empty();
+        }
+        if (isFqnShape(parts)) {
+            String pkg = String.join(".", parts.subList(0, parts.size() - 1));
+            String cls = parts.get(parts.size() - 1);
+            if (declaresTopLevelType(cu, cls, pkg)) {
+                return Optional.empty();
+            }
+            return Optional.of(new Origin(pkg, cls, false));
+        }
+        if (fa.getScope() instanceof NameExpr head) {
+            return holderFieldOrigin(cu, head.getNameAsString(), fa.getNameAsString());
+        }
+        return Optional.empty();
+    }
+
+    /** The dotted identifier chain `a.b...Z` a FieldAccessExpr denotes, head
+     *  first. Empty if any link is not a plain name (a chained expression). */
+    private static Optional<List<String>> dottedSegments(Expression e) {
+        List<String> segments = new ArrayList<>();
+        Expression cur = e;
+        while (cur instanceof FieldAccessExpr f) {
+            segments.add(0, f.getNameAsString());
+            cur = f.getScope();
+        }
+        if (cur instanceof NameExpr ne) {
+            segments.add(0, ne.getNameAsString());
+            return Optional.of(segments);
+        }
+        return Optional.empty();
+    }
+
+    /** Java package.Class convention: every segment but the last starts
+     *  lowercase, the last starts uppercase. */
+    private static boolean isFqnShape(List<String> segments) {
+        if (segments.size() < 2) {
+            return false;
+        }
+        for (int i = 0; i < segments.size() - 1; i++) {
+            if (!startsWithCase(segments.get(i), false)) {
+                return false;
+            }
+        }
+        return startsWithCase(segments.get(segments.size() - 1), true);
+    }
+
+    private static boolean startsWithCase(String s, boolean upper) {
+        if (s.isEmpty()) {
+            return false;
+        }
+        char c = s.charAt(0);
+        return upper ? Character.isUpperCase(c) : Character.isLowerCase(c);
+    }
+
+    /** The same-file-reject pin: a tier-2 FQN candidate never matches if this
+     *  very file declares a top-level type of that name in that package - an
+     *  in-file decoy must not be able to impersonate a cross-file target. */
+    private static boolean declaresTopLevelType(CompilationUnit cu, String className, String pkg) {
+        String ownPkg = cu.getPackageDeclaration().map(pd -> pd.getNameAsString()).orElse("");
+        return ownPkg.equals(pkg) && cu.getTypes().stream().anyMatch(td -> td.getNameAsString().equals(className));
+    }
+
+    /** Rule 2: Holder.FIELD where Holder is a type declared in this file -
+     *  resolve FIELD's declared type inside Holder's body and run the normal
+     *  type-origin machinery on it. Empty if Holder or the field is not found. */
+    private static Optional<Origin> holderFieldOrigin(CompilationUnit cu, String holderName, String fieldName) {
+        return cu.findAll(TypeDeclaration.class).stream()
+                .filter(td -> td.getNameAsString().equals(holderName))
+                .findFirst()
+                .flatMap(holder -> fieldTypeIn(holder, fieldName))
+                .flatMap(t -> typeOrigin(cu, t));
+    }
+
+    private static Optional<Type> fieldTypeIn(TypeDeclaration<?> td, String fieldName) {
+        for (FieldDeclaration fd : td.getFields()) {
+            for (VariableDeclarator v : fd.getVariables()) {
+                if (v.getNameAsString().equals(fieldName)) {
+                    return Optional.of(v.getType());
+                }
+            }
         }
         return Optional.empty();
     }

@@ -1,0 +1,19 @@
+package org.slf4j;
+
+// Adversarial: FQN-shaped call to an in-file decoy Logger; tier-1 must never
+// match a static-shaped qualifier (slf4j error/warn are instance methods).
+class Logger {
+    static void error(String msg, Throwable cause) {}
+}
+
+class FqnDecoyTier1 {
+    void m() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            org.slf4j.Logger.error("x", e);
+        }
+    }
+
+    void risky() throws Exception {}
+}
