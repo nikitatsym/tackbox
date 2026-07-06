@@ -74,7 +74,7 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v8.3.0
 
       - name: Materialize fixture repo
         shell: bash
