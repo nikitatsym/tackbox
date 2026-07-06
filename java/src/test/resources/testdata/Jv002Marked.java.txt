@@ -1,0 +1,12 @@
+class Jv002Marked {
+    void wireBoundaryEscape() {
+        try {
+            risky();
+        } catch (Exception e) {
+            // no-report: wire-boundary exception has no cause slot
+            throw new WireException("boom");
+        }
+    }
+
+    void risky() throws Exception {}
+}

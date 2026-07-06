@@ -1,0 +1,19 @@
+import java.util.function.Supplier;
+
+// A lone `throw e;` inside a lambda, as the catch body's sole top-level
+// statement, must not read as JV004's lone-rethrow shape - that shape is
+// `throw <caught>;` at the top level of the catch, not nested in a lambda.
+// (Genuinely swallowed at the top level, so JV001 still fires.)
+class LambdaBoundaryUseless {
+    void m() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            Supplier<Integer> s = () -> {
+                throw e;
+            };
+        }
+    }
+
+    void risky() throws Exception {}
+}

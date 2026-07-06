@@ -1,0 +1,18 @@
+import java.util.function.Supplier;
+
+// A cause-dropping throw inside a lambda must not affect JV002 for this catch:
+// the lambda is its own frame, scanned separately, later.
+class LambdaBoundaryChain {
+    void m() {
+        try {
+            risky();
+        } catch (Exception e) {
+            Supplier<Integer> s = () -> {
+                throw new RuntimeException(e.getMessage());
+            };
+            throw new IllegalStateException("wrap", e);
+        }
+    }
+
+    void risky() throws Exception {}
+}

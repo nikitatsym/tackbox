@@ -1,0 +1,26 @@
+import org.slf4j.Logger;
+
+// A report-then-rethrow pair inside a lambda must not affect JV006 for this
+// catch: the lambda is its own frame, invisible to the outer scan. The outer
+// `throw e` alone is a bare rethrow, not a double capture.
+class LambdaBoundaryDoubleCapture {
+    private final Logger log;
+
+    LambdaBoundaryDoubleCapture(Logger log) {
+        this.log = log;
+    }
+
+    void m() {
+        try {
+            risky();
+        } catch (Exception e) {
+            Runnable r = () -> {
+                log.error("failed", e);
+                throw new RuntimeException(e);
+            };
+            throw e;
+        }
+    }
+
+    void risky() throws Exception {}
+}

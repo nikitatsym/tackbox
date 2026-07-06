@@ -11,6 +11,7 @@ import com.github.javaparser.ast.stmt.ThrowStmt;
 import java.util.ArrayList;
 import java.util.List;
 import nl.tsym.tackbox.javalint.Finding;
+import nl.tsym.tackbox.javalint.MarkerIndex;
 
 /** JV002 (chain): a new exception thrown in a catch must carry the caught as its
  *  cause. Preservation is object flow - the caught reaches the new exception as a
@@ -18,7 +19,10 @@ import nl.tsym.tackbox.javalint.Finding;
  *  breaks, and JV002 fires, only when the caught reaches the new exception solely
  *  through a string (getMessage / toString / string concatenation), or not at all.
  *  Rethrowing the caught itself (`throw e`) is not this rule - it is object flow.
- *  Orthogonal to JV001: a throw makes the catch non-silent, this checks the chain. */
+ *  Orthogonal to JV001: a throw makes the catch non-silent, this checks the chain.
+ *  A `// no-report: <reason>` above the catch escapes the whole chain check - a
+ *  wire-boundary exception (a generated type with no cause slot) legitimately
+ *  breaks it. */
 public final class ChainRule {
 
     public static final String ID = "JV002";
@@ -27,9 +31,12 @@ public final class ChainRule {
             ID + ": new exception thrown in catch drops the caught cause; pass the caught"
             + " as the cause (throw new X(msg, e), initCause, or addSuppressed)";
 
-    public List<Finding> check(String file, CompilationUnit cu) {
+    public List<Finding> check(String file, CompilationUnit cu, MarkerIndex markers) {
         List<Finding> out = new ArrayList<>();
         for (CatchClause cc : cu.findAll(CatchClause.class)) {
+            if (Markers.noReportAbove(markers, cc)) {
+                continue;
+            }
             String caught = cc.getParameter().getNameAsString();
             Frame f = Frame.scan(cc.getBody());
             for (ThrowStmt ts : f.throwsStmts) {

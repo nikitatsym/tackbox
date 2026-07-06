@@ -38,6 +38,25 @@ class Jv002Chain {
         }
     }
 
+    // String.valueOf is a stringifier too, same as getMessage/toString.
+    void stringValueOf() {
+        try {
+            risky();
+        } catch (Exception e) {
+            throw new RuntimeException(String.valueOf(e)); // want "JV002"
+        }
+    }
+
+    // Exact mixed form: message from the caught plus the caught itself as
+    // cause - clean, the object still reaches the new exception.
+    void messageAndCauseMixed() {
+        try {
+            risky();
+        } catch (Exception e) {
+            throw new RuntimeException(e.getMessage(), e);
+        }
+    }
+
     // Adversarial: the caught is textually present but only through string
     // concatenation, so the constructed cause is null and the chain is lost.
     void stringConcatBreaks() {
@@ -77,6 +96,19 @@ class Jv002Chain {
         }
     }
 
+    // initCause is called on a DIFFERENT local than the one thrown - the
+    // thrown exception still drops the cause.
+    void twoStepInitCauseWrongVariable() {
+        try {
+            risky();
+        } catch (Exception e) {
+            RuntimeException wrapped = new RuntimeException("boom");
+            RuntimeException other = new RuntimeException("other");
+            other.initCause(e);
+            throw wrapped; // want "JV002"
+        }
+    }
+
     // Two-step that drops the cause: the local is a bare new exception and
     // nothing attaches the caught before it is thrown.
     void twoStepDropsCause() {
@@ -88,5 +120,46 @@ class Jv002Chain {
         }
     }
 
+    // Reassignment: the declaration drops the cause but the last binding
+    // (a plain AssignExpr, not a VariableDeclarator) carries it. The LAST
+    // assignment wins, matching go astutil's localAssignRHS.
+    void reassignedAddsCause() {
+        try {
+            risky();
+        } catch (Exception e) {
+            RuntimeException wrapped = new RuntimeException("boom");
+            wrapped = new RuntimeException("wrap", e);
+            throw wrapped;
+        }
+    }
+
+    // Reassignment the other direction: the declaration carries the cause but
+    // the last binding drops it - JV002 must fire on the LAST binding's shape.
+    void reassignedDropsCause() {
+        try {
+            risky();
+        } catch (Exception e) {
+            RuntimeException wrapped = new RuntimeException("wrap", e);
+            wrapped = new RuntimeException("boom");
+            throw wrapped; // want "JV002"
+        }
+    }
+
+    // A reassignment to a factory call (not a `new`) is unknown - the binding
+    // is dropped rather than trusted stale, so the throw fails open.
+    void reassignedToFactoryCallFailsOpen() {
+        try {
+            risky();
+        } catch (Exception e) {
+            RuntimeException wrapped = new RuntimeException("wrap", e);
+            wrapped = makeWrapper();
+            throw wrapped;
+        }
+    }
+
     void risky() throws Exception {}
+
+    RuntimeException makeWrapper() {
+        return new RuntimeException("factory");
+    }
 }

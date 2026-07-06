@@ -67,7 +67,7 @@ public final class Javalint {
         Recognition rec = new Recognition(reporters);
         List<Finding> out = new ArrayList<>();
         out.addAll(new SwallowRule(rec).check(name, cu, markers));
-        out.addAll(new ChainRule().check(name, cu));
+        out.addAll(new ChainRule().check(name, cu, markers));
         out.addAll(new ThrowableRule().check(name, cu, markers));
         out.addAll(new UselessCatchRule().check(name, cu));
         out.addAll(new ExitRule(rec).check(name, cu, markers));
