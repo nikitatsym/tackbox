@@ -1,0 +1,47 @@
+import org.slf4j.Logger;
+
+// JV003: catch of Throwable / Error must rethrow or carry a marker - capturing is
+// not enough, because VirtualMachineError and friends must never be swallowed.
+// JV001 is orthogonal: a captured Throwable is clean for JV001 but still JV003.
+class ThrowableCatch {
+    private final Logger log;
+
+    ThrowableCatch(Logger log) {
+        this.log = log;
+    }
+
+    void capturedButNotRethrown() {
+        try {
+            risky();
+        } catch (Throwable t) { // want "JV003"
+            log.error("broad", t);
+        }
+    }
+
+    void rethrownIsClean() {
+        try {
+            risky();
+        } catch (Throwable t) {
+            throw new RuntimeException(t);
+        }
+    }
+
+    void errorMustRethrow() {
+        try {
+            risky();
+        } catch (Error err) { // want "JV003"
+            log.error("vm", err);
+        }
+    }
+
+    void markerSuppresses() {
+        try {
+            risky();
+        } catch (Throwable t) {
+            // no-report: escalated to the supervisor which re-raises
+            log.error("broad", t);
+        }
+    }
+
+    void risky() throws Exception {}
+}

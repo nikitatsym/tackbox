@@ -1,0 +1,38 @@
+// Printing terminal: System.err.println / System.err.printf carrying the caught
+// makes it visible. Arg-flow is required (a static message swallows), and only
+// System.err is the pinned terminal - System.out is not recognized.
+class PrintStderr {
+    void printlnCaughtToStderr() {
+        try {
+            risky();
+        } catch (Exception e) {
+            System.err.println(e);
+        }
+    }
+
+    void printfCaughtToStderr() {
+        try {
+            risky();
+        } catch (Exception e) {
+            System.err.printf("failed: %s%n", e);
+        }
+    }
+
+    void stderrWithoutTheCaught() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            System.err.println("failed");
+        }
+    }
+
+    void stdoutIsNotTheTerminal() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            System.out.println(e);
+        }
+    }
+
+    void risky() throws Exception {}
+}

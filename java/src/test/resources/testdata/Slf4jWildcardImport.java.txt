@@ -1,0 +1,22 @@
+import org.slf4j.*;
+
+// Pin (a), fail closed: a wildcard import does not establish that Logger is
+// org.slf4j.Logger (JLS package-type shadowing is not checkable source-only), so
+// a wildcard-imported Logger is not recognized. Explicit imports are the norm.
+class Slf4jWildcardImport {
+    private final Logger log;
+
+    Slf4jWildcardImport(Logger log) {
+        this.log = log;
+    }
+
+    void wildcardIsNotTrusted() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            log.error("boom", e);
+        }
+    }
+
+    void risky() throws Exception {}
+}

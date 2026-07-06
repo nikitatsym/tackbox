@@ -1,0 +1,42 @@
+import org.slf4j.Logger;
+
+// Tier-1 positive: a receiver whose declared type resolves to org.slf4j.Logger
+// (via explicit import or a fully-qualified declaration) captures at error/warn
+// with the caught in the arguments. The variable name never participates.
+class Slf4jCapture {
+    private final Logger log;
+    private final org.slf4j.Logger fq;
+    private final Logger WHATEVER;
+
+    Slf4jCapture(Logger log) {
+        this.log = log;
+        this.fq = log;
+        this.WHATEVER = log;
+    }
+
+    void viaImport() {
+        try {
+            risky();
+        } catch (Exception e) {
+            log.error("boom", e);
+        }
+    }
+
+    void viaFullyQualifiedDecl() {
+        try {
+            risky();
+        } catch (Exception e) {
+            fq.error("boom", e);
+        }
+    }
+
+    void warnCapturesRegardlessOfName() {
+        try {
+            risky();
+        } catch (Exception e) {
+            WHATEVER.warn("boom", e);
+        }
+    }
+
+    void risky() throws Exception {}
+}

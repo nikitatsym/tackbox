@@ -1,0 +1,9 @@
+package com.consumer.x;
+
+// Tier-2 reporter-declaration target. Sibling tier-2 fixtures name it via
+// `// reporters: Tier2ReporterDecl.java.txt#InternalLog.logInternal`; javalint
+// parses it only for its package (com.consumer.x), so a call site is matched on
+// (package, Class, method). It carries no catch, so it reports nothing itself.
+public class InternalLog {
+    public static void logInternal(String msg, Throwable cause) {}
+}
