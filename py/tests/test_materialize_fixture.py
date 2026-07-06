@@ -49,6 +49,8 @@ def test_materialize_creates_expected_layout(tmp_path):
     assert (root / "pkgb" / "secret.go").is_file()
     assert (root / "swallow.js").is_file()
     assert (root / "notes.md").is_file()
+    assert (root / "Handler.java").is_file()
+    assert (root / "javasub" / "Deep.java").is_file()
     assert (root / ".git").is_dir()
 
 
@@ -63,6 +65,10 @@ def test_planted_violations_are_present(tmp_path):
     assert "catch" in swallow and swallow.count("{") == 2
     md = (root / "notes.md").read_text()
     assert "\u2014" in md, "em-dash (U+2014) is the mdlint violation carrier"
+    handler = (root / "Handler.java").read_text()
+    assert "catch (Exception e) {\n        }" in handler, "empty catch is the JV001 carrier"
+    deep = (root / "javasub" / "Deep.java").read_text()
+    assert "catch (Exception e) {\n        }" in deep, "nested empty catch is the JV001 carrier"
 
 
 def test_materialize_is_deterministic(tmp_path):

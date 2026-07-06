@@ -314,6 +314,9 @@ def _mark_clean_units(
 def _clean_args(r: EngineResult, info: dict) -> list[str]:
     args = [a for a, _ in info["arg_digest"]]
     if r.engine_id == "erclint":
+        if r.exit_code != 0:
+            # no-report: crashed run never produced json -> attribute nothing, never a false clean
+            return []
         try:
             findings = parse_erclint_findings(r.stdout)
         except ValueError:
@@ -327,8 +330,10 @@ def _clean_args(r: EngineResult, info: dict) -> list[str]:
             if ip_map.get(a) is not None and ip_map[a] not in dirty_ips
         ]
     if r.engine_id == "javalint":
-        # javalint always exits 0, so the exit code says nothing about cleanness;
-        # attribute per file. Each finding's outer JSON key is the repo-relative
+        if r.exit_code != 0:
+            # no-report: nonzero = reporter-resolution crash, no json -> attribute nothing
+            return []
+        # attribute per file: each finding's outer JSON key is the repo-relative
         # file (the arg verbatim), so a file with a finding is never cached clean.
         try:
             findings = parse_erclint_findings(r.stdout)

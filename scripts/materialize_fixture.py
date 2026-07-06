@@ -61,6 +61,19 @@ JAVA_SWALLOW = """class Handler {
 }
 """
 
+# Same JV001 shape, one directory deep - the wheels/CI matrix runs on Windows
+# too, where a nested repo-relative path is the only way to exercise the
+# engine's separator handling end to end (a root-level file never has one).
+JAVA_SWALLOW_NESTED = """class Deep {
+    void run() {
+        try {
+            work();
+        } catch (Exception e) {
+        }
+    }
+}
+"""
+
 MD_NON_ASCII = "# Title \u2014 dash goes here\n"
 
 
@@ -76,6 +89,8 @@ def materialize(root: Path) -> None:
     (root / "pkgb" / "secret.go").write_text(GO_ERC006)
     (root / "swallow.js").write_text(JS_SWALLOW)
     (root / "Handler.java").write_text(JAVA_SWALLOW)
+    (root / "javasub").mkdir()
+    (root / "javasub" / "Deep.java").write_text(JAVA_SWALLOW_NESTED)
     (root / "notes.md").write_text(MD_NON_ASCII)
 
     _git(root, "init", "-q", "-b", "main")

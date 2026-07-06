@@ -15,7 +15,7 @@ final class JsonWriter {
     static String write(List<Finding> findings) {
         Map<String, Map<String, List<Finding>>> byFile = new TreeMap<>();
         for (Finding f : findings) {
-            byFile.computeIfAbsent(f.file(), k -> new TreeMap<>())
+            byFile.computeIfAbsent(normalizeSeparators(f.file()), k -> new TreeMap<>())
                   .computeIfAbsent(f.rule(), k -> new java.util.ArrayList<>())
                   .add(f);
         }
@@ -42,8 +42,8 @@ final class JsonWriter {
                         sb.append(",");
                     }
                     firstF = false;
-                    sb.append("\n      {\"posn\": ").append(quote(f.posn()))
-                      .append(", \"end\": ").append(quote(f.end()))
+                    sb.append("\n      {\"posn\": ").append(quote(normalizeSeparators(f.posn())))
+                      .append(", \"end\": ").append(quote(normalizeSeparators(f.end())))
                       .append(", \"message\": ").append(quote(f.message()))
                       .append("}");
                 }
@@ -53,6 +53,11 @@ final class JsonWriter {
         }
         sb.append("\n}\n");
         return sb.toString();
+    }
+
+    // Repo-relative keys must match git's separator on every OS.
+    private static String normalizeSeparators(String path) {
+        return path.replace('\\', '/');
     }
 
     private static String quote(String s) {

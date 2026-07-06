@@ -1,6 +1,7 @@
 package nl.tsym.tackbox.javalint;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -31,5 +32,17 @@ class JsonOutputTest {
         assertTrue(json.contains("\"posn\": \"S.java:3:"), json);
         assertTrue(json.contains("\"end\": \"S.java:3:"), json);
         assertTrue(json.contains("\"message\": \"JV001: catch swallows"), json);
+    }
+
+    @Test
+    void normalizesWindowsBackslashSeparators() {
+        // A real windows Path.toString() would use backslashes here; a unix
+        // Path can't produce that, so build the Finding directly with one.
+        Finding f = new Finding("JV001", "javasub\\Deep.java", 2, 9, 2, 9, "m");
+        String json = JsonWriter.write(List.of(f));
+        assertTrue(json.contains("\"javasub/Deep.java\": {"), json);
+        assertTrue(json.contains("\"posn\": \"javasub/Deep.java:2:9\""), json);
+        assertTrue(json.contains("\"end\": \"javasub/Deep.java:2:9\""), json);
+        assertFalse(json.contains("\\\\"), "no backslash may survive into the JSON: " + json);
     }
 }
