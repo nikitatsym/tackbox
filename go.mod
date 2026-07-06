@@ -1,6 +1,6 @@
 module github.com/nikitatsym/tackbox
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/getsentry/sentry-go v0.47.0
