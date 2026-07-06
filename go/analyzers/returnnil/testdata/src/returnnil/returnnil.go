@@ -36,3 +36,59 @@ func violationSlice() []string {
 func violationMap() map[string]int {
 	return nil // want `ERC004:.*nil-return`
 }
+
+// --- err-branch guard covered by a valid `// no-report:` marker (same gate ERC001 uses) ---
+
+// the guard's no-report marker covers the bare return nil inside the err-branch.
+func okErrGuardMarkerCoversReturnNil() *int {
+	err := errors.New("x")
+	// no-report: legacy nil sentinel while callers migrate off it
+	if err != nil {
+		return nil
+	}
+	v := 1
+	return &v
+}
+
+func errGuardNoMarkerFires() *int {
+	err := errors.New("x")
+	if err != nil {
+		return nil // want `ERC004:.*nil-return`
+	}
+	v := 1
+	return &v
+}
+
+// the no-report marker sits on an unrelated guard; it must not leak to a
+// return nil outside that guard's body.
+func markerOnUnrelatedGuardDoesNotLeak() *int {
+	err := errors.New("x")
+	// no-report: unrelated guard, does not cover the return below
+	if err != nil {
+		v := 1
+		return &v
+	}
+	return nil // want `ERC004:.*nil-return`
+}
+
+// empty-reason no-report is not a marker at all: markers.Index rejects it.
+func emptyReasonMarkerStillFires() *int {
+	err := errors.New("x")
+	// no-report:
+	if err != nil {
+		return nil // want `ERC004:.*nil-return`
+	}
+	v := 1
+	return &v
+}
+
+// guard on a non-error identifier is not an err-branch: the marker has no
+// handling site to attach to.
+func nonErrorGuardMarkerStillFires(conn *int) *int {
+	// no-report: conn nilness is not an error branch
+	if conn != nil {
+		return nil // want `ERC004:.*nil-return`
+	}
+	v := 1
+	return &v
+}
