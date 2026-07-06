@@ -1,0 +1,20 @@
+// Plan-named adversarial (pin b): a top-level class Logger with an error method
+// shadows the slf4j name. The gate is on the declared type, not the receiver
+// name and not the method name - a local Logger.error is not a capture.
+class LocalLoggerShadow {
+    private final Logger log = new Logger();
+
+    void m() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            log.error(e);
+        }
+    }
+
+    void risky() throws Exception {}
+}
+
+class Logger {
+    void error(Object... a) {}
+}

@@ -1,0 +1,18 @@
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+// Pin (c), fail closed: the receiver is an expression (a getLogger() call), not a
+// variable whose declaration this file carries. Its type cannot be resolved from
+// a declaration, so it is not recognized - the caller must route through a
+// declared field, tier-2, or a marker.
+class Slf4jUnknownReceiver {
+    void expressionReceiver() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            LoggerFactory.getLogger(Slf4jUnknownReceiver.class).error("boom", e);
+        }
+    }
+
+    void risky() throws Exception {}
+}

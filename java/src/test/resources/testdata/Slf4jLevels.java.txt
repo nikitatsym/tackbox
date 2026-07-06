@@ -1,0 +1,29 @@
+import org.slf4j.Logger;
+
+// Pin (e): only error/warn are capture levels. info/debug carry the caught but
+// are not a capture - the error is not reported, only traced.
+class Slf4jLevels {
+    private final Logger log;
+
+    Slf4jLevels(Logger log) {
+        this.log = log;
+    }
+
+    void infoIsNotCapture() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            log.info("boom", e);
+        }
+    }
+
+    void debugIsNotCapture() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            log.debug("boom", e);
+        }
+    }
+
+    void risky() throws Exception {}
+}

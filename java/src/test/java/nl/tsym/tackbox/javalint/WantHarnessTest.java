@@ -24,23 +24,28 @@ import org.junit.jupiter.api.TestFactory;
 class WantHarnessTest {
 
     private static final Pattern WANT = Pattern.compile("//\\s*want\\s*\"([^\"]*)\"");
+    private static final Pattern REPORTERS = Pattern.compile("//\\s*reporters:\\s*(\\S.*)");
 
     @TestFactory
     List<DynamicTest> fixtures() throws Exception {
+        Path dir = testdataDir();
         List<DynamicTest> tests = new ArrayList<>();
-        for (Path fixture : fixtureFiles()) {
+        for (Path fixture : fixtureFiles(dir)) {
             String name = fixture.getFileName().toString();
             String text = Files.readString(fixture);
-            tests.add(DynamicTest.dynamicTest(name, () -> checkFixture(name, text)));
+            tests.add(DynamicTest.dynamicTest(name, () -> checkFixture(name, text, dir)));
         }
         assertTrue(!tests.isEmpty(), "no testdata fixtures found on classpath");
         return tests;
     }
 
-    private static List<Path> fixtureFiles() throws Exception {
+    private static Path testdataDir() throws Exception {
         URL url = WantHarnessTest.class.getResource("/testdata");
         assertNotNull(url, "testdata resource directory missing");
-        Path dir = Path.of(url.toURI());
+        return Path.of(url.toURI());
+    }
+
+    private static List<Path> fixtureFiles(Path dir) throws Exception {
         try (Stream<Path> s = Files.list(dir)) {
             return s.filter(p -> p.getFileName().toString().endsWith(".java.txt"))
                     .sorted()
@@ -48,9 +53,9 @@ class WantHarnessTest {
         }
     }
 
-    private static void checkFixture(String name, String text) {
+    private static void checkFixture(String name, String text, Path dir) throws Exception {
         Map<Integer, String> wants = parseWants(text);
-        List<Finding> findings = Javalint.analyze(name, text);
+        List<Finding> findings = Javalint.analyze(name, text, parseReporters(text, dir));
 
         for (Finding f : findings) {
             String want = wants.get(f.line());
@@ -65,6 +70,24 @@ class WantHarnessTest {
                     name + ": expected a finding matching /" + e.getValue()
                             + "/ at line " + e.getKey() + ", none fired");
         }
+    }
+
+    /** A `// reporters: <file>#<Class.method>,...` directive names sibling
+     *  testdata files as declared reporters; each is read from the testdata
+     *  directory and resolved to its package, exactly as the CLI reads the
+     *  repo-relative files a real `.tackbox-reporters` names. */
+    private static List<Reporters.Resolved> parseReporters(String text, Path dir) throws Exception {
+        for (String line : text.split("\n", -1)) {
+            Matcher m = REPORTERS.matcher(line);
+            if (m.find()) {
+                List<Reporters.Resolved> out = new ArrayList<>();
+                for (Reporters.Declared d : Reporters.parse(m.group(1).trim())) {
+                    out.add(Reporters.resolve(d, Files.readString(dir.resolve(d.file()))));
+                }
+                return out;
+            }
+        }
+        return List.of();
     }
 
     private static Map<Integer, String> parseWants(String text) {

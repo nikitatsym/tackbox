@@ -1,0 +1,17 @@
+// reporters: Tier2ReporterDecl.java.txt#InternalLog.logInternal
+package com.other;
+
+// Same class and method name, different package (no import): the bare qualifier
+// resolves to this file's own package (com.other), which is not the declared
+// package - not a capture. Package is the identity, not the name alone.
+class Tier2OtherPackage {
+    void sameNameDifferentPackage() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            InternalLog.logInternal("boom", e);
+        }
+    }
+
+    void risky() throws Exception {}
+}

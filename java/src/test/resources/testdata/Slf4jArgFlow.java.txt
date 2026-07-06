@@ -1,0 +1,21 @@
+import org.slf4j.Logger;
+
+// Arg-flow is required: error/warn on a real slf4j Logger still swallows when
+// the caught object never reaches the arguments (only a static message ships).
+class Slf4jArgFlow {
+    private final Logger log;
+
+    Slf4jArgFlow(Logger log) {
+        this.log = log;
+    }
+
+    void errorWithoutTheCaught() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            log.error("failed, but the error object is dropped");
+        }
+    }
+
+    void risky() throws Exception {}
+}

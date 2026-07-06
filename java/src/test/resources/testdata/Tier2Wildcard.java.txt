@@ -1,0 +1,19 @@
+// reporters: Tier2ReporterDecl.java.txt#InternalLog.logInternal
+package com.other;
+
+import com.consumer.x.*;
+
+// Wildcard import (fail closed): a wildcard does not establish source-only that
+// InternalLog comes from com.consumer.x, so the bare qualifier falls to this
+// file's own package (com.other) and does not match the declaration.
+class Tier2Wildcard {
+    void wildcardIsNotEnough() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            InternalLog.logInternal("boom", e);
+        }
+    }
+
+    void risky() throws Exception {}
+}

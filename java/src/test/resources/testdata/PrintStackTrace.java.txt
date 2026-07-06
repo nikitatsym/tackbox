@@ -1,0 +1,24 @@
+// Printing terminal: printStackTrace on the caught prints it to stderr - visible,
+// not swallowed. tackbox hunts silence, not style. The receiver must be the
+// caught object; printing an unrelated throwable reports nothing about it.
+class PrintStackTrace {
+    private static final RuntimeException OTHER = new RuntimeException();
+
+    void printsCaught() {
+        try {
+            risky();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    void printsUnrelated() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            OTHER.printStackTrace();
+        }
+    }
+
+    void risky() throws Exception {}
+}

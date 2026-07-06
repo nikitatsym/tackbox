@@ -1,0 +1,18 @@
+// reporters: Tier2ReporterDecl.java.txt#InternalLog.logInternal
+package com.other;
+
+import com.consumer.x.InternalLog;
+
+// Case (ii): the qualifier's package comes from the explicit import
+// (com.consumer.x), so it matches the declaration even from another package.
+class Tier2ExplicitImport {
+    void importedIsCapture() {
+        try {
+            risky();
+        } catch (Exception e) {
+            InternalLog.logInternal("boom", e);
+        }
+    }
+
+    void risky() throws Exception {}
+}

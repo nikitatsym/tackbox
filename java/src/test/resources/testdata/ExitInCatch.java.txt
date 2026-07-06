@@ -1,0 +1,50 @@
+import org.slf4j.Logger;
+
+// JV005 (port of ERC003): System.exit inside a catch must be preceded by a
+// capture or a print of the caught, or carry a marker; otherwise the process
+// dies silently on the swallowed error. Ordering matters - a capture after the
+// exit does not cover it (that path already left the process).
+class ExitInCatch {
+    private final Logger log;
+
+    ExitInCatch(Logger log) {
+        this.log = log;
+    }
+
+    void silentExit() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            System.exit(1); // want "JV005"
+        }
+    }
+
+    void capturedThenExit() {
+        try {
+            risky();
+        } catch (Exception e) {
+            log.error("fatal", e);
+            System.exit(1);
+        }
+    }
+
+    void exitBeforeCapture() {
+        try {
+            risky();
+        } catch (Exception e) {
+            System.exit(1); // want "JV005"
+            log.error("late", e);
+        }
+    }
+
+    void markerSuppressesExit() {
+        try {
+            risky();
+        } catch (Exception e) {
+            // no-report: fail-fast shutdown, the launcher surfaces the error
+            System.exit(1);
+        }
+    }
+
+    void risky() throws Exception {}
+}
