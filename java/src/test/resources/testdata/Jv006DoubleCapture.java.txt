@@ -1,0 +1,86 @@
+import org.slf4j.Logger;
+
+// JV006 (double capture, port of ERC005): a catch must not both report the caught
+// (a tier-1 / tier-2 capture) and rethrow it. The upstream handler reports the
+// propagated exception a second time, inflating the error backend. Pick one:
+// report and swallow, or propagate without reporting. A stringified rethrow still
+// reaches upstream carrying the failure, so it is still a double.
+class Jv006DoubleCapture {
+    private final Logger log;
+
+    Jv006DoubleCapture(Logger log) {
+        this.log = log;
+    }
+
+    void reportThenRethrow() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV006"
+            log.error("failed", e);
+            throw e;
+        }
+    }
+
+    void reportThenWrap() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV006"
+            log.error("failed", e);
+            throw new RuntimeException(e);
+        }
+    }
+
+    // Adversarial: the rethrow stringifies the caught, but a fresh exception still
+    // reaches upstream (JV006) and the object chain is broken (JV002) - both fire.
+    void reportThenStringifiedRethrow() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV006"
+            log.error("failed", e);
+            throw new RuntimeException(e.getMessage()); // want "JV002"
+        }
+    }
+
+    // Report only, no rethrow: a single capture, clean.
+    void reportOnly() {
+        try {
+            risky();
+        } catch (Exception e) {
+            log.error("failed", e);
+        }
+    }
+
+    // Propagate only, no capture: clean.
+    void wrapOnly() {
+        try {
+            risky();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    // The rethrow is a fresh exception that does not carry the caught: not a
+    // double (JV006 needs the caught to propagate), though it drops the cause
+    // (JV002). JV006 must stay silent here.
+    void reportThenUnrelatedThrow() {
+        try {
+            risky();
+        } catch (Exception e) {
+            log.error("failed", e);
+            throw new IllegalStateException("unrelated"); // want "JV002"
+        }
+    }
+
+    // A print is not a tier-1 / tier-2 capture, so print + rethrow is not a
+    // double - the error backend never sees it twice.
+    void printThenRethrow() {
+        try {
+            risky();
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw e;
+        }
+    }
+
+    void risky() throws Exception {}
+}

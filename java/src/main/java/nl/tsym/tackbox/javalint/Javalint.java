@@ -8,9 +8,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import nl.tsym.tackbox.javalint.rules.ChainRule;
+import nl.tsym.tackbox.javalint.rules.DoubleCaptureRule;
 import nl.tsym.tackbox.javalint.rules.ExitRule;
 import nl.tsym.tackbox.javalint.rules.SwallowRule;
 import nl.tsym.tackbox.javalint.rules.ThrowableRule;
+import nl.tsym.tackbox.javalint.rules.UselessCatchRule;
 
 /** javalint CLI. Emits erclint-shaped JSON on stdout and exits 0 even with
  *  findings - the python CLI aggregates findings into the failing exit, exactly
@@ -54,7 +57,7 @@ public final class Javalint {
     }
 
     /** Parse `content` under `name` and run the rule set. A parse failure is a
-     *  hard, loud error (no silent skip); compile-broken handling is F8c. */
+     *  hard, loud error (no silent skip); compile-broken handling is F8d. */
     public static List<Finding> analyze(String name, String content, List<Reporters.Resolved> reporters) {
         ParseResult<CompilationUnit> result = new JavaParser().parse(content);
         CompilationUnit cu = result.getResult().orElseThrow(
@@ -64,8 +67,11 @@ public final class Javalint {
         Recognition rec = new Recognition(reporters);
         List<Finding> out = new ArrayList<>();
         out.addAll(new SwallowRule(rec).check(name, cu, markers));
+        out.addAll(new ChainRule().check(name, cu));
         out.addAll(new ThrowableRule().check(name, cu, markers));
+        out.addAll(new UselessCatchRule().check(name, cu));
         out.addAll(new ExitRule(rec).check(name, cu, markers));
+        out.addAll(new DoubleCaptureRule(rec).check(name, cu));
         return out;
     }
 

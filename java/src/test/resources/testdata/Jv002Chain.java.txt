@@ -1,0 +1,92 @@
+// JV002 (chain, port of the F5 object-flow principle): a new exception thrown in
+// a catch must carry the caught as its cause - as a constructor argument, or by
+// attaching it with initCause / addSuppressed. The chain breaks, and JV002 fires,
+// only when the caught reaches the new exception solely through a string
+// (getMessage / toString / string concatenation) or does not reach it at all.
+// JV001 is orthogonal: any throw makes the catch non-silent, so these are clean
+// for JV001.
+class Jv002Chain {
+    void droppedCause() {
+        try {
+            risky();
+        } catch (Exception e) {
+            throw new RuntimeException("boom"); // want "JV002"
+        }
+    }
+
+    void causeAsSoleArg() {
+        try {
+            risky();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    void causeAsSecondArg() {
+        try {
+            risky();
+        } catch (Exception e) {
+            throw new IllegalStateException("boom", e);
+        }
+    }
+
+    void stringifiedMessage() {
+        try {
+            risky();
+        } catch (Exception e) {
+            throw new RuntimeException(e.getMessage()); // want "JV002"
+        }
+    }
+
+    // Adversarial: the caught is textually present but only through string
+    // concatenation, so the constructed cause is null and the chain is lost.
+    void stringConcatBreaks() {
+        try {
+            risky();
+        } catch (Exception e) {
+            throw new IllegalStateException("ctx: " + e); // want "JV002"
+        }
+    }
+
+    // Stringified in the message yet still carried as the object cause: clean.
+    void stringifiedButCarried() {
+        try {
+            risky();
+        } catch (Exception e) {
+            throw new IllegalStateException("ctx: " + e.getMessage(), e);
+        }
+    }
+
+    void twoStepInitCause() {
+        try {
+            risky();
+        } catch (Exception e) {
+            RuntimeException wrapped = new RuntimeException("boom");
+            wrapped.initCause(e);
+            throw wrapped;
+        }
+    }
+
+    void twoStepAddSuppressed() {
+        try {
+            risky();
+        } catch (Exception e) {
+            RuntimeException wrapped = new RuntimeException("boom");
+            wrapped.addSuppressed(e);
+            throw wrapped;
+        }
+    }
+
+    // Two-step that drops the cause: the local is a bare new exception and
+    // nothing attaches the caught before it is thrown.
+    void twoStepDropsCause() {
+        try {
+            risky();
+        } catch (Exception e) {
+            RuntimeException wrapped = new RuntimeException("boom");
+            throw wrapped; // want "JV002"
+        }
+    }
+
+    void risky() throws Exception {}
+}
