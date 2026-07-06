@@ -44,8 +44,11 @@ func Resolve(spec string) ([]astutil.DeclaredReporter, error) {
 }
 
 func loadFile(file string) (*packages.Package, error) {
+	// Source-mode load: export-data mode (NeedTypes alone) only surfaces
+	// unexported top-level funcs the compiler happened to inline into an
+	// exported caller, so an unreferenced or package-main sink is invisible.
 	cfg := &packages.Config{
-		Mode: packages.NeedName | packages.NeedTypes,
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
 		Dir:  filepath.Dir(file),
 	}
 	pkgs, err := packages.Load(cfg, "file="+file)

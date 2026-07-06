@@ -33,6 +33,22 @@ func Handler() error {
 }
 """
 
+# package main: myReport is unexported and reachable only from main(), never
+# from an exported/inlinable path - export-data loading exposes it as absent.
+GO_DECLARED_MAIN = """package main
+
+import "errors"
+
+func myReport(err error) {}
+
+func main() {
+\terr := errors.New("x")
+\tif err != nil {
+\t\tmyReport(err)
+\t}
+}
+"""
+
 JS_DECLARED = """export function myReport(m, e) {}
 
 try {
@@ -89,6 +105,17 @@ def test_go_declaration_recognized(tmp_path):
     _init(tmp_path)
     r = _lint(tmp_path)
     assert r.returncode == 0, f"declared go sink should make the err-branch clean:\n{r.stdout}\n{r.stderr}"
+
+
+def test_go_declaration_recognized_unexported_main(tmp_path):
+    (tmp_path / "go.mod").write_text(GO_MOD)
+    (tmp_path / "main.go").write_text(GO_DECLARED_MAIN)
+    (tmp_path / ".tackbox-reporters").write_text("main.go#myReport: local go sink\n")
+    _init(tmp_path)
+    r = _lint(tmp_path)
+    assert r.returncode == 0, (
+        f"unexported declared go sink in package main should make the err-branch clean:\n{r.stdout}\n{r.stderr}"
+    )
 
 
 def test_go_dead_symbol_exit_2(tmp_path):
