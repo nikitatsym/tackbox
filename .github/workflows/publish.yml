@@ -138,6 +138,11 @@ jobs:
           name: wheels-${{ matrix.platform }}
           path: dist
 
+      # doctor's java-toolchain check needs a JDK >= 17 wherever doctor runs.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
       - name: Install thin wheel; stage engines payload from the built fat wheel
         shell: bash
         run: |
