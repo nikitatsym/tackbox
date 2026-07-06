@@ -25,15 +25,30 @@ public final class Javalint {
     private Javalint() {}
 
     public static void main(String[] args) throws IOException {
+        System.exit(run(args));
+    }
+
+    /** Parse args, resolve reporters, analyze the files, print erclint-shaped
+     *  JSON to stdout, and return the process exit code: 0 normally (even with
+     *  findings - the python CLI promotes those), 2 on a reporter-resolution
+     *  error (malformed value or dead declared symbol), matching erclint. */
+    static int run(String[] args) throws IOException {
         List<String> files = new ArrayList<>();
         List<Reporters.Resolved> reporters = List.of();
         for (String arg : args) {
             if (arg.equals("--version") || arg.equals("-version")) {
                 System.out.println("javalint " + VERSION);
-                return;
+                return 0;
             }
             if (arg.startsWith("--reporters=")) {
-                reporters = resolveReporters(arg.substring("--reporters=".length()));
+                try {
+                    reporters = resolveReporters(arg.substring("--reporters=".length()));
+                } catch (Reporters.ReportersException e) {
+                    // no-report: CLI boundary: a malformed or dead reporter declaration
+                    // surfaces as one stderr line + exit 2; a stack trace here is the bug
+                    System.err.println("javalint: " + e.getMessage());
+                    return 2;
+                }
                 continue;
             }
             if (arg.startsWith("--")) {
@@ -46,6 +61,7 @@ public final class Javalint {
             findings.addAll(analyze(Path.of(f), reporters));
         }
         System.out.print(JsonWriter.write(findings));
+        return 0;
     }
 
     public static List<Finding> analyze(Path path, List<Reporters.Resolved> reporters) throws IOException {

@@ -115,11 +115,16 @@ public final class Recognition {
 
     /** The (package, Class) a call's qualifier denotes, resolved source-only.
      *  A variable receiver resolves through its declared type; a bare or
-     *  fully-qualified type qualifier resolves directly. Empty when the origin
-     *  cannot be established (an expression receiver, an unqualified call, or a
-     *  same-file / wildcard-only qualifier) - fail closed. */
+     *  fully-qualified type qualifier resolves directly; an unqualified call
+     *  resolves to the enclosing type or an explicit static import (see
+     *  unqualifiedOrigin). Empty when the origin cannot be established (an
+     *  expression receiver, or a same-file / wildcard-only qualifier) - fail
+     *  closed. */
     private Optional<Origin> callOrigin(CompilationUnit cu, MethodCallExpr call) {
         Expression scope = call.getScope().orElse(null);
+        if (scope == null) {
+            return unqualifiedOrigin(cu, call);
+        }
         if (scope instanceof NameExpr ne) {
             Optional<Type> varType = declaredTypeOf(ne.getNameAsString(), call);
             if (varType.isPresent()) {
@@ -133,6 +138,43 @@ public final class Recognition {
                 return declaredTypeOf(fa.getNameAsString(), call).flatMap(t -> typeOrigin(cu, t));
             }
             return dottedQualifierOrigin(cu, fa);
+        }
+        return Optional.empty();
+    }
+
+    /** An unqualified call `m(...)`: resolved to a method the enclosing type
+     *  declares (implicit this, origin = this file's package + that type), which
+     *  shadows any import; otherwise to the owner of an explicit
+     *  `import static pkg.Class.m`. A wildcard static import cannot name the
+     *  owner source-only, so it fails closed - as the wildcard type import does. */
+    private Optional<Origin> unqualifiedOrigin(CompilationUnit cu, MethodCallExpr call) {
+        String m = call.getNameAsString();
+        Optional<Origin> enclosing = enclosingTypeOrigin(cu, call, m);
+        return enclosing.isPresent() ? enclosing : staticImportOrigin(cu, m);
+    }
+
+    /** The nearest enclosing type that declares a method named `m`, as (this
+     *  file's package, that type's name). Empty when no enclosing type does. */
+    private static Optional<Origin> enclosingTypeOrigin(CompilationUnit cu, Node use, String m) {
+        for (Node cur = use; cur != null; cur = cur.getParentNode().orElse(null)) {
+            if (cur instanceof TypeDeclaration<?> td
+                    && td.getMethods().stream().anyMatch(md -> md.getNameAsString().equals(m))) {
+                String pkg = cu.getPackageDeclaration().map(pd -> pd.getNameAsString()).orElse("");
+                return Optional.of(new Origin(pkg, td.getNameAsString()));
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** The (package, Class) owner of an explicit `import static pkg.Class.m`, or
+     *  empty when no such import names `m` (wildcard static imports resolve no
+     *  owner source-only). Static-shaped, so it is a tier-2 candidate only. */
+    private static Optional<Origin> staticImportOrigin(CompilationUnit cu, String m) {
+        for (ImportDeclaration imp : cu.getImports()) {
+            if (imp.isStatic() && !imp.isAsterisk() && lastSegment(imp.getNameAsString()).equals(m)) {
+                String pkgClass = packageBefore(imp.getNameAsString());
+                return Optional.of(new Origin(packageBefore(pkgClass), lastSegment(pkgClass), false));
+            }
         }
         return Optional.empty();
     }
