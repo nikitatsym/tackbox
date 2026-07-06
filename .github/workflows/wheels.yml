@@ -42,7 +42,7 @@ jobs:
         with:
           node-version: '22'
 
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v8.3.0
 
       - name: Build wheels for ${{ matrix.platform }}
         shell: bash
