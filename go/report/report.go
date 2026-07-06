@@ -6,11 +6,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"runtime/debug"
+	"sort"
 	"sync"
 	"time"
 
@@ -35,6 +37,10 @@ type Options struct {
 	VerifyTimeout time.Duration // default 3s
 	// SilentMissing suppresses the WARN log on empty DSN.
 	SilentMissing bool
+	// Logger overrides the local log sink. Nil uses a JSON handler on
+	// stderr. Every capture logs here before it ships, so log-only mode
+	// (empty DSN) keeps the full msg + tags context.
+	Logger *slog.Logger
 }
 
 var (
@@ -43,12 +49,36 @@ var (
 	rateWindow   = 60 * time.Second
 	flushTimeout = 2 * time.Second
 	lastSent     sync.Map
+	logger       = newJSONLogger(os.Stderr)
 )
 
+// levelFatal sits above slog's ERROR; renameFatalLevel prints it FATAL.
+const levelFatal = slog.LevelError + 4
+
+func newJSONLogger(w io.Writer) *slog.Logger {
+	return slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{
+		Level:       slog.LevelDebug,
+		ReplaceAttr: renameFatalLevel,
+	}))
+}
+
+func renameFatalLevel(_ []string, a slog.Attr) slog.Attr {
+	if a.Key == slog.LevelKey {
+		if lv, ok := a.Value.Any().(slog.Level); ok && lv == levelFatal {
+			return slog.String(slog.LevelKey, "FATAL")
+		}
+	}
+	return a
+}
+
 func Init(opts Options) error {
+	if opts.Logger != nil {
+		logger = opts.Logger
+	}
 	if opts.DSN == "" {
 		if !opts.SilentMissing {
-			log.Printf("WARN report: DSN unset, capture disabled (set SENTRY_DSN or GLITCHTIP_DSN to enable)")
+			logger.Warn("report: DSN unset, capture disabled",
+				slog.String("hint", "set SENTRY_DSN or GLITCHTIP_DSN"))
 		}
 		return nil
 	}
@@ -81,10 +111,10 @@ func Init(opts Options) error {
 		if err := Verify(timeout); err != nil {
 			return fmt.Errorf("report.Init verify: %w", err)
 		}
-		log.Printf("report: capture verified, DSN=%s", maskDSN(opts.DSN))
+		logger.Info("report: capture verified", slog.String("dsn", maskDSN(opts.DSN)))
 		return nil
 	}
-	log.Printf("report: capture enabled (unverified), DSN=%s", maskDSN(opts.DSN))
+	logger.Info("report: capture enabled, unverified", slog.String("dsn", maskDSN(opts.DSN)))
 	return nil
 }
 
@@ -119,7 +149,7 @@ func Flush(timeout ...time.Duration) {
 }
 
 func SentryErr(ctx context.Context, msg string, err error, tags map[string]string, dedupKey string) {
-	log.Printf("ERROR %s: %v", msg, err)
+	logAt(ctx, slog.LevelError, msg, err, tags)
 	if !ready || shouldDrop(dedupKey) {
 		return
 	}
@@ -127,7 +157,7 @@ func SentryErr(ctx context.Context, msg string, err error, tags map[string]strin
 }
 
 func Warn(ctx context.Context, msg string, err error, tags map[string]string, dedupKey string) {
-	log.Printf("WARN %s: %v", msg, err)
+	logAt(ctx, slog.LevelWarn, msg, err, tags)
 	if !ready || shouldDrop(dedupKey) {
 		return
 	}
@@ -135,7 +165,9 @@ func Warn(ctx context.Context, msg string, err error, tags map[string]string, de
 }
 
 func Panic(name string, recovered any) {
-	log.Printf("FATAL panic in %s: %v\n%s", name, recovered, debug.Stack())
+	logger.LogAttrs(context.Background(), levelFatal, "panic in "+name,
+		slog.Any("recovered", recovered),
+		slog.String("stack", string(debug.Stack())))
 	if !ready {
 		return
 	}
@@ -202,6 +234,33 @@ func DSNFromEnv() string {
 		return v
 	}
 	return os.Getenv("GLITCHTIP_DSN")
+}
+
+// logAt emits one structured line to the local sink. dedupKey is left
+// out on purpose: it routes the Sentry event, it is not diagnostics.
+func logAt(ctx context.Context, level slog.Level, msg string, err error, tags map[string]string) {
+	attrs := make([]slog.Attr, 0, 2)
+	// no-report: this is the local log sink; err is emitted here, not handled
+	if err != nil {
+		attrs = append(attrs, slog.String("err", err.Error()))
+	}
+	if len(tags) > 0 {
+		attrs = append(attrs, tagsGroup(tags))
+	}
+	logger.LogAttrs(ctx, level, msg, attrs...)
+}
+
+func tagsGroup(tags map[string]string) slog.Attr {
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	attrs := make([]any, 0, len(keys))
+	for _, k := range keys {
+		attrs = append(attrs, slog.String(k, tags[k]))
+	}
+	return slog.Group("tags", attrs...)
 }
 
 func capture(_ context.Context, msg string, err error, tags map[string]string, dedupKey string, level sentry.Level) {
