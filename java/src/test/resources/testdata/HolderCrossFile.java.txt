@@ -1,0 +1,13 @@
+// Fail closed: Holder is declared in another file, not visible here, so
+// Holder.LOG's type cannot be resolved - no capture.
+class HolderCrossFile {
+    void m() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            Holder.LOG.error("boom", e);
+        }
+    }
+
+    void risky() throws Exception {}
+}

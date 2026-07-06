@@ -1,0 +1,20 @@
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+// Rule 2: Holder is declared in this file; LOG's declared type resolves via
+// import to org.slf4j.Logger, so Holder.LOG.error(...) is a tier-1 capture.
+class HolderStaticLogger {
+    void m() {
+        try {
+            risky();
+        } catch (Exception e) {
+            Holder.LOG.error("boom", e);
+        }
+    }
+
+    void risky() throws Exception {}
+}
+
+class Holder {
+    static final Logger LOG = LoggerFactory.getLogger(Holder.class);
+}

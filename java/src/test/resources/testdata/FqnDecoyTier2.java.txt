@@ -1,0 +1,21 @@
+// reporters: FqnDecoyReporterDecl.java.txt#Reporter.report
+package leak.own;
+
+// Adversarial: this file is itself leak.own and declares its own Reporter -
+// the same-file-reject pin must fire before matching the declared tier-2
+// target, even though the FQN call textually matches it.
+class Reporter {
+    static void report(Throwable cause) {}
+}
+
+class FqnDecoyTier2 {
+    void m() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            leak.own.Reporter.report(e);
+        }
+    }
+
+    void risky() throws Exception {}
+}

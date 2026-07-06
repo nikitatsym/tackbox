@@ -1,0 +1,16 @@
+// reporters: FqnDecoyReporterDecl.java.txt#Reporter.report
+package com.caller;
+
+// Positive: no in-file decoy, so the FQN call matches the declared tier-2
+// target (leak.own.Reporter.report) - clean.
+class FqnTier2Positive {
+    void m() {
+        try {
+            risky();
+        } catch (Exception e) {
+            leak.own.Reporter.report(e);
+        }
+    }
+
+    void risky() throws Exception {}
+}
