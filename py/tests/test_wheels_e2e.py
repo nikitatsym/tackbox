@@ -122,6 +122,17 @@ def test_thin_and_fat_wheels_built(wheels):
     assert wheels["thin"].name.endswith(".whl")
 
 
+def test_build_restores_source_tree(wheels):
+    """Leftover fat artifacts in py/tackbox would ride into every dev
+    `uv run --directory py` rebuild - gigabytes of uv cache over a day."""
+    pkg = REPO / "py" / "tackbox"
+    leftover_bins = list((pkg / "bin").glob("*")) if (pkg / "bin").exists() else []
+    assert leftover_bins == [], f"bin not restored: {leftover_bins}"
+    assert not (pkg / "third_party").exists(), "third_party not restored"
+    assert not (pkg / "rules").exists(), "materialized rules not restored"
+    assert not (pkg / "engines.json").exists(), "engines.json not restored"
+
+
 def test_thin_wheel_carries_javalint_jar(wheels):
     """F8a: the thin wheel ships the platform-independent javalint.jar and pins
     it in engines.json, so doctor checksums it and F8d can dispatch it. A

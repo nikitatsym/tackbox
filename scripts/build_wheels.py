@@ -475,6 +475,16 @@ def build_wheel(project_dir: Path, plat_tag: str, outdir: Path, env_extras: dict
     return wheels[-1]
 
 
+def restore_thin_tree() -> None:
+    """Drop everything prepare_thin materialized into the source tree: dev
+    `uv run --directory py` rebuilds the local package, and leftover engine
+    binaries would ride into every cached build (gigabytes of uv cache)."""
+    pkg = PY_DIR / "tackbox"
+    for sub in ("bin", "rules", "third_party"):
+        wipe_dir(pkg / sub)
+    (pkg / "engines.json").unlink(missing_ok=True)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--version", default=os.environ.get("TACKBOX_VERSION", "0.0.0"),
@@ -524,6 +534,8 @@ def main() -> int:
     )
     print(f"thin wheel: {thin_wheel.name}", file=sys.stderr)
     verify_wheel_payload(thin_wheel, PY_DIR / "tackbox", "tackbox")
+
+    restore_thin_tree()
 
     print(json.dumps({
         "platform": plat_key,
