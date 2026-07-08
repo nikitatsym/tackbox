@@ -31,8 +31,10 @@ import java.util.Optional;
  *  source-only; it never loads the consumer's compiled classpath):
  *
  *  - tier-1: error/warn on a receiver whose declared type resolves to
- *    org.slf4j.Logger. The gate is the declared type's origin (explicit import
- *    or fully-qualified name), never the receiver name or the method-owner name.
+ *    org.slf4j.Logger, or log at ERROR/WARNING on one resolving to
+ *    java.lang.System.Logger (JEP 264). The gate is the declared type's origin
+ *    (explicit import or fully-qualified name), never the receiver name or the
+ *    method-owner name.
  *  - tier-2: a call whose (package, Class, method) matches a `.tackbox-reporters`
  *    declaration. The declaration's package comes from parsing the declared file;
  *    the call-site's comes from resolving the qualifier through this file's
@@ -48,6 +50,13 @@ public final class Recognition {
 
     private static final String SLF4J_PACKAGE = "org.slf4j";
     private static final String SLF4J_LOGGER = "Logger";
+    // Origins of the nested JDK types: for a nested type the "package" slot of
+    // an Origin carries the canonical prefix (the enclosing class chain), the
+    // way import parsing naturally splits `java.lang.System.Logger`.
+    private static final String SYSTEM_LOGGER_PREFIX = "java.lang.System";
+    private static final String SYSTEM_LOGGER = "Logger";
+    private static final String SYSTEM_LOGGER_LEVEL_PREFIX = "java.lang.System.Logger";
+    private static final String SYSTEM_LOGGER_LEVEL = "Level";
 
     /** A resolved call target: the package and class its qualifier denotes.
      *  tier1Eligible is false only for a bare FQN-shaped dotted qualifier
@@ -70,6 +79,7 @@ public final class Recognition {
     public boolean capturesOrPrints(CompilationUnit cu, MethodCallExpr call, String caught) {
         return isPrintingTerminal(call, caught)
                 || slf4jCaptures(cu, call, caught)
+                || systemLoggerCaptures(cu, call, caught)
                 || declaredCaptures(cu, call, caught);
     }
 
@@ -78,7 +88,9 @@ public final class Recognition {
      *  declared reporter), which an upstream handler would count a second time.
      *  A stderr print is visible but not backend-reported, so it is not here. */
     public boolean captures(CompilationUnit cu, MethodCallExpr call, String caught) {
-        return slf4jCaptures(cu, call, caught) || declaredCaptures(cu, call, caught);
+        return slf4jCaptures(cu, call, caught)
+                || systemLoggerCaptures(cu, call, caught)
+                || declaredCaptures(cu, call, caught);
     }
 
     // --- tier-1: slf4j ------------------------------------------------------
@@ -91,6 +103,80 @@ public final class Recognition {
         Origin o = callOrigin(cu, call).orElse(null);
         return o != null && o.tier1Eligible()
                 && o.packageName().equals(SLF4J_PACKAGE) && o.className().equals(SLF4J_LOGGER);
+    }
+
+    // --- tier-1: System.Logger (JEP 264) ------------------------------------
+
+    /** The JDK's own facade. System.Logger has only log(...) - severity travels
+     *  as the first argument, not the method name - so the mirror of slf4j's
+     *  error/warn-only gate is a resolved Level constant: ERROR/WARNING report,
+     *  anything else (or a level the source can't prove constant) fails closed. */
+    private boolean systemLoggerCaptures(CompilationUnit cu, MethodCallExpr call, String caught) {
+        if (!call.getNameAsString().equals("log") || !argFlows(call, caught)
+                || call.getArguments().isEmpty() || !isErrorOrWarning(cu, call.getArgument(0))) {
+            return false;
+        }
+        Origin o = callOrigin(cu, call).orElse(null);
+        return o != null && o.tier1Eligible() && isSystemLoggerOrigin(cu, o);
+    }
+
+    /** The origin denotes java.lang.System.Logger: via its canonical prefix
+     *  (explicit import / FQN-written type), or as the scoped spelling
+     *  `System.Logger` when the simple name System still binds to java.lang. */
+    private static boolean isSystemLoggerOrigin(CompilationUnit cu, Origin o) {
+        return o.className().equals(SYSTEM_LOGGER)
+                && (o.packageName().equals(SYSTEM_LOGGER_PREFIX)
+                        || (o.packageName().equals("System") && systemIsJdk(cu)));
+    }
+
+    /** The simple name System binds to java.lang in this file: not declared
+     *  here and not rebound by an explicit type import. (The same trust
+     *  isSystemErr extends to the bare System.err spelling.) */
+    private static boolean systemIsJdk(CompilationUnit cu) {
+        if (declaresType(cu, "System")) {
+            return false;
+        }
+        for (ImportDeclaration imp : cu.getImports()) {
+            if (!imp.isAsterisk() && !imp.isStatic()
+                    && lastSegment(imp.getNameAsString()).equals("System")) {
+                return imp.getNameAsString().equals(SYSTEM_LOGGER_PREFIX);
+            }
+        }
+        return true;
+    }
+
+    /** The expression is the ERROR or WARNING constant of
+     *  java.lang.System.Logger.Level, resolved source-only through the same
+     *  origin machinery as receivers: `Level.X` via an explicit import of the
+     *  nested Level, `Logger.Level.X` via one of Logger, `System.Logger.Level.X`
+     *  via the java.lang binding, or the full canonical name. A variable or a
+     *  bare static-imported name fails closed. */
+    private static boolean isErrorOrWarning(CompilationUnit cu, Expression level) {
+        if (!(level instanceof FieldAccessExpr fa)) {
+            return false;
+        }
+        List<String> segs = dottedSegments(fa).orElse(null);
+        if (segs == null || segs.size() < 2) {
+            return false;
+        }
+        String constant = segs.get(segs.size() - 1);
+        if (!constant.equals("ERROR") && !constant.equals("WARNING")) {
+            return false;
+        }
+        if (!segs.get(segs.size() - 2).equals(SYSTEM_LOGGER_LEVEL)) {
+            return false;
+        }
+        List<String> owner = segs.subList(0, segs.size() - 2);
+        return switch (owner.size()) {
+            case 0 -> packageOfSimple(cu, SYSTEM_LOGGER_LEVEL)
+                    .filter(SYSTEM_LOGGER_LEVEL_PREFIX::equals).isPresent();
+            case 1 -> owner.get(0).equals(SYSTEM_LOGGER)
+                    && packageOfSimple(cu, SYSTEM_LOGGER)
+                            .filter(SYSTEM_LOGGER_PREFIX::equals).isPresent();
+            case 2 -> owner.equals(List.of("System", SYSTEM_LOGGER)) && systemIsJdk(cu);
+            case 4 -> owner.equals(List.of("java", "lang", "System", SYSTEM_LOGGER));
+            default -> false;
+        };
     }
 
     // --- tier-2: declared reporters -----------------------------------------

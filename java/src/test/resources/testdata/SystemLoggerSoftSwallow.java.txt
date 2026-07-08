@@ -1,0 +1,47 @@
+import static java.lang.System.Logger.Level.ERROR;
+
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
+
+// Only ERROR and WARNING report - the mirror of slf4j's error/warn-only
+// tier-1: a DEBUG/INFO line plus swallow is a soft swallow. A level the
+// source can't prove constant (a variable, a bare static-imported name)
+// fails closed.
+class SystemLoggerSoftSwallow {
+    private static final Logger log = System.getLogger("x");
+
+    void debugSwallows() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            log.log(Level.DEBUG, "failed", e);
+        }
+    }
+
+    void infoSwallows() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            log.log(Level.INFO, "failed", e);
+        }
+    }
+
+    void variableLevelFailsClosed() {
+        Level lvl = Level.ERROR;
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            log.log(lvl, "failed", e);
+        }
+    }
+
+    void bareStaticImportFailsClosed() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            log.log(ERROR, "failed", e);
+        }
+    }
+
+    void risky() throws Exception {}
+}

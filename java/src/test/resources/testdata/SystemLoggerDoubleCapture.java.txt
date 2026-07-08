@@ -1,0 +1,19 @@
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
+
+// System.Logger is a backend capture exactly like slf4j: reporting the caught
+// and rethrowing it double-counts upstream (JV006).
+class SystemLoggerDoubleCapture {
+    private static final Logger log = System.getLogger("x");
+
+    void reportAndRethrow() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV006"
+            log.log(Level.ERROR, "failed", e);
+            throw new RuntimeException("failed", e);
+        }
+    }
+
+    void risky() throws Exception {}
+}
