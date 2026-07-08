@@ -1,0 +1,16 @@
+// java.lang is imported implicitly, so System.Logger written without any
+// import is the same JDK type - the scoped-type spelling counts as tier-1
+// exactly like the imported one, for the receiver and the Level alike.
+class SystemLoggerScopedType {
+    private static final System.Logger log = System.getLogger("x");
+
+    void errorReports() {
+        try {
+            risky();
+        } catch (Exception e) {
+            log.log(System.Logger.Level.ERROR, "failed", e);
+        }
+    }
+
+    void risky() throws Exception {}
+}

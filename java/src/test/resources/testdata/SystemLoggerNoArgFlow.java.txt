@@ -1,0 +1,18 @@
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
+
+// Arg-flow is required, as for slf4j: ERROR on the real JDK logger still
+// swallows when the caught object never reaches the arguments.
+class SystemLoggerNoArgFlow {
+    private static final Logger log = System.getLogger("x");
+
+    void errorWithoutTheCaught() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            log.log(Level.ERROR, "failed, but the error object is dropped");
+        }
+    }
+
+    void risky() throws Exception {}
+}

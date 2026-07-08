@@ -1,0 +1,17 @@
+import com.evil.System;
+
+// An explicit import rebinding the simple name System must fail closed: the
+// scoped spelling counts only when System is the implicit java.lang binding.
+class SystemLoggerImportDecoy {
+    private static final System.Logger log = System.getLogger("x");
+
+    void decoyDoesNotReport() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            log.log(System.Logger.Level.ERROR, "failed", e);
+        }
+    }
+
+    void risky() throws Exception {}
+}

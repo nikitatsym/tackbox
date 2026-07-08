@@ -1,0 +1,28 @@
+// A type named System declared in this file shadows java.lang.System, so the
+// scoped spelling must fail closed: an in-file decoy cannot impersonate the
+// JDK facade.
+class SystemLoggerDecoy {
+    private static final System.Logger log = System.getLogger("x");
+
+    void decoyDoesNotReport() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            log.log(System.Logger.Level.ERROR, "failed", e);
+        }
+    }
+
+    void risky() throws Exception {}
+
+    static class System {
+        interface Logger {
+            void log(Level lvl, String msg, Object... rest);
+        }
+
+        enum Level { ERROR }
+
+        static Logger getLogger(String name) {
+            return null;
+        }
+    }
+}

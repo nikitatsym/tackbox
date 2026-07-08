@@ -1,0 +1,36 @@
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
+
+// The JDK's own logging facade (JEP 264) is tier-1 like slf4j: log() on a
+// receiver whose declared type resolves to java.lang.System.Logger, carrying
+// the caught, at ERROR or WARNING severity.
+class SystemLoggerCapture {
+    private static final Logger log = System.getLogger("x");
+
+    void errorReports() {
+        try {
+            risky();
+        } catch (Exception e) {
+            log.log(Level.ERROR, "failed", e);
+        }
+    }
+
+    void warningReports() {
+        try {
+            risky();
+        } catch (Exception e) {
+            log.log(Level.WARNING, "failed: " + e, e);
+        }
+    }
+
+    void reportCoversTheExit() {
+        try {
+            risky();
+        } catch (Exception e) {
+            log.log(Level.ERROR, "fatal", e);
+            System.exit(1);
+        }
+    }
+
+    void risky() throws Exception {}
+}
