@@ -25,50 +25,62 @@ final class Flow {
 
     private Flow() {}
 
+    /** A double capture found on one execution path: where the caught was
+     *  reported and where it then rethrows. Null when no path does both. */
+    record Double(int reportLine, int rethrowLine) {}
+
     /** JV006: some execution path captures the caught and then reaches a throw
      *  that propagates it - report-then-rethrow on one path. Exclusive legs
      *  (a capture after a terminal guard's throw) do not pair. */
-    static boolean doubleCaptures(BlockStmt body, Predicate<MethodCallExpr> captures,
+    static Double doubleCapture(BlockStmt body, Predicate<MethodCallExpr> captures,
             Predicate<ThrowStmt> propagates) {
         DoubleScan scan = new DoubleScan(captures, propagates);
         scan.block(body, DoubleScan.LIVE);
-        return scan.hit;
+        return scan.found;
     }
 
     /** JV001: some execution path terminates (return, break, continue, or the
-     *  body's end) without a report on the way and without marker cover. A
-     *  throw is never a silent termination. Marker cover is per-statement: a
+     *  body's end) without a report on the way and without marker cover; the
+     *  result is the line that path ends on, or -1 when every path is covered.
+     *  A throw is never a silent termination. Marker cover is per-statement: a
      *  `// no-report:` block above a statement covers every path executing it,
      *  which subsumes the whole-catch placement above the first statement. */
-    static boolean hasSilentPath(BlockStmt body, Predicate<MethodCallExpr> reports,
+    static int silentPathEnd(BlockStmt body, Predicate<MethodCallExpr> reports,
             MarkerIndex markers) {
         SilentScan scan = new SilentScan(reports, markers);
         SilentScan.St out = scan.block(body, SilentScan.BARE);
-        return scan.hit || out.bare();
+        if (scan.hitLine >= 0) {
+            return scan.hitLine;
+        }
+        return out.bare() ? body.getEnd().orElseThrow().line : -1;
     }
 
-    /** JV006 walk. State: does a clean path reach here, does a captured one.
-     *  Captures inside opaque units and conditions count as may-have-run -
-     *  conservative toward flagging, the pre-path rule's direction. */
+    /** JV006 walk. State: does a clean path reach here, does a captured one
+     *  (and where its first capture ran). Captures inside opaque units and
+     *  conditions count as may-have-run - conservative toward flagging, the
+     *  pre-path rule's direction. */
     private static final class DoubleScan {
 
-        /** (clean path alive, captured path alive) packed as an enum lattice. */
-        private record St(boolean clean, boolean captured) {
+        /** (clean path alive, captured path alive); captureLine is the first
+         *  capture on a captured path, meaningful only when captured. */
+        private record St(boolean clean, boolean captured, int captureLine) {
             boolean dead() {
                 return !clean && !captured;
             }
 
             St or(St o) {
-                return new St(clean || o.clean, captured || o.captured);
+                int line = !captured ? o.captureLine
+                        : !o.captured ? captureLine : Math.min(captureLine, o.captureLine);
+                return new St(clean || o.clean, captured || o.captured, line);
             }
         }
 
-        static final St LIVE = new St(true, false);
-        private static final St DEAD = new St(false, false);
+        static final St LIVE = new St(true, false, -1);
+        private static final St DEAD = new St(false, false, -1);
 
         private final Predicate<MethodCallExpr> captures;
         private final Predicate<ThrowStmt> propagates;
-        boolean hit;
+        Double found;
 
         DoubleScan(Predicate<MethodCallExpr> captures, Predicate<ThrowStmt> propagates) {
             this.captures = captures;
@@ -84,7 +96,7 @@ final class Flow {
         }
 
         private St step(Statement st, St in) {
-            if (hit || in.dead()) {
+            if (found != null || in.dead()) {
                 return in;
             }
             if (st instanceof BlockStmt b) {
@@ -99,7 +111,7 @@ final class Flow {
             if (st instanceof ThrowStmt t) {
                 St c = mark(t.getExpression(), in);
                 if (c.captured() && propagates.test(t)) {
-                    hit = true;
+                    found = new Double(c.captureLine(), line(t));
                 }
                 return DEAD;
             }
@@ -119,7 +131,8 @@ final class Flow {
         /** An unconditionally-evaluated expression: a capture in it runs on
          *  every path through this point. */
         private St mark(Node expr, St in) {
-            return capturesIn(expr) ? new St(false, true) : in;
+            MethodCallExpr cap = firstCapture(expr);
+            return cap == null ? in : new St(false, true, captureLine(in, cap));
         }
 
         /** A loop / switch / nested try: order-blind inside, exactly the
@@ -127,15 +140,28 @@ final class Flow {
          *  alive); a propagating throw pairs with any capture at hand. */
         private St opaque(Statement st, St in) {
             Frame f = Frame.scan(st);
-            boolean cap = f.calls.stream().anyMatch(captures);
-            if ((cap || in.captured()) && f.throwsStmts.stream().anyMatch(propagates)) {
-                hit = true;
+            MethodCallExpr cap = f.calls.stream().filter(captures).findFirst().orElse(null);
+            if (found == null && (cap != null || in.captured())) {
+                f.throwsStmts.stream().filter(propagates).findFirst().ifPresent(t -> {
+                    int reported = cap != null && in.captureLine() < 0 ? line(cap) : in.captureLine();
+                    found = new Double(reported, line(t));
+                });
             }
-            return cap ? new St(in.clean(), true) : in;
+            return cap == null ? in : new St(in.clean(), true, captureLine(in, cap));
         }
 
-        private boolean capturesIn(Node n) {
-            return Frame.scan(n).calls.stream().anyMatch(captures);
+        /** Keep the earliest capture already on a captured path; a fresh
+         *  capture on a so-far-clean path contributes its own line. */
+        private static int captureLine(St in, MethodCallExpr cap) {
+            return in.captured() ? in.captureLine() : line(cap);
+        }
+
+        private MethodCallExpr firstCapture(Node n) {
+            return Frame.scan(n).calls.stream().filter(captures).findFirst().orElse(null);
+        }
+
+        private static int line(Node n) {
+            return n.getBegin().orElseThrow().line;
         }
     }
 
@@ -161,7 +187,7 @@ final class Flow {
 
         private final Predicate<MethodCallExpr> reports;
         private final MarkerIndex markers;
-        boolean hit;
+        int hitLine = -1;
 
         SilentScan(Predicate<MethodCallExpr> reports, MarkerIndex markers) {
             this.reports = reports;
@@ -180,7 +206,7 @@ final class Flow {
         }
 
         private St step(Statement st, St in) {
-            if (hit || in.dead()) {
+            if (hitLine >= 0 || in.dead()) {
                 return in;
             }
             if (st instanceof BlockStmt b) {
@@ -197,11 +223,11 @@ final class Flow {
             }
             if (st instanceof ReturnStmt r) {
                 St c = r.getExpression().map(e -> mark(e, in)).orElse(in);
-                terminate(c);
+                terminate(c, st);
                 return DEAD;
             }
             if (st instanceof BreakStmt || st instanceof ContinueStmt) {
-                terminate(in);
+                terminate(in, st);
                 return DEAD;
             }
             if (st instanceof ExpressionStmt e) {
@@ -213,9 +239,9 @@ final class Flow {
             return opaque(st, in);
         }
 
-        private void terminate(St s) {
-            if (s.bare()) {
-                hit = true;
+        private void terminate(St s, Statement at) {
+            if (s.bare() && hitLine < 0) {
+                hitLine = at.getBegin().orElseThrow().line;
             }
         }
 

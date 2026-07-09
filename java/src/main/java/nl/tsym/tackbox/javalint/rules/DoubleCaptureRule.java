@@ -38,13 +38,16 @@ public final class DoubleCaptureRule {
         List<Finding> out = new ArrayList<>();
         for (CatchClause cc : cu.findAll(CatchClause.class)) {
             String caught = cc.getParameter().getNameAsString();
-            if (!Flow.doubleCaptures(cc.getBody(),
+            Flow.Double d = Flow.doubleCapture(cc.getBody(),
                     call -> rec.captures(cu, call, caught),
-                    ts -> propagates(ts, caught))) {
+                    ts -> propagates(ts, caught));
+            if (d == null) {
                 continue;
             }
             Position p = cc.getBegin().orElseThrow();
-            out.add(new Finding(ID, file, p.line, p.column, p.line, p.column, MESSAGE));
+            out.add(new Finding(ID, file, p.line, p.column, p.line, p.column,
+                    MESSAGE + " (reported at line " + d.reportLine()
+                            + ", rethrown at line " + d.rethrowLine() + ")"));
         }
         return out;
     }

@@ -33,22 +33,25 @@ public final class SwallowRule {
     public List<Finding> check(String file, CompilationUnit cu, MarkerIndex markers) {
         List<Finding> out = new ArrayList<>();
         for (CatchClause cc : cu.findAll(CatchClause.class)) {
-            if (clean(cu, cc, markers)) {
+            int silent = silentEnd(cu, cc, markers);
+            if (silent < 0) {
                 continue;
             }
             Position p = cc.getBegin().orElseThrow();
             out.add(new Finding(ID, file, p.line, p.column, p.line, p.column,
-                    MESSAGE + Markers.deadNoReportHint(markers, cc)));
+                    MESSAGE + " (a silent path ends at line " + silent + ")"
+                            + Markers.deadNoReportHint(markers, cc)));
         }
         return out;
     }
 
-    private boolean clean(CompilationUnit cu, CatchClause cc, MarkerIndex markers) {
+    /** The line the first silent path ends on, or -1 for a clean catch. */
+    private int silentEnd(CompilationUnit cu, CatchClause cc, MarkerIndex markers) {
         if (Markers.noReportAbove(markers, cc)) {
-            return true;
+            return -1;
         }
         String caught = cc.getParameter().getNameAsString();
-        return !Flow.hasSilentPath(cc.getBody(),
+        return Flow.silentPathEnd(cc.getBody(),
                 call -> rec.capturesOrPrints(cu, call, caught), markers);
     }
 }

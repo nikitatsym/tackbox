@@ -43,7 +43,7 @@ class Jv006GuardShapes {
     void reportThenGuardThrow() {
         try {
             risky();
-        } catch (Exception e) { // want "JV006"
+        } catch (Exception e) { // want "JV006.*reported at line 47, rethrown at line 49"
             log.error("failed", e);
             if (recreate) {
                 throw new RuntimeException(e);
@@ -56,7 +56,7 @@ class Jv006GuardShapes {
     void doubleInsideGuard() {
         try {
             risky();
-        } catch (Exception e) { // want "JV006"
+        } catch (Exception e) { // want "JV006.*reported at line 61, rethrown at line 62"
             if (recreate) {
                 log.error("failed", e);
                 throw new RuntimeException(e);
@@ -70,7 +70,7 @@ class Jv006GuardShapes {
     void captureThenLaterThrow() {
         try {
             risky();
-        } catch (Exception e) { // want "JV006"
+        } catch (Exception e) { // want "JV006.*reported at line 75, rethrown at line 79"
             if (recreate) {
                 log.error("failed", e);
             } else {
