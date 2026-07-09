@@ -1,0 +1,17 @@
+// A standalone no-report above `try` anchors to the try statement, which no
+// catch rule consults - the catch still fires, and the message says where the
+// marker belongs instead of ignoring it silently.
+class MarkerAboveTry {
+    void m() {
+        // no-report: placed a line too early to count
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001.*above `try`"
+            log(e);
+        }
+    }
+
+    void risky() throws Exception {}
+
+    void log(Exception e) {}
+}

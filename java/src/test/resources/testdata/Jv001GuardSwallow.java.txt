@@ -15,7 +15,7 @@ class Jv001GuardSwallow {
     void silentFallThrough() {
         try {
             risky();
-        } catch (Exception e) { // want "JV001"
+        } catch (Exception e) { // want "JV001.*ends at line 23"
             if (fatal) {
                 throw new RuntimeException(e);
             }
@@ -52,7 +52,7 @@ class Jv001GuardSwallow {
     void silentEarlyReturn() {
         try {
             risky();
-        } catch (Exception e) { // want "JV001"
+        } catch (Exception e) { // want "JV001.*ends at line 57"
             if (!fatal) {
                 return;
             }
@@ -63,7 +63,7 @@ class Jv001GuardSwallow {
     void silentElseLeg() {
         try {
             risky();
-        } catch (Exception e) { // want "JV001"
+        } catch (Exception e) { // want "JV001.*ends at line 72"
             if (fatal) {
                 throw new RuntimeException(e);
             } else {

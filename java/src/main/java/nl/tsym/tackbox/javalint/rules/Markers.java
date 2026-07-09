@@ -16,14 +16,24 @@ final class Markers {
 
     private Markers() {}
 
-    /** Hint for a dead `no-report:` anywhere on the catch's try statement -
-     *  covers a marker trailing `try {`, the catch line, or a body statement,
-     *  and an empty-reason block inside the body. Empty when none. */
+    /** Hint for a `no-report:` near the catch that suppresses nothing: dead
+     *  (trailing `try {`, the catch line, or a body statement; empty-reason in
+     *  the body), or live but standalone above the `try`, where no catch anchor
+     *  ever looks. Empty when none. */
     static String deadNoReportHint(MarkerIndex idx, CatchClause cc) {
         int from = cc.getParentNode().flatMap(p -> p.getBegin()).map(b -> b.line)
                 .orElse(cc.getBegin().orElseThrow().line);
         int to = cc.getEnd().orElseThrow().line;
-        return hint(idx, from, to);
+        String hint = hint(idx, from, to);
+        if (!hint.isEmpty()) {
+            return hint;
+        }
+        Marker aboveTry = idx.above(from);
+        if (aboveTry != null && aboveTry.kind() == Marker.Kind.NO_REPORT) {
+            return " (a no-report above `try` does not cover its catches - place it"
+                    + " above the catch's first body statement)";
+        }
+        return "";
     }
 
     /** Hint for a dead `no-report:` on the statement's own line (trailing) or
