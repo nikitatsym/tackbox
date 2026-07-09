@@ -1,0 +1,86 @@
+import org.slf4j.Logger;
+
+// Same-branch doctrine: a capture and a rethrow pair only when one execution
+// path runs both. A terminal guard's throw and the fall-through report are
+// exclusive legs - each picks one strategy, so there is no double.
+class Jv006GuardShapes {
+    private final Logger log;
+    private final boolean recreate;
+
+    Jv006GuardShapes(Logger log, boolean recreate) {
+        this.log = log;
+        this.recreate = recreate;
+    }
+
+    // Guard rethrows, fall-through reports and recovers: exclusive, clean.
+    void guardThrowThenReport() {
+        try {
+            risky();
+        } catch (Exception e) {
+            if (!recreate) {
+                throw new IllegalStateException("update rejected: " + e.getMessage(), e);
+            }
+            log.error("recreating after: " + e.getMessage(), e);
+            recover();
+        }
+    }
+
+    // Exclusive if/else legs: one reports, one propagates. Clean.
+    void exclusiveLegs() {
+        try {
+            risky();
+        } catch (Exception e) {
+            if (recreate) {
+                log.error("failed", e);
+            } else {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    // The capture precedes the guard, so the guarded path reports AND
+    // rethrows - a real double.
+    void reportThenGuardThrow() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV006"
+            log.error("failed", e);
+            if (recreate) {
+                throw new RuntimeException(e);
+            }
+            recover();
+        }
+    }
+
+    // Both strategies inside the same guarded leg: still a double.
+    void doubleInsideGuard() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV006"
+            if (recreate) {
+                log.error("failed", e);
+                throw new RuntimeException(e);
+            }
+            log.error("recovering", e);
+            recover();
+        }
+    }
+
+    // Every path captures at the if join, then the throw doubles them all.
+    void captureThenLaterThrow() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV006"
+            if (recreate) {
+                log.error("failed", e);
+            } else {
+                log.warn("failed", e);
+            }
+            throw new RuntimeException(e);
+        }
+    }
+
+    void recover() {}
+
+    void risky() throws Exception {}
+}
