@@ -9,10 +9,43 @@ import nl.tsym.tackbox.javalint.MarkerIndex;
 /** Shared `// no-report:` lookups: the block-above convention (a marker on the
  *  comment block directly above the anchor) applied to a catch clause and to a
  *  single statement. The anchor for a catch is its first body statement, or the
- *  catch clause itself when the body is empty. */
+ *  catch clause itself when the body is empty. A dead marker near a firing
+ *  finding becomes a message hint, so the author learns why it did not count
+ *  instead of guessing. */
 final class Markers {
 
     private Markers() {}
+
+    /** Hint for a dead `no-report:` anywhere on the catch's try statement -
+     *  covers a marker trailing `try {`, the catch line, or a body statement,
+     *  and an empty-reason block inside the body. Empty when none. */
+    static String deadNoReportHint(MarkerIndex idx, CatchClause cc) {
+        int from = cc.getParentNode().flatMap(p -> p.getBegin()).map(b -> b.line)
+                .orElse(cc.getBegin().orElseThrow().line);
+        int to = cc.getEnd().orElseThrow().line;
+        return hint(idx, from, to);
+    }
+
+    /** Hint for a dead `no-report:` on the statement's own line (trailing) or
+     *  the line directly above it (where a live marker would sit). */
+    static String deadNoReportHint(MarkerIndex idx, Statement stmt) {
+        int line = stmt.getBegin().orElseThrow().line;
+        return hint(idx, line - 1, line);
+    }
+
+    private static String hint(MarkerIndex idx, int from, int to) {
+        for (MarkerIndex.Dead d : idx.dead()) {
+            if (d.kind() == Marker.Kind.NO_REPORT && d.line() >= from && d.line() <= to) {
+                return " (the no-report on line " + d.line() + " is ignored: "
+                        + (d.cause() == MarkerIndex.Cause.TRAILING
+                                ? "it trails code - a marker is a standalone comment line"
+                                        + " above the statement it covers"
+                                : "its reason is empty - a marker needs a non-empty reason")
+                        + ")";
+            }
+        }
+        return "";
+    }
 
     static boolean noReportAbove(MarkerIndex idx, CatchClause cc) {
         BlockStmt body = cc.getBody();

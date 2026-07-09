@@ -11,8 +11,16 @@ import java.util.Optional;
 
 /** Port of go/internal/markers.Index: markers live on any line of the comment
  *  block directly above a node. Only `//` line comments are recognized; the
- *  marker nearest the block's end (closest to the node below) wins. */
+ *  marker nearest the block's end (closest to the node below) wins. Marker-shaped
+ *  comments that suppress nothing - trailing code, or carrying an empty reason -
+ *  are collected as dead so a firing rule can say why they did not count. */
 public final class MarkerIndex {
+
+    /** Why a marker-shaped comment suppresses nothing. */
+    public enum Cause { TRAILING, EMPTY_REASON }
+
+    /** A marker-shaped comment that suppresses nothing. */
+    public record Dead(int line, Marker.Kind kind, Cause cause) {}
 
     /** A run of line comments on consecutive lines. */
     private static final class Group {
@@ -26,14 +34,30 @@ public final class MarkerIndex {
     }
 
     private final List<Group> groups = new ArrayList<>();
+    private final List<Dead> dead = new ArrayList<>();
 
     public MarkerIndex(CompilationUnit cu) {
         List<LineComment> comments = new ArrayList<>();
         for (Comment c : cu.getAllContainedComments()) {
-            if (c instanceof LineComment lc && lc.getRange().isPresent() && isStandalone(lc)) {
+            if (!(c instanceof LineComment lc) || lc.getRange().isEmpty()) {
+                continue;
+            }
+            boolean standalone = isStandalone(lc);
+            if (standalone) {
                 comments.add(lc);
             }
+            Marker.Kind kind = Marker.kindOf(lc.getContent());
+            if (kind == null) {
+                continue;
+            }
+            int line = lc.getRange().get().begin.line;
+            if (!standalone) {
+                dead.add(new Dead(line, kind, Cause.TRAILING));
+            } else if (Marker.parse(lc.getContent()) == null) {
+                dead.add(new Dead(line, kind, Cause.EMPTY_REASON));
+            }
         }
+        dead.sort(Comparator.comparingInt(Dead::line));
         comments.sort(Comparator.comparingInt(c -> c.getRange().get().begin.line));
 
         int groupLast = -1;
@@ -60,6 +84,11 @@ public final class MarkerIndex {
         if (lastLine >= 0) {
             groups.add(new Group(lastLine, marker));
         }
+    }
+
+    /** Marker-shaped comments that suppress nothing, in line order. */
+    public List<Dead> dead() {
+        return dead;
     }
 
     /** The marker carried by the comment block directly above `line`, or null. */
