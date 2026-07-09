@@ -1,4 +1,5 @@
 const path = require('path')
+const fs = require('fs')
 
 // Canonical reporter names. A call counts as a reporter only when its
 // callee resolves (scope analysis) to an import of `tackbox`/`tackbox/report`
@@ -143,10 +144,25 @@ function relFile(context) {
   return path.isAbsolute(fn) ? path.relative(cwd, fn) : fn
 }
 
-function stripExt(p) {
-  const dot = p.lastIndexOf('.')
-  const slash = p.lastIndexOf('/')
-  return dot > slash ? p.slice(0, dot) : p
+// Module extensions, compound first: a specifier that omits the extension must
+// strip to the same base as the declaration. `.svelte.ts` / `.svelte.js` are
+// Svelte rune modules that keep the double extension, so a specifier of `x`,
+// `x.svelte`, or `x.svelte.ts` all reduce to `x` and match a `x.svelte.ts`
+// declaration. Order matters: the compound forms are tried before the simple
+// ones (`.svelte.ts` before `.ts` and before `.svelte`).
+const MODULE_EXTS = [
+  '.svelte.ts', '.svelte.js',
+  '.ts', '.tsx', '.mts', '.cts',
+  '.js', '.jsx', '.mjs', '.cjs',
+  '.svelte',
+]
+
+function stripModuleExt(p) {
+  const base = p.slice(p.lastIndexOf('/') + 1)
+  for (const ext of MODULE_EXTS) {
+    if (base.length > ext.length && base.endsWith(ext)) return p.slice(0, p.length - ext.length)
+  }
+  return p
 }
 
 function matchesDecl(decls, file, name) {
@@ -155,24 +171,62 @@ function matchesDecl(decls, file, name) {
     if (hash < 0) continue
     if (d.slice(hash + 1) !== name) continue
     const dfile = d.slice(0, hash)
-    if (dfile === file || stripExt(dfile) === stripExt(file)) return true
+    if (dfile === file || stripModuleExt(dfile) === stripModuleExt(file)) return true
   }
   return false
 }
 
+function absFile(context) {
+  const fn = context.filename || (context.getFilename && context.getFilename()) || ''
+  if (path.isAbsolute(fn)) return fn
+  return path.resolve(context.cwd || process.cwd(), fn)
+}
+
+const SVELTE_CONFIG_NAMES = ['svelte.config.js', 'svelte.config.ts', 'svelte.config.mjs', 'svelte.config.cjs']
+
+// resolveAlias maps a SvelteKit `$lib` specifier to a repo-relative path.
+// Deterministic and CI-safe: `$lib` -> `<nearest ancestor of the importing file
+// holding svelte.config.*>/src/lib`, the committed SvelteKit convention. It
+// never reads `.svelte-kit/tsconfig.json` (generated, gitignored, absent on a
+// fresh clone). Returns null for any other specifier or when no svelte.config
+// is found - the caller then leaves the import unresolved.
+function resolveAlias(context, source, absImporter) {
+  if (source !== '$lib' && !source.startsWith('$lib/')) return null
+  const rest = source === '$lib' ? '' : source.slice('$lib/'.length)
+  let dir = path.dirname(absImporter)
+  let root = null
+  for (;;) {
+    if (SVELTE_CONFIG_NAMES.some(n => fs.existsSync(path.join(dir, n)))) {
+      root = dir
+      break
+    }
+    const up = path.dirname(dir)
+    if (up === dir) break
+    dir = up
+  }
+  if (root === null) return null
+  return path.relative(context.cwd || process.cwd(), path.join(root, 'src', 'lib', rest))
+}
+
 // resolveDeclTarget resolves an Identifier callee to the {file, name} of its
-// definition: a local top-level def in this file, or a single-hop relative
-// import. Barrel re-exports are not followed (plan: direct import or wrapper
-// declaration only).
+// definition: a local top-level def in this file, a single-hop relative import,
+// or a `$lib` SvelteKit alias import. Barrel re-exports are not followed (plan:
+// direct import or wrapper declaration only).
 function resolveDeclTarget(context, idNode) {
   const variable = resolveVar(context, idNode)
   if (!variable || !variable.defs || variable.defs.length === 0) return null
   const info = importInfo(variable)
   if (info) {
     const source = info.source
-    if (typeof source !== 'string' || !source.startsWith('.')) return null
+    if (typeof source !== 'string') return null
     const importedName = info.kind === 'named' ? info.imported : idNode.name
-    const resolved = path.normalize(path.join(path.dirname(relFile(context)), source))
+    let resolved
+    if (source.startsWith('.')) {
+      resolved = path.normalize(path.join(path.dirname(relFile(context)), source))
+    } else {
+      resolved = resolveAlias(context, source, absFile(context))
+      if (resolved === null) return null
+    }
     return { file: resolved, name: importedName }
   }
   const def = variable.defs[0]
