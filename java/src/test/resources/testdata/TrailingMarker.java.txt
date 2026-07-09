@@ -1,0 +1,16 @@
+// A marker written trailing `try {` suppresses nothing - the index only reads
+// standalone comment lines - so JV001 still fires and the message says why,
+// instead of leaving the author guessing at a marker that "does not work".
+class TrailingMarker {
+    void m() {
+        try { // no-report: written where the index cannot see it
+            risky();
+        } catch (Exception e) { // want "JV001.*trails code"
+            log(e);
+        }
+    }
+
+    void risky() throws Exception {}
+
+    void log(Exception e) {}
+}

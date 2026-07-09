@@ -44,7 +44,8 @@ public final class ChainRule {
                     continue;
                 }
                 Position p = ts.getBegin().orElseThrow();
-                out.add(new Finding(ID, file, p.line, p.column, p.line, p.column, MESSAGE));
+                out.add(new Finding(ID, file, p.line, p.column, p.line, p.column,
+                        MESSAGE + Markers.deadNoReportHint(markers, cc)));
             }
         }
         return out;

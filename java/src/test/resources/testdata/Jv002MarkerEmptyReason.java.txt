@@ -4,7 +4,7 @@ class Jv002MarkerEmptyReason {
             risky();
         } catch (Exception e) {
             // no-report:
-            throw new WireException("boom"); // want "JV002"
+            throw new WireException("boom"); // want "JV002.*reason is empty"
         }
     }
 

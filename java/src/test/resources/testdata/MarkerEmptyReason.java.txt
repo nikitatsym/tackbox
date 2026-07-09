@@ -2,7 +2,7 @@ class MarkerEmptyReason {
     void m() {
         try {
             risky();
-        } catch (Exception e) { // want "JV001"
+        } catch (Exception e) { // want "JV001.*reason is empty"
             // no-report:
             log(e);
         }

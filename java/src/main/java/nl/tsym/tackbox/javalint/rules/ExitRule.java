@@ -43,7 +43,10 @@ public final class ExitRule {
                     continue;
                 }
                 Position p = call.getBegin().orElseThrow();
-                out.add(new Finding(ID, file, p.line, p.column, p.line, p.column, MESSAGE));
+                String hint = call.findAncestor(ExpressionStmt.class)
+                        .map(st -> Markers.deadNoReportHint(markers, st))
+                        .orElse("");
+                out.add(new Finding(ID, file, p.line, p.column, p.line, p.column, MESSAGE + hint));
             }
         }
         return out;

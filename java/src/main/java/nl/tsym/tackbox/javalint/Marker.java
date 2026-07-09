@@ -17,6 +17,20 @@ public record Marker(Kind kind, String reason) {
         }
     }
 
+    /** The marker kind a comment's content is shaped as, reason or no reason,
+     *  or null for a plain comment. Lets the index surface marker-shaped
+     *  comments that suppress nothing (trailing, empty reason) instead of
+     *  ignoring them silently. */
+    public static Kind kindOf(String content) {
+        String text = content.strip();
+        for (Kind kind : Kind.values()) {
+            if (text.startsWith(kind.prefix)) {
+                return kind;
+            }
+        }
+        return null;
+    }
+
     /** Parse a line comment's content (the text after `//`). Returns null when
      *  it is not a marker or carries an empty reason - an empty reason never
      *  suppresses, exactly as in the go index and the opengrep java rule. */

@@ -35,7 +35,8 @@ public final class ThrowableRule {
                 continue;
             }
             Position p = cc.getBegin().orElseThrow();
-            out.add(new Finding(ID, file, p.line, p.column, p.line, p.column, MESSAGE));
+            out.add(new Finding(ID, file, p.line, p.column, p.line, p.column,
+                    MESSAGE + Markers.deadNoReportHint(markers, cc)));
         }
         return out;
     }
