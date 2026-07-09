@@ -59,6 +59,8 @@ npx tackbox-eslint src/**/*.{ts,svelte}
 | `tackbox/ts-rethrow-without-cause` | `throw new` in catch needs `{cause}` |
 | `tackbox/ts-useless-catch`         | catch that only re-throws is a no-op |
 | `tackbox/ts-exit-in-catch`         | no `process.exit` inside catch       |
+| `tackbox/no-skipped-test`          | skip/todo needs `test-skip:` marker  |
+| `tackbox/no-focused-test`          | banned `.only`/`f`-tests; no escape  |
 
 Full constraints per rule:
 
@@ -98,6 +100,16 @@ Full constraints per rule:
   caught error is a no-op wrapper; remove the try/catch.
 - `ts-exit-in-catch` - `process.exit(...)` inside a `catch` masks the
   exception; let it propagate.
+- `no-skipped-test` - a skip/todo/skipIf in a chain rooted at bare
+  `it` / `test` / `describe` (`it.skip`, `test.todo`, `it.skipIf(c)(...)`,
+  `it.skip.each(...)(...)`), or a bare `xit` / `xdescribe` / `xtest`,
+  silently drops coverage. Chained forms report once, on the inner call.
+  A deeper root (`queue.skip`, `foo.test.skip`) is out of scope. Escape
+  with a `// test-skip: <reason>` marker directly above the statement.
+- `no-focused-test` - a `.only` in a chain rooted at bare `it` / `test` /
+  `describe` (`it.only`, `describe.only`, `test.only.each(...)(...)`), or a
+  bare `fit` / `fdescribe` / `ftest`, disables the rest of the suite. No
+  escape hatch; the focused test must be removed.
 
 ## Reporter recognition
 

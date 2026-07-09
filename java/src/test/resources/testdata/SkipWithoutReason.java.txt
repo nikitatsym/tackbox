@@ -1,0 +1,47 @@
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
+import org.junit.Ignore;
+
+// JV007 (skip): a disabled test must carry a non-empty reason. A bare marker or an
+// empty / whitespace-only string value on @Disabled (JUnit 5) or @Ignore (JUnit 4)
+// fires; a non-empty reason is clean, and a non-literal value expression is trusted.
+// Matching is by simple name (no symbol solving) and there is no `// no-report:`
+// escape - the fix is always to put the reason into the annotation value.
+@Disabled // want "JV007"
+class SkipWithoutReason {
+
+    @Test
+    @Disabled // want "JV007"
+    void bareMarkerOnMethod() {}
+
+    @Test
+    @Disabled("") // want "JV007"
+    void emptyReason() {}
+
+    @Test
+    @Disabled("   ") // want "JV007"
+    void whitespaceReason() {}
+
+    @Test
+    @Disabled("flaky upstream, issue 42")
+    void nonEmptyReasonIsClean() {}
+
+    @Test
+    @Ignore // want "JV007"
+    void bareIgnore() {}
+
+    @Test
+    @Ignore("legacy, replaced by IT suite")
+    void ignoreWithReasonIsClean() {}
+
+    @Test
+    @Disabled(value = "") // want "JV007"
+    void normalFormEmpty() {}
+
+    @Test
+    @Disabled(value = "reason")
+    void normalFormWithReasonIsClean() {}
+
+    @Deprecated
+    void unrelatedAnnotationIsClean() {}
+}

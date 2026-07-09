@@ -23,6 +23,7 @@ uvx tackbox@latest lint .
 | ERC005 | doublecapture | no capture and `return err` together |
 | ERC006 | fingerprint   | capture args may not name secrets    |
 | ERC007 | recoverswallow| recover must report or re-panic      |
+| ERC008 | skiptest      | skipped test must state a reason     |
 
 Details per rule:
 
@@ -54,8 +55,14 @@ Details per rule:
 - ERC007 `recoverswallow` - a `recover()` must report the recovered
   value (to `go/report` or a declared sink that receives it) or
   re-panic; a bare recover-and-continue needs `// no-report: <reason>`.
+- ERC008 `skiptest` - in `_test.go`, a `Skip`/`Skipf` on
+  `testing.T`/`B`/`F` must carry a non-empty reason argument
+  (non-literal arguments are trusted); a bare `SkipNow()` needs
+  `// test-skip: <reason>` directly above. Resolution is by origin: a
+  local type's own `Skip` method is not a test skip.
 
-`_test.go` files are skipped by every analyzer.
+`_test.go` files are skipped by every analyzer except ERC008
+`skiptest`, whose subject is the tests themselves.
 
 ## Markers
 
@@ -76,6 +83,9 @@ v, _ := strconv.Atoi(os.Getenv("MAX"))
 
 // nil-return: caller treats nil as empty
 return nil
+
+// test-skip: covered by the integration suite instead
+t.SkipNow()
 ```
 
 ## Capture and propagation

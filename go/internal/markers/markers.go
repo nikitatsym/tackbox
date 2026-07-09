@@ -16,6 +16,7 @@ const (
 	NoReport Kind = iota
 	ParseSkip
 	NilReturn
+	TestSkip
 )
 
 func (k Kind) String() string {
@@ -26,6 +27,8 @@ func (k Kind) String() string {
 		return "parse-skip"
 	case NilReturn:
 		return "nil-return"
+	case TestSkip:
+		return "test-skip"
 	}
 	return ""
 }
@@ -71,6 +74,7 @@ var prefixes = []struct {
 	{NoReport, "no-report:"},
 	{ParseSkip, "parse-skip:"},
 	{NilReturn, "nil-return:"},
+	{TestSkip, "test-skip:"},
 }
 
 func parse(c *ast.Comment) (Marker, bool) {

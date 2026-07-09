@@ -237,3 +237,196 @@ def test_bare_except_is_bare_not_swallowed(tmp_path):
     _write(tmp_path, "b.py", src)
     r = _flake8(tmp_path, "b.py")
     assert "TBX003" in r.stdout and "TBX001" not in r.stdout, r.stdout
+
+
+# --- TBX008 python-test-skip ---
+
+
+def test_mark_skip_bare_flags(tmp_path):
+    src = "import pytest\n\n\n@pytest.mark.skip\ndef test_x():\n    pass\n"
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 1 and "TBX008 python-test-skip" in r.stdout, r.stdout
+
+
+def test_mark_skip_with_reason_clean(tmp_path):
+    src = 'import pytest\n\n\n@pytest.mark.skip(reason="flaky upstream")\ndef test_x():\n    pass\n'
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 0, r.stdout
+
+
+def test_mark_skip_empty_string_flags(tmp_path):
+    src = 'import pytest\n\n\n@pytest.mark.skip("")\ndef test_x():\n    pass\n'
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 1 and "TBX008" in r.stdout, r.stdout
+
+
+def test_mark_skip_positional_reason_clean(tmp_path):
+    src = 'import pytest\n\n\n@pytest.mark.skip("flaky upstream")\ndef test_x():\n    pass\n'
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 0, r.stdout
+
+
+def test_mark_skip_from_import_mark_flags(tmp_path):
+    # `from pytest import mark` -> attribute chain ends in `mark.skip`.
+    src = "from pytest import mark\n\n\n@mark.skip\ndef test_x():\n    pass\n"
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 1 and "TBX008" in r.stdout, r.stdout
+
+
+def test_skipif_without_reason_flags(tmp_path):
+    src = "import pytest\n\n\n@pytest.mark.skipif(True)\ndef test_x():\n    pass\n"
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 1 and "TBX008" in r.stdout, r.stdout
+
+
+def test_skipif_with_reason_clean(tmp_path):
+    src = 'import pytest\n\n\n@pytest.mark.skipif(True, reason="windows only")\ndef test_x():\n    pass\n'
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 0, r.stdout
+
+
+def test_xfail_bare_flags(tmp_path):
+    src = "import pytest\n\n\n@pytest.mark.xfail\ndef test_x():\n    pass\n"
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 1 and "TBX008" in r.stdout, r.stdout
+
+
+def test_xfail_with_reason_clean(tmp_path):
+    src = 'import pytest\n\n\n@pytest.mark.xfail(reason="known bug 123")\ndef test_x():\n    pass\n'
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 0, r.stdout
+
+
+def test_pytest_skip_call_empty_flags(tmp_path):
+    src = "import pytest\n\n\ndef test_x():\n    pytest.skip()\n"
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 1 and "TBX008" in r.stdout, r.stdout
+
+
+def test_pytest_skip_call_blank_string_flags(tmp_path):
+    src = 'import pytest\n\n\ndef test_x():\n    pytest.skip("")\n'
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 1 and "TBX008" in r.stdout, r.stdout
+
+
+def test_pytest_skip_call_reason_clean(tmp_path):
+    src = 'import pytest\n\n\ndef test_x():\n    pytest.skip("needs docker")\n'
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 0, r.stdout
+
+
+def test_pytest_skip_call_variable_reason_trusted(tmp_path):
+    src = "import pytest\n\n\ndef test_x():\n    pytest.skip(msg_var)\n"
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 0, r.stdout
+
+
+def test_unittest_bare_skip_flags(tmp_path):
+    src = "from unittest import skip\n\n\n@skip\ndef test_x():\n    pass\n"
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 1 and "TBX008" in r.stdout, r.stdout
+
+
+def test_unittest_skip_with_reason_clean(tmp_path):
+    src = 'import unittest\n\n\n@unittest.skip("slow on ci")\ndef test_x():\n    pass\n'
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 0, r.stdout
+
+
+def test_bare_skip_without_unittest_import_clean(tmp_path):
+    # Origin gate: a locally-defined `@skip` is not unittest's skip.
+    src = "def skip(fn):\n    return fn\n\n\n@skip\ndef test_x():\n    pass\n"
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 0, r.stdout
+
+
+def test_aliased_unittest_skip_does_not_gate_local_skip(tmp_path):
+    # `skip as s` binds `s`; the bare name `skip` here is the local decorator.
+    src = (
+        "from unittest import skip as s\n\n\ndef skip(fn):\n    return fn\n\n\n"
+        "@skip\ndef test_x():\n    pass\n"
+    )
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 0, r.stdout
+
+
+def test_skip_marker_above_decorator_suppresses(tmp_path):
+    src = (
+        "import pytest\n\n\n"
+        "# test-skip: known flaky, tracked upstream\n"
+        "@pytest.mark.skip\ndef test_x():\n    pass\n"
+    )
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 0, r.stdout
+
+
+def test_skip_marker_anchors_to_flagged_decorator(tmp_path):
+    # Anchoring choice: the marker block sits above the flagged decorator's
+    # own line, not above the first decorator of the def.
+    src = (
+        "import pytest\n\n\n"
+        '@pytest.mark.parametrize("n", [1])\n'
+        "# test-skip: known flaky, tracked upstream\n"
+        "@pytest.mark.skip\ndef test_x(n):\n    pass\n"
+    )
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 0, r.stdout
+
+
+def test_skip_marker_empty_reason_flags(tmp_path):
+    src = "import pytest\n\n\n# test-skip:\n@pytest.mark.skip\ndef test_x():\n    pass\n"
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 1 and "TBX008" in r.stdout, r.stdout
+
+
+def test_skip_marker_blank_line_breaks_adjacency(tmp_path):
+    src = (
+        "import pytest\n\n\n"
+        "# test-skip: reason\n\n"
+        "@pytest.mark.skip\ndef test_x():\n    pass\n"
+    )
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 1 and "TBX008" in r.stdout, r.stdout
+
+
+def test_skip_marker_above_call_suppresses(tmp_path):
+    src = (
+        "import pytest\n\n\ndef test_x():\n"
+        "    # test-skip: env not present locally\n    pytest.skip()\n"
+    )
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 0, r.stdout
+
+
+def test_no_report_marker_does_not_suppress_skip(tmp_path):
+    # The no-report channel must not leak into the test-skip channel.
+    src = (
+        "import pytest\n\n\n"
+        "# no-report: wrong channel\n"
+        "@pytest.mark.skip\ndef test_x():\n    pass\n"
+    )
+    _write(tmp_path, "t.py", src)
+    r = _flake8(tmp_path, "t.py")
+    assert r.returncode == 1 and "TBX008" in r.stdout, r.stdout

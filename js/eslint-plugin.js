@@ -14,6 +14,8 @@ const noSecretInReport = require('./rules/no-secret-in-report')
 const tsRethrowWithoutCause = require('./rules/ts-rethrow-without-cause')
 const tsUselessCatch = require('./rules/ts-useless-catch')
 const tsExitInCatch = require('./rules/ts-exit-in-catch')
+const noSkippedTest = require('./rules/no-skipped-test')
+const noFocusedTest = require('./rules/no-focused-test')
 
 const rules = {
   'no-swallow-catch': noSwallowCatch,
@@ -28,6 +30,8 @@ const rules = {
   'ts-rethrow-without-cause': tsRethrowWithoutCause,
   'ts-useless-catch': tsUselessCatch,
   'ts-exit-in-catch': tsExitInCatch,
+  'no-skipped-test': noSkippedTest,
+  'no-focused-test': noFocusedTest,
 }
 
 module.exports = {

@@ -449,3 +449,50 @@ test('ts-exit-in-catch', () => {
     ],
   })
 })
+
+// A skip/todo/skipIf in a chain rooted at bare it/test/describe, or a bare
+// xit/xdescribe/xtest, drops the test unless a // test-skip: <reason> marker
+// sits above the statement. Chained forms (skipIf(...)(...), skip.each(...)(...))
+// report once, on the inner call carrying the skip property. A deeper root
+// (queue.skip, foo.test.skip) is out of scope.
+test('no-skipped-test', () => {
+  ruleTester.run('no-skipped-test', require('../rules/no-skipped-test'), {
+    valid: [
+      'it("runs", () => {})',
+      '// test-skip: flaky upstream, issue 12\nit.skip("later", () => {})',
+      'queue.skip()',
+      'foo.test.skip("x")',
+      '// test-skip: pending backend, issue 34\nit.skipIf(cond)("n", f)',
+    ],
+    invalid: [
+      { code: 'it.skip("later", () => {})', errors: [{ messageId: 'skipped' }] },
+      { code: 'test.todo("write this")', errors: [{ messageId: 'skipped' }] },
+      { code: 'xit("x", () => {})', errors: [{ messageId: 'skipped' }] },
+      { code: 'xdescribe("grp", () => {})', errors: [{ messageId: 'skipped' }] },
+      { code: 'it.skipIf(isCi)("n", f)', errors: [{ messageId: 'skipped' }] },
+      { code: '// test-skip:\nit.skip("x", () => {})', errors: [{ messageId: 'skipped' }] },
+      { code: '// test-skip: reason\n\nit.skip("x", () => {})', errors: [{ messageId: 'skipped' }] },
+      { code: 'it.skip.each([1])("n", f)', errors: [{ messageId: 'skipped' }] },
+    ],
+  })
+})
+
+// A .only in a chain rooted at bare it/test/describe, or a bare fit/fdescribe/
+// ftest, focuses the suite and disables the rest. No escape hatch. Chained
+// only.each(...)(...) reports once, on the inner call. A deeper root
+// (myobj.only) is out of scope.
+test('no-focused-test', () => {
+  ruleTester.run('no-focused-test', require('../rules/no-focused-test'), {
+    valid: [
+      'it("x", f)',
+      'myobj.only("x")',
+    ],
+    invalid: [
+      { code: 'it.only("x", f)', errors: [{ messageId: 'focused' }] },
+      { code: 'describe.only("g", f)', errors: [{ messageId: 'focused' }] },
+      { code: 'fit("x", f)', errors: [{ messageId: 'focused' }] },
+      { code: 'fdescribe("g", f)', errors: [{ messageId: 'focused' }] },
+      { code: 'test.only.each([1])("n", f)', errors: [{ messageId: 'focused' }] },
+    ],
+  })
+})

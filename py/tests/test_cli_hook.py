@@ -429,6 +429,43 @@ def test_pre_change_reason_ask(tmp_path):
     assert "no-report" in _ask(r)["permissionDecisionReason"]
 
 
+def test_pre_introduce_test_skip_marker_ask(tmp_path):
+    _dev_py(tmp_path)
+    _init(tmp_path)
+    r = _hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Edit",
+            "cwd": str(tmp_path),
+            "tool_input": {
+                "file_path": str(tmp_path / "svc.go"),
+                "old_string": "x := 1",
+                "new_string": "// test-skip: flaky under race\nx := 1",
+            },
+        }
+    )
+    assert "test-skip" in _ask(r)["permissionDecisionReason"]
+
+
+def test_pre_remove_test_skip_marker_allow(tmp_path):
+    _dev_py(tmp_path)
+    _init(tmp_path)
+    r = _hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Edit",
+            "cwd": str(tmp_path),
+            "tool_input": {
+                "file_path": str(tmp_path / "svc.go"),
+                "old_string": "// test-skip: flaky under race\nx := 1",
+                "new_string": "x := 1",
+            },
+        }
+    )
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == "", f"removing a marker is free (no output):\n{r.stdout}"
+
+
 def test_pre_write_new_file_with_marker_ask(tmp_path):
     _dev_py(tmp_path)
     _init(tmp_path)
