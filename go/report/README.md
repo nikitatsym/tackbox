@@ -107,9 +107,9 @@ rate-limit key: repeat events with the same key inside `RateWindow`
 `agent.list`. An empty key is never rate-limited and lets Sentry
 auto-group.
 
-Fingerprint arguments must not name secrets (`token`, `password`,
-`key`, `secret`, `cookie`) or carry raw user input - erclint ERC006
-rejects them.
+Capture arguments (message, tags, dedupKey) must not name secrets
+(`token`, `password`, `key`, `secret`, `cookie`) or carry raw user
+input - erclint ERC006 rejects them.
 
 ## Local logging
 

@@ -6,10 +6,34 @@
 [![verify-release](https://github.com/nikitatsym/tackbox/actions/workflows/verify-release.yml/badge.svg)](https://github.com/nikitatsym/tackbox/actions/workflows/verify-release.yml)
 [![pypi](https://raw.githubusercontent.com/nikitatsym/tackbox/badges/pypi.svg)](https://pypi.org/project/tackbox/)
 
-Universal lint rules that enforce the `error-reporting-and-coverage`
-and `error-handling-frontend` specs across Go, Python, Java, JS, TS,
-and Svelte. One command brings the whole enforcement stack - no
-`go install`, no `npm i`, no external `opengrep`:
+**Every failure must report, propagate, or explain itself.**
+
+Coding agents write error handling that looks right and silently
+isn't: a swallowed exception, a fatal exit with nothing logged, a
+report with the cause stripped out. tackbox catches it the moment
+it's written: hooked into the agent's edit loop it flags the finding
+before the turn ends, and the same rules gate pre-commit and CI -
+one coverage bar for hand-written and agent-written code.
+
+And there is no quiet way around any of it: no flags, no config. The
+only escape is an explicit `// no-report: <reason>` at the site - and
+the agent hook asks for your approval before a new suppression lands.
+
+```go
+resp, err := client.Do(req)
+if err != nil {
+    return nil // looks handled; the failure just vanished
+}
+```
+
+```text
+client.go:42: ERC001: err-branch must propagate, capture, carry the
+error into a terminal exit, or carry `// no-report: <reason>` (err=err)
+```
+
+One command brings the whole stack across Go, Python, Java, JS, TS,
+Svelte, and Markdown - no `go install`, no `npm i`, no external
+`opengrep`:
 
 ```bash
 uvx tackbox@latest lint .
@@ -22,11 +46,21 @@ network access to fetch the engine payload once.
 Rules roll out via `@latest` - a new safety rule reaches every repo on
 its next run.
 
-Covers ERC001-007 (Go, via `erclint`), JV001-006 (Java, via the native
-`javalint` engine), ERC006 fingerprint rules (Go, Python, JS, TS, via
-the `opengrep` wrapper), Python exception rules (via the `pyrules`
-flake8 plugin), frontend swallow rules (JS, TS, Svelte, via ESLint),
-and Markdown (MD001-059 + ASCII).
+## What it catches
+
+- **Swallowed errors** - the `catch {}` or `if err != nil { return nil }`
+  that makes a failure vanish. Every path must report, propagate, or
+  carry an explicit `// no-report: <reason>`.
+- **Silent exits** - `os.Exit`, `log.Fatal`, `System.exit`, or a local
+  `die` reached with an unreported error, so the process dies and your
+  error tracker never hears about it.
+- **Double reports** - capturing an error *and* re-throwing it, so the
+  same failure hits Sentry/glitchtip twice and drowns the signal.
+- **Broken cause chains** - a new exception thrown from a `catch` that
+  drops the original (only its message survives), erasing the stack
+  you'd actually debug from.
+- **Leaked secrets** - a fingerprint or report argument that names a
+  secret or raw user input, quietly shipping tokens/PII into telemetry.
 
 ## Wiring into a repo
 
@@ -88,8 +122,15 @@ absent and verifies the payload against it.
 
 ## What the rules enforce
 
-See `go/README.md` for the Go ruleset. The spec these rules implement
-lives outside this repo (private notes); the public summary:
+Covers ERC001-007 (Go, via `erclint`), JV001-006 (Java, via the native
+`javalint` engine), ERC006 fingerprint rules (Go, Python, JS, TS, via
+the `opengrep` wrapper), Python exception rules (via the `pyrules`
+flake8 plugin), frontend swallow rules (JS, TS, Svelte, via ESLint),
+and Markdown (MD001-059 + ASCII).
+
+See `go/README.md` for the Go ruleset. The specs these rules implement
+(`error-reporting-and-coverage`, `error-handling-frontend`) live
+outside this repo (private notes); the public summary:
 
 - Every `err != nil` branch must propagate, capture, or carry an
   explicit `// no-report: <reason>` marker.
@@ -101,8 +142,8 @@ lives outside this repo (private notes); the public summary:
 - Bare `return nil` from a single-result function must carry
   `// nil-return: <reason>` or use `(val, ok)` / `(val, err)`.
 - A single err-branch may not both capture and `return err`.
-- Fingerprint arguments must not reference secret-named identifiers
-  or raw user input.
+- Capture-call arguments (message, tags, dedupKey) must not reference
+  secret-named identifiers or raw user input.
 
 The same model is enforced beyond Go:
 

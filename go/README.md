@@ -49,8 +49,8 @@ Details per rule:
   `// nil-return: <reason>` or use `(val, ok)` / `(val, err)`.
 - ERC005 `doublecapture` - a single err-branch may not both capture
   and `return err`.
-- ERC006 `fingerprint` - capture-call fingerprint args may not name
-  secrets or carry raw user input.
+- ERC006 `fingerprint` - capture-call arguments (message, tags,
+  dedupKey) may not name secrets or carry raw user input.
 - ERC007 `recoverswallow` - a `recover()` must report the recovered
   value (to `go/report` or a declared sink that receives it) or
   re-panic; a bare recover-and-continue needs `// no-report: <reason>`.

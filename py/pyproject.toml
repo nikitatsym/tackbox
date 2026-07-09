@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tackbox"
-description = "Universal lints + capture helpers driven by a hermetic Python CLI."
+description = "Error-handling lint + capture helpers for Go, Python, Java, JS, TS, and Svelte: every failure must report, propagate, or explain itself."
 requires-python = ">=3.11"
 license = { text = "MIT" }
-dynamic = ["version", "dependencies"]
+dynamic = ["version", "dependencies", "readme"]
 
 [project.scripts]
 tackbox = "tackbox.cli:main"
