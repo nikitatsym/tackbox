@@ -1,12 +1,14 @@
 # tackbox
 
+![tackbox logo](assets/logo-round.png)
+
 [![publish](https://github.com/nikitatsym/tackbox/actions/workflows/publish.yml/badge.svg)](https://github.com/nikitatsym/tackbox/actions/workflows/publish.yml)
 [![verify-release](https://github.com/nikitatsym/tackbox/actions/workflows/verify-release.yml/badge.svg)](https://github.com/nikitatsym/tackbox/actions/workflows/verify-release.yml)
 [![pypi](https://raw.githubusercontent.com/nikitatsym/tackbox/badges/pypi.svg)](https://pypi.org/project/tackbox/)
 
 Universal lint rules that enforce the `error-reporting-and-coverage`
-and `error-handling-frontend` specs across Go, Python, JS, TS, and
-Svelte. One command brings the whole enforcement stack - no
+and `error-handling-frontend` specs across Go, Python, Java, JS, TS,
+and Svelte. One command brings the whole enforcement stack - no
 `go install`, no `npm i`, no external `opengrep`:
 
 ```bash
@@ -14,14 +16,17 @@ uvx tackbox@latest lint .
 ```
 
 The wheel is hermetic: a consumer needs only `git` on PATH (plus a Go
-toolchain if the repo has `.go` files) and, the first time a given
-engine version runs, network access to fetch the engine payload once.
+toolchain if the repo has `.go` files, and a Java 17+ runtime if it
+has `.java` files) and, the first time a given engine version runs,
+network access to fetch the engine payload once.
 Rules roll out via `@latest` - a new safety rule reaches every repo on
 its next run.
 
-Covers ERC001-007 (Go, via `erclint`), ERC006 fingerprint rules (Go,
-Python, JS, TS, via the `opengrep` wrapper), frontend swallow rules
-(JS, TS, Svelte, via ESLint), and Markdown (MD001-059 + ASCII).
+Covers ERC001-007 (Go, via `erclint`), JV001-006 (Java, via the native
+`javalint` engine), ERC006 fingerprint rules (Go, Python, JS, TS, via
+the `opengrep` wrapper), Python exception rules (via the `pyrules`
+flake8 plugin), frontend swallow rules (JS, TS, Svelte, via ESLint),
+and Markdown (MD001-059 + ASCII).
 
 ## Wiring into a repo
 
@@ -56,10 +61,11 @@ repos:
 `uvx tackbox@latest` installs one small wheel; the engine payload is
 fetched separately and cached per version:
 
-- `tackbox` (thin) - the Python CLI, the `erclint` /
-  `erclint-opengrep` binaries, the opengrep rule yamls, and the
-  ESLint and markdownlint plugins and presets. Platform-specific,
-  bumped on every push.
+- `tackbox` (thin) - the Python CLI (including the `pyrules` flake8
+  plugin), the `erclint` / `erclint-opengrep` binaries, the
+  `javalint.jar`, the opengrep rule yamls, and the ESLint and
+  markdownlint plugins and presets. Platform-specific, bumped on every
+  push.
 - `tackbox-engines` (fat, ~350 MB unpacked) - the bundled Node
   runtime, the `opengrep` binary, and the vendored third-party
   `node_modules`. Published as a PyPI wheel but **not** a pip
@@ -98,6 +104,20 @@ lives outside this repo (private notes); the public summary:
 - Fingerprint arguments must not reference secret-named identifiers
   or raw user input.
 
+The same model is enforced beyond Go:
+
+- **Java** (`javalint`, JV001-006) on a typed javaparser AST: JV001
+  swallow (every catch path must propagate, report, print, or carry
+  `// no-report`), JV002 chain (a thrown exception must carry the
+  caught as its cause), JV003 throwable (a catch of `Throwable` /
+  `Error` must rethrow), JV004 useless-catch (a catch that only
+  rethrows the caught unchanged - deleted, not annotated), JV005 exit
+  (`System.exit` in a catch needs a preceding capture; port of ERC003),
+  and JV006 double-capture (no path may both report and rethrow; port
+  of ERC005).
+- **Python** exception rules ship as the `pyrules` flake8 plugin
+  (`TBX` codes); **JS / TS / Svelte** swallow rules run under ESLint.
+
 ## No configuration
 
 By design, the ruleset is a single non-negotiable bundle. There are
@@ -105,14 +125,16 @@ no flags to disable individual rules. Suppressing a finding requires
 the explicit per-site marker (`// no-report`, `// parse-skip`,
 `// nil-return`) with a non-empty reason.
 
-Capture helpers are recognized by origin, not by name: a call counts
-only when its callee resolves (type info / import) to the
-`github.com/nikitatsym/tackbox/go/report` (Go) or `tackbox/report`
-(JS/TS) package, or to a function declared in a repo-root
-`.tackbox-reporters` file (`file#function: reason`). A declaration
-names a report sink - it is not an exclude: it disables no rule, and a
-declared call is honored only when the caught error flows into its
-arguments.
+Capture helpers are recognized by origin, not by name: a Go call
+counts only when its callee resolves (type info / import) to the
+`github.com/nikitatsym/tackbox/go/report` package, a JS/TS call to
+`tackbox/report`, and a Java capture when the caught reaches a known
+logger sink (e.g. slf4j, `java.lang.System.Logger`) at `ERROR` /
+`WARNING` - tier-1. Every language also honors a function declared in
+a repo-root `.tackbox-reporters` file (`file#function: reason`) -
+tier-2. A declaration names a report sink - it is not an exclude: it
+disables no rule, and a declared call is honored only when the caught
+error flows into its arguments.
 
 ## Agent hook (Claude Code)
 
@@ -159,25 +181,27 @@ eslint.config.preset.js                # default config used by tackbox-eslint b
 bin/tackbox-eslint.js                  # ESLint CLI wrapper with bundled preset
 bin/tackbox-mdlint.js                  # markdownlint wrapper with bundled preset
 go/
-  cmd/erclint/                         # native Go analyzers (ERC001-005)
+  cmd/erclint/                         # native Go analyzers (ERC001-005, 007)
   cmd/erclint-opengrep/                # opengrep wrapper, embedded rule yamls
     rules/                             # multi-language ERC006 yamls
   analyzers/                           # per-rule go/analysis packages
   internal/                            # markers + AST helpers
   report/                              # Go capture helper (Sentry/glitchtip)
+java/
+  pom.xml                              # Maven module -> shaded javalint.jar
+  src/main/.../javalint/               # typed-AST analyzer (JV001-006)
+    rules/                             # per-rule checkers
 js/
   eslint-plugin.js                     # ESLint plugin entry
-  rules/                               # 8 frontend rules
+  rules/                               # 12 frontend rules
   markdownlint-rules/                  # custom markdownlint rules
   report.js                            # browser capture helper (@sentry/browser)
   tests/                               # RuleTester + node:test
 py/
   tackbox/                             # lint / hook / doctor CLI, cache, engines
+    pyrules/                           # flake8 TBX plugin (python exception rules)
   tests/                               # pytest suite
 ```
-
-A Java analyzer directory with its own manifest will be added in a
-later version, next to `go.mod`, `package.json`, and `py/`.
 
 ## Repo conventions
 
