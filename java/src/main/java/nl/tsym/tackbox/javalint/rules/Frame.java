@@ -1,5 +1,6 @@
 package nl.tsym.tackbox.javalint.rules;
 
+import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.AssignExpr;
@@ -7,7 +8,6 @@ import com.github.javaparser.ast.expr.LambdaExpr;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.expr.ObjectCreationExpr;
-import com.github.javaparser.ast.stmt.BlockStmt;
 import com.github.javaparser.ast.stmt.LocalClassDeclarationStmt;
 import com.github.javaparser.ast.stmt.ThrowStmt;
 import com.github.javaparser.ast.visitor.VoidVisitorAdapter;
@@ -16,10 +16,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/** A catch body's own synchronous frame: the throws, the calls, and the locals
- *  bound to a `new` in this catch, in document order. Nested scopes (lambda,
- *  anonymous / local class, nested method) are not descended - code there runs in
- *  its own frame later, the way go/analyzers refuse to descend into a FuncLit. */
+/** A node's own synchronous frame (a catch body, or one statement of it under
+ *  Flow): the throws, the calls, and the locals bound to a `new`, in document
+ *  order. Nested scopes (lambda, anonymous / local class, nested method) are not
+ *  descended - code there runs in its own frame later, the way go/analyzers
+ *  refuse to descend into a FuncLit. */
 final class Frame extends VoidVisitorAdapter<Void> {
 
     boolean hasThrow;
@@ -27,9 +28,9 @@ final class Frame extends VoidVisitorAdapter<Void> {
     final List<MethodCallExpr> calls = new ArrayList<>();
     final Map<String, ObjectCreationExpr> localNews = new HashMap<>();
 
-    static Frame scan(BlockStmt body) {
+    static Frame scan(Node node) {
         Frame f = new Frame();
-        body.accept(f, null);
+        node.accept(f, null);
         return f;
     }
 

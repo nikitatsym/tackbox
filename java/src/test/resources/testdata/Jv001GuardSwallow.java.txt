@@ -1,0 +1,78 @@
+import org.slf4j.Logger;
+
+// Same-branch doctrine: a guard's throw covers only its own leg. Every other
+// path must report, print, throw, or carry its own `// no-report:` - a throw
+// elsewhere in the catch no longer sanctifies a silent leg.
+class Jv001GuardSwallow {
+    private final Logger log;
+    private final boolean fatal;
+
+    Jv001GuardSwallow(Logger log, boolean fatal) {
+        this.log = log;
+        this.fatal = fatal;
+    }
+
+    void silentFallThrough() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            if (fatal) {
+                throw new RuntimeException(e);
+            }
+            cleanup();
+        }
+    }
+
+    void reportedFallThrough() {
+        try {
+            risky();
+        } catch (Exception e) {
+            if (fatal) {
+                throw new RuntimeException(e);
+            }
+            log.error("recovered", e);
+            cleanup();
+        }
+    }
+
+    // A statement marker covers exactly the paths that execute the marked
+    // statement - here the fall-through leg.
+    void markedFallThrough() {
+        try {
+            risky();
+        } catch (Exception e) {
+            if (fatal) {
+                throw new RuntimeException(e);
+            }
+            // no-report: best-effort cleanup; a failure here is not actionable
+            cleanup();
+        }
+    }
+
+    void silentEarlyReturn() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            if (!fatal) {
+                return;
+            }
+            log.error("failed", e);
+        }
+    }
+
+    void silentElseLeg() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            if (fatal) {
+                throw new RuntimeException(e);
+            } else {
+                cleanup();
+            }
+        }
+    }
+
+    void cleanup() {}
+
+    void risky() throws Exception {}
+}

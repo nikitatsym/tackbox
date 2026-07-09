@@ -1,10 +1,11 @@
 import org.slf4j.Logger;
 
-// JV006 (double capture, port of ERC005): a catch must not both report the caught
-// (a tier-1 / tier-2 capture) and rethrow it. The upstream handler reports the
-// propagated exception a second time, inflating the error backend. Pick one:
-// report and swallow, or propagate without reporting. A stringified rethrow still
-// reaches upstream carrying the failure, so it is still a double.
+// JV006 (double capture, port of ERC005): no execution path may both report the
+// caught (a tier-1 / tier-2 capture) and rethrow it. The upstream handler reports
+// the propagated exception a second time, inflating the error backend. Each path
+// picks one: report and swallow, or propagate without reporting. A stringified
+// rethrow still reaches upstream carrying the failure, so it is still a double.
+// Guard/branch shapes live in Jv006GuardShapes; every case here is linear.
 class Jv006DoubleCapture {
     private final Logger log;
 

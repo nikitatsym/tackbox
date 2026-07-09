@@ -31,7 +31,7 @@ class JsonOutputTest {
         assertTrue(json.contains("\"JV001\": ["), json);
         assertTrue(json.contains("\"posn\": \"S.java:3:"), json);
         assertTrue(json.contains("\"end\": \"S.java:3:"), json);
-        assertTrue(json.contains("\"message\": \"JV001: catch swallows"), json);
+        assertTrue(json.contains("\"message\": \"JV001: a catch path swallows"), json);
     }
 
     @Test
