@@ -470,7 +470,7 @@ def _print_banner(tackbox_root: Path) -> None:
 # -- Claude Code hook -----------------------------------------------------
 
 _HOOK_TOOLS = frozenset({"Edit", "Write", "MultiEdit"})
-_MARKER_RE = re.compile(r"(?:no-report|parse-skip|nil-return|long-comment):")
+_MARKER_RE = re.compile(r"(?:no-report|parse-skip|nil-return|long-comment|test-skip):")
 
 
 def _run_hook() -> int:

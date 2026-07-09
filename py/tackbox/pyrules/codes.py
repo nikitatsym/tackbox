@@ -18,6 +18,7 @@ CODE_TO_ID: dict[str, str] = {
     "TBX005": "python-useless-except",
     "TBX006": "python-import-inside-function",
     "TBX007": "python-exit-in-except",
+    "TBX008": "python-test-skip",
 }
 
 
@@ -67,5 +68,13 @@ MESSAGES: dict[str, str] = {
         "`sys.exit` / `os._exit` inside `except` masks the original error. "
         "Exit code tells nothing about what actually failed. Let the "
         "exception propagate."
+    ),
+    "TBX008": _flat(
+        "Skipped / xfailed test with no reason is a silent hole in the suite - "
+        "nobody knows why it is off or when it comes back. State a non-empty "
+        "reason: `@pytest.mark.skip(reason=...)`, `@pytest.mark.skipif(cond, "
+        "reason=...)`, `@pytest.mark.xfail(reason=...)`, `pytest.skip(...)`, "
+        "or `@unittest.skip(...)`. A deliberate, self-evident skip keeps a "
+        "`# test-skip: <reason>` marker in the comment block directly above."
     ),
 }

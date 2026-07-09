@@ -11,6 +11,7 @@ import java.util.List;
 import nl.tsym.tackbox.javalint.rules.ChainRule;
 import nl.tsym.tackbox.javalint.rules.DoubleCaptureRule;
 import nl.tsym.tackbox.javalint.rules.ExitRule;
+import nl.tsym.tackbox.javalint.rules.SkipRule;
 import nl.tsym.tackbox.javalint.rules.SwallowRule;
 import nl.tsym.tackbox.javalint.rules.ThrowableRule;
 import nl.tsym.tackbox.javalint.rules.UselessCatchRule;
@@ -88,6 +89,7 @@ public final class Javalint {
         out.addAll(new UselessCatchRule().check(name, cu));
         out.addAll(new ExitRule(rec).check(name, cu, markers));
         out.addAll(new DoubleCaptureRule(rec).check(name, cu));
+        out.addAll(new SkipRule().check(name, cu));
         return out;
     }
 

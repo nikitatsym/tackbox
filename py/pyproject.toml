@@ -13,7 +13,7 @@ dynamic = ["version", "dependencies", "readme"]
 tackbox = "tackbox.cli:main"
 
 # The py-native exception engine is a flake8 plugin; flake8 discovers it by this
-# entry point (codes TBX001..TBX007). Requires tackbox to be installed in the
+# entry point (codes TBX001..TBX008). Requires tackbox to be installed in the
 # same env as flake8 - true for `uvx tackbox` and the dev editable install.
 [project.entry-points."flake8.extension"]
 TBX = "tackbox.pyrules:Plugin"

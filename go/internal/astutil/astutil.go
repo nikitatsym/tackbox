@@ -228,7 +228,7 @@ func IsExcluded(pass *analysis.Pass, f *ast.File) bool {
 }
 
 // IsGenerated reports whether the file carries the standard
-// `// Code generated ... DO NOT EDIT` header — cgo wrappers,
+// `// Code generated ... DO NOT EDIT` header - cgo wrappers,
 // protoc output, stringer, etc. Such files are not in scope for
 // error-reporting coverage.
 func IsGenerated(f *ast.File) bool {
@@ -248,6 +248,17 @@ func IsGenerated(f *ast.File) bool {
 func EachFile(pass *analysis.Pass, fn func(f *ast.File)) {
 	for _, f := range pass.Files {
 		if IsTestFile(pass, f) || IsGenerated(f) || IsExcluded(pass, f) {
+			continue
+		}
+		fn(f)
+	}
+}
+
+// EachTestFile invokes fn for every in-project *_test.go file - the
+// mirror of EachFile for rules whose subject is the tests themselves.
+func EachTestFile(pass *analysis.Pass, fn func(f *ast.File)) {
+	for _, f := range pass.Files {
+		if !IsTestFile(pass, f) || IsGenerated(f) || IsExcluded(pass, f) {
 			continue
 		}
 		fn(f)

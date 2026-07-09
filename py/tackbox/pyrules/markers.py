@@ -1,27 +1,30 @@
 """Suppression markers, ported from the Go/JS F1 marker-block engine.
 
-A marker suppresses a finding when `# no-report: <reason>` appears in the
+A marker suppresses a finding when `# <prefix> <reason>` appears in the
 contiguous comment block whose bottom line sits directly above the flagged
 node, with a non-empty reason. "Block" = a run of comment lines on consecutive
 rows; a blank line or code breaks it. The marker may sit on any line of that
-block (a long reason can spill onto adjacent comment lines).
+block (a long reason can spill onto adjacent comment lines). Prefix is
+`no-report:` (swallowed-exception rules) or `test-skip:` (TBX008); each prefix
+gets its own index so the two suppression channels stay independent.
 """
 
 from __future__ import annotations
 
 import tokenize
 
-_PREFIX = "no-report:"
+NO_REPORT = "no-report:"
+TEST_SKIP = "test-skip:"
 
 
-def _marker_reason_ok(comment: str) -> bool:
-    """True iff `comment` (a `#...` token) is a `no-report:` marker with a
-    non-empty reason. Whitespace-only reason does not suppress (parity with the
-    yaml `[ \\t]*\\S` guard and the Go `TrimSpace(...) == ""` check)."""
+def _marker_reason_ok(comment: str, prefix: str) -> bool:
+    """True iff `comment` (a `#...` token) carries `prefix` with a non-empty
+    reason. Whitespace-only reason does not suppress (parity with the yaml
+    `[ \\t]*\\S` guard and the Go `TrimSpace(...) == ""` check)."""
     text = comment.lstrip("#").strip()
-    if not text.startswith(_PREFIX):
+    if not text.startswith(prefix):
         return False
-    return text[len(_PREFIX):].strip() != ""
+    return text[len(prefix):].strip() != ""
 
 
 def _is_standalone(tok: tokenize.TokenInfo) -> bool:
@@ -31,9 +34,14 @@ def _is_standalone(tok: tokenize.TokenInfo) -> bool:
 
 
 class MarkerIndex:
-    """Bottom lines of comment blocks that carry a valid no-report marker."""
+    """Bottom lines of comment blocks that carry a valid marker for `prefix`."""
 
-    def __init__(self, file_tokens: list[tokenize.TokenInfo] | None):
+    def __init__(
+        self,
+        file_tokens: list[tokenize.TokenInfo] | None,
+        prefix: str = NO_REPORT,
+    ):
+        self._prefix = prefix
         self._suppress_bottoms: set[int] = set()
         if file_tokens:
             self._build(file_tokens)
@@ -51,7 +59,7 @@ class MarkerIndex:
                 self._flush(block_rows, block_marked)
                 block_rows, block_marked = [], False
             block_rows.append(row)
-            block_marked = block_marked or _marker_reason_ok(text)
+            block_marked = block_marked or _marker_reason_ok(text, self._prefix)
         self._flush(block_rows, block_marked)
 
     def _flush(self, rows: list[int], marked: bool) -> None:

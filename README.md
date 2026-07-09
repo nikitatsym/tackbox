@@ -61,6 +61,10 @@ its next run.
   you'd actually debug from.
 - **Leaked secrets** - a fingerprint or report argument that names a
   secret or raw user input, quietly shipping tokens/PII into telemetry.
+- **Silently killed tests** - the `it.skip` with no explanation, the
+  failing test reborn as `test.todo`, the `it.only` that quietly turns
+  off the rest of the suite. Every skip must state a reason; focused
+  tests are always an error.
 
 ## Wiring into a repo
 
@@ -122,11 +126,11 @@ absent and verifies the payload against it.
 
 ## What the rules enforce
 
-Covers ERC001-007 (Go, via `erclint`), JV001-006 (Java, via the native
+Covers ERC001-008 (Go, via `erclint`), JV001-007 (Java, via the native
 `javalint` engine), ERC006 fingerprint rules (Go, Python, JS, TS, via
-the `opengrep` wrapper), Python exception rules (via the `pyrules`
-flake8 plugin), frontend swallow rules (JS, TS, Svelte, via ESLint),
-and Markdown (MD001-059 + ASCII).
+the `opengrep` wrapper), Python exception and test-skip rules (via the
+`pyrules` flake8 plugin), frontend swallow and test-skip rules (JS,
+TS, Svelte, via ESLint), and Markdown (MD001-059 + ASCII).
 
 See `go/README.md` for the Go ruleset. The specs these rules implement
 (`error-reporting-and-coverage`, `error-handling-frontend`) live
@@ -144,6 +148,11 @@ outside this repo (private notes); the public summary:
 - A single err-branch may not both capture and `return err`.
 - Capture-call arguments (message, tags, dedupKey) must not reference
   secret-named identifiers or raw user input.
+- A skipped test must state a reason: `t.Skip("why")` / `t.Skipf`, or
+  `// test-skip: <reason>` above a bare `t.SkipNow()`. The same
+  contract holds in every language (skip / todo / xfail /
+  `@Disabled`); focused tests (`it.only`, `fit`) are an unconditional
+  error.
 
 The same model is enforced beyond Go:
 
@@ -154,17 +163,19 @@ The same model is enforced beyond Go:
   `Error` must rethrow), JV004 useless-catch (a catch that only
   rethrows the caught unchanged - deleted, not annotated), JV005 exit
   (`System.exit` in a catch needs a preceding capture; port of ERC003),
-  and JV006 double-capture (no path may both report and rethrow; port
-  of ERC005).
-- **Python** exception rules ship as the `pyrules` flake8 plugin
-  (`TBX` codes); **JS / TS / Svelte** swallow rules run under ESLint.
+  JV006 double-capture (no path may both report and rethrow; port of
+  ERC005), and JV007 skip (`@Disabled` / `@Ignore` must carry a
+  non-empty reason string).
+- **Python** exception and test-skip rules ship as the `pyrules`
+  flake8 plugin (`TBX` codes); **JS / TS / Svelte** swallow and
+  test-skip rules run under ESLint.
 
 ## No configuration
 
 By design, the ruleset is a single non-negotiable bundle. There are
 no flags to disable individual rules. Suppressing a finding requires
 the explicit per-site marker (`// no-report`, `// parse-skip`,
-`// nil-return`) with a non-empty reason.
+`// nil-return`, `// test-skip`) with a non-empty reason.
 
 Capture helpers are recognized by origin, not by name: a Go call
 counts only when its callee resolves (type info / import) to the
@@ -186,8 +197,9 @@ Claude Code hook event on stdin and dispatches by `hook_event_name`:
   finding it exits 2 with the finding on stderr, so the model sees it
   and fixes it in-loop. The authoritative gate stays pre-commit / CI.
 - **PreToolUse** asks for approval before a new suppression marker
-  (`// no-report`, `// parse-skip`, `// nil-return`, `// long-comment`)
-  or a new `.tackbox-reporters` line lands; removing one is free.
+  (`// no-report`, `// parse-skip`, `// nil-return`, `// test-skip`,
+  `// long-comment`) or a new `.tackbox-reporters` line lands;
+  removing one is free.
 
 The hook is a no-op unless the edit's `cwd` is a git repo with a
 `dev.py` at its root. Wire it once, globally, in

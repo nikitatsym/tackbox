@@ -1,9 +1,10 @@
-"""The flake8 plugin: AST visitor for the seven TBX exception rules.
+"""The flake8 plugin: AST visitor for the TBX python rules.
 
-Ported from exceptions-python.yaml (opengrep) to a py-native engine so the two
-things opengrep could not express become expressible: the sound
-supervised-shutdown carve-out and tier-2 reporter symbol validation. Findings
-carry the pre-migration rule id in the message so parity stays id-for-id.
+The seven exception rules are ported from exceptions-python.yaml (opengrep) to
+a py-native engine so the two things opengrep could not express become
+expressible: the sound supervised-shutdown carve-out and tier-2 reporter symbol
+validation. Findings carry the pre-migration rule id in the message so parity
+stays id-for-id. TBX008 (python-test-skip) is py-native from the start.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import sys
 from tackbox import __version__ as _version
 
 from .codes import CODE_TO_ID, MESSAGES
-from .markers import MarkerIndex
+from .markers import MarkerIndex, TEST_SKIP
 from . import reporters as _reporters
 
 # Sound supervised-shutdown carve-out: an except catching only these, whose
@@ -143,10 +144,88 @@ def _suppress_allowlisted(call: ast.Call) -> bool:
     return len(call.args) == 1 and _dotted_name(call.args[0]) == "asyncio.CancelledError"
 
 
+def _chain_ends(dotted: str, suffix: str) -> bool:
+    """Origin-aware suffix match: `pytest.mark.skip` and `mark.skip` (from `from
+    pytest import mark`) both end in `mark.skip`."""
+    return dotted == suffix or dotted.endswith("." + suffix)
+
+
+def _kw_value(call: ast.Call, name: str) -> ast.expr | None:
+    for kw in call.keywords:
+        if kw.arg == name:
+            return kw.value
+    return None
+
+
+def _reason_expr_ok(expr: ast.expr) -> bool:
+    """A non-literal reason (variable, f-string) is trusted; only an empty or
+    whitespace-only string literal fails."""
+    if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+        return expr.value.strip() != ""
+    return True
+
+
+def _reason_present(call: ast.Call | None, positional: bool, kw: bool) -> bool:
+    """True iff an acceptable reason is given via the allowed source(s). A bare
+    decorator (no call) or an absent/empty reason -> False."""
+    if call is None:
+        return False
+    expr: ast.expr | None = None
+    if positional and call.args:
+        expr = call.args[0]
+    if expr is None and kw:
+        expr = _kw_value(call, "reason")
+    if expr is None:
+        return False
+    return _reason_expr_ok(expr)
+
+
+def _skip_decorator_flag(dec: ast.expr, has_unittest_skip: bool) -> bool:
+    """True iff `dec` is a skip/xfail decorator whose reason is missing/empty.
+    Bare-name `@skip` counts only when `from unittest import skip` is in the
+    file (origin gate)."""
+    call = dec if isinstance(dec, ast.Call) else None
+    dotted = _dotted_name(call.func if call else dec)
+    if _chain_ends(dotted, "mark.skip"):
+        return not _reason_present(call, positional=True, kw=True)
+    if _chain_ends(dotted, "mark.skipif"):
+        return not _reason_present(call, positional=False, kw=True)
+    if _chain_ends(dotted, "mark.xfail"):
+        return not _reason_present(call, positional=False, kw=True)
+    if _chain_ends(dotted, "unittest.skip"):
+        return not _reason_present(call, positional=True, kw=False)
+    if dotted == "skip" and has_unittest_skip:
+        return not _reason_present(call, positional=True, kw=False)
+    return False
+
+
+def _is_pytest_skip_call(call: ast.Call) -> bool:
+    return _chain_ends(_dotted_name(call.func), "pytest.skip")
+
+
+def _imports_unittest_skip(tree: ast.AST) -> bool:
+    """True iff the file binds the bare name `skip` to unittest's skip; an
+    aliased import (`skip as s`) binds a different name and does not gate."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "unittest":
+            for alias in node.names:
+                if alias.name == "skip" and alias.asname in (None, "skip"):
+                    return True
+    return False
+
+
 class _Visitor(ast.NodeVisitor):
-    def __init__(self, markers: MarkerIndex, reporter_names: frozenset[str]):
+    def __init__(
+        self,
+        markers: MarkerIndex,
+        skip_markers: MarkerIndex,
+        reporter_names: frozenset[str],
+        unittest_skip: bool,
+    ):
         self.markers = markers
+        self.skip_markers = skip_markers
         self.reporter_names = reporter_names
+        self.unittest_skip = unittest_skip
         self.findings: list[tuple[int, int, str]] = []
         self._func_depth = 0
 
@@ -154,11 +233,26 @@ class _Visitor(ast.NodeVisitor):
         self.findings.append((node.lineno, node.col_offset, code))
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._check_skip_decorators(node)
         self._func_depth += 1
         self.generic_visit(node)
         self._func_depth -= 1
 
     visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._check_skip_decorators(node)
+        self.generic_visit(node)
+
+    def _check_skip_decorators(self, node: ast.AST) -> None:
+        # Marker anchors to the flagged decorator's own line: `suppresses` is
+        # line-above, and the flagged decorator (not the first) is the natural
+        # anchor - the marker sits next to the construct it excuses.
+        for dec in node.decorator_list:
+            if not _skip_decorator_flag(dec, self.unittest_skip):
+                continue
+            if not self.skip_markers.suppresses(dec.lineno):
+                self._add(dec, "TBX008")
 
     def visit_Import(self, node: ast.Import) -> None:
         if self._func_depth > 0:
@@ -173,6 +267,9 @@ class _Visitor(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:
         if _is_suppress_call(node) and not _suppress_allowlisted(node):
             self._add(node, "TBX002")
+        if _is_pytest_skip_call(node) and not _reason_present(node, positional=True, kw=True):
+            if not self.skip_markers.suppresses(node.lineno):
+                self._add(node, "TBX008")
         self.generic_visit(node)
 
     def visit_Try(self, node: ast.Try) -> None:
@@ -224,7 +321,12 @@ class Plugin:
         self.file_tokens = file_tokens
 
     def run(self):
-        visitor = _Visitor(MarkerIndex(self.file_tokens), type(self)._reporter_names)
+        visitor = _Visitor(
+            MarkerIndex(self.file_tokens),
+            MarkerIndex(self.file_tokens, prefix=TEST_SKIP),
+            type(self)._reporter_names,
+            _imports_unittest_skip(self.tree),
+        )
         visitor.visit(self.tree)
         for line, col, code in visitor.findings:
             text = f"{code} {CODE_TO_ID[code]}: {MESSAGES[code]}"
