@@ -28,7 +28,7 @@
     "@typescript-eslint/parser": "^8.0.0",
     "markdownlint": "0.40.0",
     "svelte": "^5.0.0",
-    "svelte-eslint-parser": "^0.43.0"
+    "svelte-eslint-parser": "^1.6.0"
   },
   "devDependencies": {
     "eslint": "^9.0.0"

@@ -98,7 +98,7 @@
         "purpose": "TypeScript ESLint parser"
       },
       "svelte-eslint-parser": {
-        "constraint": "^0.43.0",
+        "constraint": "^1.6.0",
         "kind": "npm",
         "license": "MIT",
         "purpose": "Svelte ESLint parser"

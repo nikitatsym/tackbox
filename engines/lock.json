@@ -1,6 +1,6 @@
 {
-  "manifest_sha256": "7ce6e8a1705b6f8c000f22b5ca4c9720c3ec88b736084c611e6becb75e5ba265",
+  "manifest_sha256": "2fce84a244e673b4c2b094a89f1922f82a03307ada8e95dfa317993e48372393",
   "schema": 1,
-  "vendor_lock_sha256": "4684f84b62df48a6deb0ee1361d5fb5b7547556ac8053af3f1a3c3943e30b5a4",
-  "version": "0.1.0"
+  "vendor_lock_sha256": "84f0d556fa7be8d7a565cb7ca1cf8e0d6c9c5e11aad6a92ae8ae3caefbe63a33",
+  "version": "0.1.1"
 }
