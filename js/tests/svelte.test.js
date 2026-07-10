@@ -20,6 +20,20 @@ test('no-swallow-catch (Svelte)', () => {
   })
 })
 
+// Svelte 5.3+ syntax the parser must handle; 0.43.x died here with
+// "Unknown type: SvelteBoundary" on any rule run.
+test('svelte:boundary parses (Svelte 5)', () => {
+  ruleTester.run('no-console-error', require('../rules/no-console-error'), {
+    valid: [
+      {
+        code: '<svelte:boundary onerror={(e) => f(e)}>\n<p>{x}</p>\n{#snippet failed(error)}<p>{error}</p>{/snippet}\n</svelte:boundary>',
+        ...svelteOpts,
+      },
+    ],
+    invalid: [],
+  })
+})
+
 test('no-console-error (Svelte)', () => {
   ruleTester.run('no-console-error', require('../rules/no-console-error'), {
     valid: [
