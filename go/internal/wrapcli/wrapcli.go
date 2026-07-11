@@ -66,7 +66,8 @@ func ToAbs(cwd string, args []string) []string {
 // Finding is the internal machine-mode contract: one JSON object per located
 // finding.
 type Finding struct {
-	File string `json:"file"`
-	Line int    `json:"line"`
-	Rule string `json:"rule"`
+	File    string `json:"file"`
+	Line    int    `json:"line"`
+	Rule    string `json:"rule"`
+	Message string `json:"message,omitempty"`
 }
