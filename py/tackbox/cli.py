@@ -11,7 +11,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from . import __version__, cache, doctor, reporters
+from . import __version__, cache, codequality, doctor, reporters
 from .engines import (
     EngineResult,
     EnginesStoreError,
@@ -66,6 +66,7 @@ def _dispatch(argv: list[str] | None) -> int:
                 no_cache=args.no_cache,
                 changed=args.changed,
                 since=args.since,
+                codequality_path=args.codequality,
             )
         except (
             PathspecMagicError,
@@ -106,6 +107,12 @@ def _parse_argv(argv: list[str]) -> argparse.Namespace:
         metavar="<ref>",
         default=None,
         help="restrict to three-dot diff <ref>...HEAD unioned with dirty tree",
+    )
+    lint.add_argument(
+        "--codequality",
+        metavar="<path>",
+        default=None,
+        help="also write a CodeClimate JSON report of all findings to <path>",
     )
     sub.add_parser("doctor", help="verify the hermetic install is functional")
     sub.add_parser(
@@ -168,7 +175,13 @@ def _lint_results(
     return results, warnings, go_orphans
 
 
-def _run_lint(scope: str, no_cache: bool, changed: bool, since: str | None) -> int:
+def _run_lint(
+    scope: str,
+    no_cache: bool,
+    changed: bool,
+    since: str | None,
+    codequality_path: str | None = None,
+) -> int:
     repo_root = _find_repo_root()
     tackbox_root = _tackbox_root()
 
@@ -194,24 +207,53 @@ def _run_lint(scope: str, no_cache: bool, changed: bool, since: str | None) -> i
             f"tackbox: warning: no enclosing go.mod, skipped: {pkg}",
             file=sys.stderr,
         )
+
+    exit_code = 0
+    if results:
+        for r in results:
+            sys.stdout.write(f"== {r.engine_id} ==\n")
+            if r.stdout:
+                sys.stdout.write(r.stdout)
+                if not r.stdout.endswith("\n"):
+                    sys.stdout.write("\n")
+            if r.stderr:
+                sys.stderr.write(r.stderr)
+                if not r.stderr.endswith("\n"):
+                    sys.stderr.write("\n")
+
+        # Flush inside the guarded region so a closed downstream pipe surfaces as
+        # a caught BrokenPipeError (exit 141), not an interpreter-shutdown crash.
+        sys.stdout.flush()
+        exit_code = _aggregate_exit(results)
+
+    # The report is the flag's purpose, so it is written regardless of exit_code.
+    # located_findings needs machine-mode output, hence a second pass; the
+    # console pass above stays byte-identical.
+    if codequality_path is not None:
+        findings = (
+            _codequality_findings(
+                repo_root, tackbox_root, scope, no_cache, changed_scope
+            )
+            if results
+            else []
+        )
+        codequality.write_report(Path(codequality_path), findings)
+    return exit_code
+
+
+def _codequality_findings(
+    repo_root: Path,
+    tackbox_root: Path,
+    scope: str,
+    no_cache: bool,
+    changed_scope: set[str] | None,
+) -> list:
+    results, _warnings, _orphans = _lint_results(
+        repo_root, tackbox_root, scope, no_cache, changed_scope, machine=True
+    )
     if not results:
-        return 0
-
-    for r in results:
-        sys.stdout.write(f"== {r.engine_id} ==\n")
-        if r.stdout:
-            sys.stdout.write(r.stdout)
-            if not r.stdout.endswith("\n"):
-                sys.stdout.write("\n")
-        if r.stderr:
-            sys.stderr.write(r.stderr)
-            if not r.stderr.endswith("\n"):
-                sys.stderr.write("\n")
-
-    # Flush inside the guarded region so a closed downstream pipe surfaces as
-    # a caught BrokenPipeError (exit 141), not an interpreter-shutdown crash.
-    sys.stdout.flush()
-    return _aggregate_exit(results)
+        return []
+    return _located(results, repo_root)
 
 
 def _drop_go_orphans(
