@@ -192,7 +192,27 @@ func readReport(path string) (*jscpdReport, error) {
 	if err := json.Unmarshal(data, &rep); err != nil {
 		return nil, fmt.Errorf("parse jscpd report %s: %w", path, err)
 	}
+	for i := range rep.Duplicates {
+		rep.Duplicates[i].FirstFile.Name = realPath(rep.Duplicates[i].FirstFile.Name)
+		rep.Duplicates[i].SecondFile.Name = realPath(rep.Duplicates[i].SecondFile.Name)
+	}
 	return &rep, nil
+}
+
+// realPath resolves jscpd's virtual SFC sub-block names (`X.svelte:css`) to
+// the on-disk file; their line numbers are already real-file coordinates.
+func realPath(name string) string {
+	if _, err := os.Stat(name); err == nil {
+		return name
+	}
+	if i := strings.LastIndex(name, ":"); i > 0 {
+		if base := name[:i]; base != "" {
+			if _, err := os.Stat(base); err == nil {
+				return base
+			}
+		}
+	}
+	return name
 }
 
 // emit writes findings and returns the surviving endpoint count. Java clones
