@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -126,6 +127,69 @@ func TestVersionFlag(t *testing.T) {
 	}
 	if string(out) != "erclint-opengrep dev\n" {
 		t.Fatalf("--version stdout mismatch: %q", out)
+	}
+}
+
+// TestERC006SecretArgCorpus pins erc006-fingerprint-secret-arg against a corpus
+// of five true-positive capture sites (secret-named identifiers reaching a
+// capture arg at varying depth) and three false-positive traps (domain prose /
+// nouns in literals). Exactly-one-per-line also asserts the translate-layer
+// dedup: the rule binds each offending line twice (two $ID bindings) and
+// opengrep emits both, but the machine contract is one finding per line.
+func TestERC006SecretArgCorpus(t *testing.T) {
+	requireOpengrepOnPath(t)
+	bin := buildOpengrepWrapper(t)
+	repo := makeRepo(t)
+
+	corpus, err := os.ReadFile(filepath.Join("testdata", "erc006_secret_corpus.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "corpus.go"), corpus, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, _ := runWrapper(t, bin, repo, "--machine", "corpus.go")
+
+	got := map[int]int{}
+	for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
+		if line == "" {
+			continue
+		}
+		var f struct {
+			File    string `json:"file"`
+			Line    int    `json:"line"`
+			Rule    string `json:"rule"`
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(line), &f); err != nil {
+			t.Fatalf("bad machine line %q: %v\nstdout=%s\nstderr=%s", line, err, stdout, stderr)
+		}
+		if f.Rule == "erc006-fingerprint-secret-arg" {
+			got[f.Line]++
+			if !strings.Contains(f.Message, "secret-named identifier") {
+				t.Errorf("line %d: rule message not plumbed into machine output: %q", f.Line, f.Message)
+			}
+		}
+	}
+
+	truePos := map[int]bool{18: true, 20: true, 22: true, 24: true, 26: true}
+	falsePos := []int{29, 31, 33}
+
+	for ln := range truePos {
+		if got[ln] != 1 {
+			t.Errorf("TP line %d: want exactly 1 secret-arg finding (deduped), got %d\nstdout=%s", ln, got[ln], stdout)
+		}
+	}
+	for _, ln := range falsePos {
+		if got[ln] != 0 {
+			t.Errorf("FP line %d: want 0 secret-arg findings, got %d\nstdout=%s", ln, got[ln], stdout)
+		}
+	}
+	for ln := range got {
+		if !truePos[ln] {
+			t.Errorf("unexpected secret-arg finding at line %d\nstdout=%s", ln, stdout)
+		}
 	}
 }
 

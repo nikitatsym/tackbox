@@ -168,7 +168,9 @@ func splitMachine(args []string) (bool, []string) {
 // one {file, line, rule} object per line. Paths are made repo-relative and
 // check_id is reduced to its final segment (the rule id, the temp rules dir
 // prefix dropped). A whole-output parse failure surfaces as an error, never a
-// silent drop.
+// silent drop. Findings are deduped by (rule, path, line): a rule can bind the
+// same offending line via several metavariables and opengrep emits one result
+// per binding, but the caller contract is one finding per located line.
 func emitMachine(w io.Writer, jsonOut []byte, cwd string) error {
 	if len(bytes.TrimSpace(jsonOut)) == 0 {
 		return nil
@@ -181,6 +183,9 @@ func emitMachine(w io.Writer, jsonOut []byte, cwd string) error {
 			Start   struct {
 				Line int `json:"line"`
 			} `json:"start"`
+			Extra struct {
+				Message string `json:"message"`
+			} `json:"extra"`
 		} `json:"results"`
 	}
 	if err := json.Unmarshal(jsonOut, &parsed); err != nil {
@@ -190,16 +195,30 @@ func emitMachine(w io.Writer, jsonOut []byte, cwd string) error {
 		// over-report rather than silently see zero findings.
 		return enc.Encode(wrapcli.Finding{Rule: "opengrep-json-unparseable"})
 	}
+	// Dedup key excludes Message: duplicate bindings on one line may
+	// interpolate different metavariables into it; the first message wins.
+	type key struct {
+		file string
+		line int
+		rule string
+	}
+	seen := map[key]bool{}
 	for _, r := range parsed.Results {
 		rule := r.CheckID
 		if i := strings.LastIndex(rule, "."); i >= 0 {
 			rule = rule[i+1:]
 		}
-		if err := enc.Encode(wrapcli.Finding{
-			File: rewritePaths(r.Path, cwd),
-			Line: r.Start.Line,
-			Rule: rule,
-		}); err != nil {
+		f := wrapcli.Finding{
+			File:    rewritePaths(r.Path, cwd),
+			Line:    r.Start.Line,
+			Rule:    rule,
+			Message: r.Extra.Message,
+		}
+		if seen[key{f.File, f.Line, f.Rule}] {
+			continue
+		}
+		seen[key{f.File, f.Line, f.Rule}] = true
+		if err := enc.Encode(f); err != nil {
 			return err
 		}
 	}
