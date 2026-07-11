@@ -1,4 +1,4 @@
-const { hasMarkerAbove, enclosingFn } = require('./_shared')
+const { hasMarkerAbove, enclosingFn, someNode } = require('./_shared')
 
 // isAllSettledCall: syntactic `Promise.allSettled(...)`. Matched by shape, not
 // resolution - Promise is a global and allSettled is unambiguous.
@@ -20,28 +20,13 @@ function isAllSettledCall(node) {
 // .forEach / .filter callback over the settled results, so the scan must not
 // stop at function boundaries the way _shared.walk does.
 function refsReason(root) {
-  const stack = [root]
-  while (stack.length) {
-    const n = stack.pop()
-    if (!n || typeof n !== 'object') continue
-    if (Array.isArray(n)) {
-      for (const c of n) stack.push(c)
-      continue
-    }
-    if (
+  return someNode(
+    root,
+    n =>
       n.type === 'MemberExpression' &&
       ((!n.computed && n.property.type === 'Identifier' && n.property.name === 'reason') ||
-        (n.computed && n.property.type === 'Literal' && n.property.value === 'reason'))
-    ) {
-      return true
-    }
-    for (const key of Object.keys(n)) {
-      if (key === 'parent' || key === 'loc' || key === 'range') continue
-      const child = n[key]
-      if (child && typeof child === 'object') stack.push(child)
-    }
-  }
-  return false
+        (n.computed && n.property.type === 'Literal' && n.property.value === 'reason')),
+  )
 }
 
 module.exports = {

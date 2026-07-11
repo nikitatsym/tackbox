@@ -13,13 +13,13 @@ Plan acceptance for step 4:
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from conftest import commit_all, init_repo, tackbox_env
 
 from tackbox import cache as tackbox_cache
 from tackbox import cli
@@ -75,32 +75,13 @@ def _needs_node():
         pytest.fail("node not installed; install it, do not skip")
 
 
-def _git(root: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
-
-
-def _init_repo(root: Path) -> None:
-    _git(root, "init", "-q", "-b", "main")
-    _git(root, "config", "user.email", "t@t")
-    _git(root, "config", "user.name", "t")
-
-
-def _commit_all(root: Path, msg: str = "snap") -> None:
-    _git(root, "add", ".")
-    _git(root, "commit", "-q", "-m", msg)
-
-
 def _run_tackbox(
     repo: Path, cache_home: Path, *extra: str
 ) -> subprocess.CompletedProcess:
-    tackbox_root = Path(__file__).resolve().parents[2]
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(tackbox_root / "py")
-    env["TACKBOX_CACHE_HOME"] = str(cache_home)
     return subprocess.run(
         [sys.executable, "-m", "tackbox.cli", "lint", ".", *extra],
         cwd=repo,
-        env=env,
+        env=tackbox_env(TACKBOX_CACHE_HOME=str(cache_home)),
         capture_output=True,
         text=True,
     )
@@ -147,8 +128,8 @@ def go_repo(tmp_path) -> Path:
     (tmp_path / "pkg_a" / "a.go").write_text(GO_PKG_A_USES_B_ADD2)
     (tmp_path / "pkg_c").mkdir()
     (tmp_path / "pkg_c" / "c.go").write_text(GO_PKG_C_UNRELATED)
-    _init_repo(tmp_path)
-    _commit_all(tmp_path)
+    init_repo(tmp_path)
+    commit_all(tmp_path)
     return tmp_path
 
 
@@ -158,8 +139,8 @@ def clean_js_repo(tmp_path) -> Path:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "a.js").write_text(JS_CLEAN)
     (tmp_path / "src" / "b.js").write_text(JS_CLEAN)
-    _init_repo(tmp_path)
-    _commit_all(tmp_path)
+    init_repo(tmp_path)
+    commit_all(tmp_path)
     return tmp_path
 
 
@@ -168,8 +149,8 @@ def dirty_js_repo(tmp_path) -> Path:
     _needs_node()
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "bad.js").write_text(JS_SWALLOW)
-    _init_repo(tmp_path)
-    _commit_all(tmp_path)
+    init_repo(tmp_path)
+    commit_all(tmp_path)
     return tmp_path
 
 
@@ -264,8 +245,8 @@ def test_partial_success_caches_the_clean_files(tmp_path):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "clean.js").write_text(JS_CLEAN)
     (tmp_path / "src" / "bad.js").write_text(JS_SWALLOW)
-    _init_repo(tmp_path)
-    _commit_all(tmp_path)
+    init_repo(tmp_path)
+    commit_all(tmp_path)
     cache_home = tmp_path / "cache"
 
     r = _run_tackbox(tmp_path, cache_home)
@@ -475,8 +456,8 @@ def java_swallow_repo(tmp_path) -> Path:
     (tmp_path / ".tackbox-reporters").write_text(
         "Handler.java#Handler.repot: swallow log helper\n"
     )
-    _init_repo(tmp_path)
-    _commit_all(tmp_path)
+    init_repo(tmp_path)
+    commit_all(tmp_path)
     return tmp_path
 
 

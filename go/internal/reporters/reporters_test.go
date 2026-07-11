@@ -1,22 +1,18 @@
 package reporters
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/nikitatsym/tackbox/go/internal/gomodtest"
 )
 
-// writeFixture creates a throwaway module at t.TempDir()/mod with the given
-// go.mod and source, returning the source file's absolute path.
+// writeFixture creates a throwaway module at t.TempDir() with the given
+// source, returning the source file's absolute path.
 func writeFixture(t *testing.T, source string) string {
 	t.Helper()
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module fixture\n\ngo 1.21\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	file := filepath.Join(dir, "rep.go")
-	if err := os.WriteFile(file, []byte(source), 0o644); err != nil {
+	file, err := gomodtest.Write(t.TempDir(), source)
+	if err != nil {
 		t.Fatal(err)
 	}
 	return file
@@ -45,8 +41,11 @@ const uncalledSource = `package fixture
 func myReport(err error) {}
 `
 
-func TestResolveUnexportedFunctionInMain(t *testing.T) {
-	file := writeFixture(t, mainSource)
+// assertResolvesMyReport: Resolve must return exactly the one myReport decl
+// without hard-erroring, whatever the caller shape in source.
+func assertResolvesMyReport(t *testing.T, source string) {
+	t.Helper()
+	file := writeFixture(t, source)
 	decls, err := Resolve(file + "#myReport")
 	if err != nil {
 		t.Fatalf("Resolve of unexported top-level function must not hard-error: %v", err)
@@ -56,15 +55,12 @@ func TestResolveUnexportedFunctionInMain(t *testing.T) {
 	}
 }
 
+func TestResolveUnexportedFunctionInMain(t *testing.T) {
+	assertResolvesMyReport(t, mainSource)
+}
+
 func TestResolveUnexportedFunctionUncalled(t *testing.T) {
-	file := writeFixture(t, uncalledSource)
-	decls, err := Resolve(file + "#myReport")
-	if err != nil {
-		t.Fatalf("Resolve of unexported top-level function must not hard-error: %v", err)
-	}
-	if len(decls) != 1 || decls[0].Name != "myReport" {
-		t.Fatalf("want one declared reporter named myReport, got %+v", decls)
-	}
+	assertResolvesMyReport(t, uncalledSource)
 }
 
 func TestResolveDeadSymbolStillErrors(t *testing.T) {

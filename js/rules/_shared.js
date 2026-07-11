@@ -463,8 +463,11 @@ function stringifyingNode(n) {
 // object flow. The JS analog of Go astutil.errObjectFlows (F5 object-flow: a
 // composite literal, a constructor argument, or a bare rethrow propagates; the
 // chain breaks only when every occurrence of err passes through a string).
-function errObjectFlows(root, errName) {
-  if (errName == null) return false
+// someNode: explicit-stack DFS over an ESTree subtree, returning true as soon
+// as match(node) holds. prune(node) (optional) skips a node and its subtree.
+// Unlike walk() this descends into nested function bodies (object-flow must not
+// stop at a boundary), so it takes predicates rather than pruning structurally.
+function someNode(root, match, prune) {
   const stack = [root]
   while (stack.length) {
     const n = stack.pop()
@@ -473,8 +476,8 @@ function errObjectFlows(root, errName) {
       for (const c of n) stack.push(c)
       continue
     }
-    if (stringifyingNode(n)) continue
-    if (n.type === 'Identifier' && n.name === errName) return true
+    if (prune && prune(n)) continue
+    if (match(n)) return true
     for (const key of Object.keys(n)) {
       if (key === 'parent' || key === 'loc' || key === 'range') continue
       const child = n[key]
@@ -484,9 +487,15 @@ function errObjectFlows(root, errName) {
   return false
 }
 
-// isBoundaryValue: `{ ok: false, cause|message: <refs err> }`. A bare
-// { ok: false } drops the caught error and does not qualify.
-function isBoundaryValue(expr, errName) {
+function errObjectFlows(root, errName) {
+  if (errName == null) return false
+  return someNode(root, n => n.type === 'Identifier' && n.name === errName, stringifyingNode)
+}
+
+// objectCarriesErr: `{ ok: false, cause|message: <valueCarries(v, err)> }`.
+// A bare { ok: false } drops the caught error and does not qualify. valueCarries
+// decides whether a property value carries err (a plain ref, or object flow).
+function objectCarriesErr(expr, errName, valueCarries) {
   if (!errName || !expr || expr.type !== 'ObjectExpression') return false
   const okProp = expr.properties.find(
     p => p.type === 'Property' && p.key && p.key.type === 'Identifier' && p.key.name === 'ok',
@@ -498,8 +507,12 @@ function isBoundaryValue(expr, errName) {
       p.key &&
       p.key.type === 'Identifier' &&
       (p.key.name === 'cause' || p.key.name === 'message') &&
-      exprRefsIdent(p.value, errName),
+      valueCarries(p.value, errName),
   )
+}
+
+function isBoundaryValue(expr, errName) {
+  return objectCarriesErr(expr, errName, exprRefsIdent)
 }
 
 function containsReturn(node) {
@@ -618,6 +631,25 @@ function makeHandledAnalysis(opts) {
   return { handled }
 }
 
+const TEST_ROOTS = new Set(['it', 'test', 'describe'])
+
+// matchesTestModifier: does callee name a test-modifier form - a bare alias in
+// bareSet (fit/xit/...) or a member chain (it.only / it.skip) whose leaf
+// property satisfies isModifierProp and whose root is a test root.
+function matchesTestModifier(callee, bareSet, isModifierProp) {
+  if (callee.type === 'Identifier') return bareSet.has(callee.name)
+  if (callee.type === 'MemberExpression') {
+    let cur = callee
+    let prop = false
+    while (cur && cur.type === 'MemberExpression') {
+      if (!cur.computed && cur.property.type === 'Identifier' && isModifierProp(cur.property.name)) prop = true
+      cur = cur.object
+    }
+    return prop && cur.type === 'Identifier' && TEST_ROOTS.has(cur.name)
+  }
+  return false
+}
+
 module.exports = {
   REPORTER_NAMES,
   REPORTER_FULL,
@@ -642,6 +674,9 @@ module.exports = {
   exprIsSecretRef,
   enclosingFn,
   fnReturnsResultLike,
+  someNode,
   errObjectFlows,
+  objectCarriesErr,
+  matchesTestModifier,
   makeHandledAnalysis,
 }

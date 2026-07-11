@@ -17,7 +17,14 @@ from __future__ import annotations
 import atexit
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
+from pathlib import Path
+
+# Repo `py/` dir - what tests put on a subprocess PYTHONPATH so a fresh
+# interpreter imports the in-tree tackbox.
+_PY_DIR = Path(__file__).resolve().parents[1]
 
 _HOST_GIT_ENV = (
     "GIT_DIR",
@@ -42,3 +49,33 @@ def pytest_configure(config):
         os.environ.pop(var, None)
     _redirect("TACKBOX_CACHE_HOME", "tackbox-test-cache-")
     _redirect("XDG_DATA_HOME", "tackbox-test-xdg-")
+
+
+# -- shared scaffolding for CLI/hook tests (imported: `from conftest import ...`)
+
+
+def git(root: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
+
+def init_repo(root: Path, *, commit: bool = False) -> None:
+    git(root, "init", "-q", "-b", "main")
+    git(root, "config", "user.email", "t@t")
+    git(root, "config", "user.name", "t")
+    if commit:
+        git(root, "add", ".")
+        git(root, "commit", "-q", "-m", "fixture")
+
+
+def commit_all(root: Path, msg: str = "snap") -> None:
+    git(root, "add", ".")
+    git(root, "commit", "-q", "-m", msg)
+
+
+def tackbox_env(**overrides: str) -> dict[str, str]:
+    """os.environ plus PYTHONPATH pointing at the in-tree tackbox, so a spawned
+    `python -m tackbox.cli` runs this checkout. overrides win (e.g. cache home)."""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(_PY_DIR)
+    env.update(overrides)
+    return env

@@ -7,14 +7,12 @@ validation (scope-independent), and the BrokenPipe guard.
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-
-TACKBOX_ROOT = Path(__file__).resolve().parents[2]
+from conftest import init_repo, tackbox_env
 
 GO_MOD = "module fixture\n\ngo 1.21\n"
 
@@ -70,29 +68,15 @@ def handler():
 """
 
 
-def _git(cwd: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
-
-
 def _init(root: Path) -> None:
-    _git(root, "init", "-q", "-b", "main")
-    _git(root, "config", "user.email", "t@t")
-    _git(root, "config", "user.name", "t")
-    _git(root, "add", ".")
-    _git(root, "commit", "-q", "-m", "fixture")
-
-
-def _env() -> dict[str, str]:
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(TACKBOX_ROOT / "py")
-    return env
+    init_repo(root, commit=True)
 
 
 def _lint(root: Path, *extra: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-m", "tackbox.cli", "lint", *(extra or (".",)), "--no-cache"],
         cwd=root,
-        env=_env(),
+        env=tackbox_env(),
         capture_output=True,
         text=True,
     )
@@ -189,7 +173,7 @@ def test_broken_pipe_exit_141(tmp_path):
         "echo EXIT=${PIPESTATUS[0]}"
     )
     r = subprocess.run(
-        ["bash", "-c", cmd], cwd=tmp_path, env=_env(), capture_output=True, text=True
+        ["bash", "-c", cmd], cwd=tmp_path, env=tackbox_env(), capture_output=True, text=True
     )
     assert "EXIT=141" in r.stdout, f"expected tackbox exit 141 on broken pipe:\n{r.stdout}\n{r.stderr}"
     assert "Traceback" not in r.stderr, r.stderr

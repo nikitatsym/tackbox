@@ -18,28 +18,19 @@ import (
 var Analyzer = &analysis.Analyzer{
 	Name: "recoverswallow",
 	Doc:  "ERC007: recovered panic must be reported or re-panicked, or carry `// no-report:` marker",
-	Run:  run,
+	Run:  markers.Runner(inspect),
 }
 
 const msg = "ERC007: recovered panic must be reported (go/report or declared sink receiving it) or re-panicked, or carry `// no-report: <reason>`"
 
-func run(pass *analysis.Pass) (interface{}, error) {
-	astutil.EachFile(pass, func(f *ast.File) {
-		idx := markers.Build(pass.Fset, f)
-		ast.Inspect(f, func(n ast.Node) bool {
-			if fn, ok := n.(*ast.FuncDecl); ok && astutil.IsDeclaredBody(pass.TypesInfo, fn) {
-				return false
-			}
-			switch x := n.(type) {
-			case *ast.IfStmt:
-				handleIf(pass, idx, x)
-			case *ast.BlockStmt:
-				handleBlock(pass, idx, x)
-			}
-			return true
-		})
-	})
-	return nil, nil
+func inspect(idx *markers.Index, pass *analysis.Pass, n ast.Node) bool {
+	switch x := n.(type) {
+	case *ast.IfStmt:
+		handleIf(pass, idx, x)
+	case *ast.BlockStmt:
+		handleBlock(pass, idx, x)
+	}
+	return true
 }
 
 // handleIf covers the canonical guard `if r := recover(); r != nil { ... }`.

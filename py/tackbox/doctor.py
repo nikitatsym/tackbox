@@ -7,7 +7,6 @@ stdout, ending with `doctor: N checks, M failed`.
 
 from __future__ import annotations
 
-import hashlib
 import platform
 import re
 import shutil
@@ -19,11 +18,8 @@ from typing import TextIO
 
 from . import engines as engines_mod
 from .cache import sha256_tree
-from .source_set import (
-    filter_source_set,
-    parse_ls_files_stage,
-    parse_ls_files_untracked,
-)
+from .gitfiles import collect_source_set
+from .hashing import sha256_file
 
 
 @dataclass(frozen=True)
@@ -124,7 +120,7 @@ def _check_payload_checksums() -> CheckResult:
             # tree digest; a file digest here would silently verify nothing.
             actual = sha256_tree(target)
         elif target.is_file():
-            actual = _sha256_file(target)
+            actual = sha256_file(target)
         else:
             missing.append(rel_path)
             continue
@@ -277,30 +273,8 @@ def _source_set_has_ext(ext: str) -> bool:
         # no-report: git absent or failed - treat as no such sources; the toolchain probe surfaces it
         return False
     try:
-        stage_raw = subprocess.run(
-            ["git", "ls-files", "-s", "-z"],
-            cwd=repo_root, capture_output=True, check=True,
-        ).stdout
-        untracked_raw = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
-            cwd=repo_root, capture_output=True, check=True,
-        ).stdout
+        files, _ = collect_source_set(repo_root)
     except (FileNotFoundError, subprocess.CalledProcessError):
         # no-report: git ls-files failed - doctor degrades to "no such sources", not a run failure
         return False
-    files, _ = filter_source_set(
-        parse_ls_files_stage(stage_raw),
-        parse_ls_files_untracked(untracked_raw),
-        ".",
-        exists=lambda p: (repo_root / p).exists(),
-        is_symlink=lambda p: (repo_root / p).is_symlink(),
-    )
     return any(f.endswith(ext) for f in files)
-
-
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()

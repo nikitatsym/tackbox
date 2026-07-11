@@ -21,7 +21,7 @@ import (
 var Analyzer = &analysis.Analyzer{
 	Name: "parsenil",
 	Doc:  "ERC002: parser errs must capture or carry `// parse-skip:` marker",
-	Run:  run,
+	Run:  markers.Runner(inspect),
 }
 
 // Identifiers are matched syntactically by their qualified package
@@ -47,23 +47,14 @@ var parsers = map[string]bool{
 // by returning nil. Treated separately from error-returning parsers.
 const parseIP = "net.ParseIP"
 
-func run(pass *analysis.Pass) (interface{}, error) {
-	astutil.EachFile(pass, func(f *ast.File) {
-		idx := markers.Build(pass.Fset, f)
-		ast.Inspect(f, func(n ast.Node) bool {
-			if fn, ok := n.(*ast.FuncDecl); ok && astutil.IsDeclaredBody(pass.TypesInfo, fn) {
-				return false
-			}
-			switch x := n.(type) {
-			case *ast.BlockStmt:
-				handleBlock(pass, idx, x)
-			case *ast.IfStmt:
-				handleIfShortForm(pass, idx, x)
-			}
-			return true
-		})
-	})
-	return nil, nil
+func inspect(idx *markers.Index, pass *analysis.Pass, n ast.Node) bool {
+	switch x := n.(type) {
+	case *ast.BlockStmt:
+		handleBlock(pass, idx, x)
+	case *ast.IfStmt:
+		handleIfShortForm(pass, idx, x)
+	}
+	return true
 }
 
 func handleBlock(pass *analysis.Pass, idx *markers.Index, block *ast.BlockStmt) {
@@ -245,29 +236,25 @@ func firstIdentLHS(assign *ast.AssignStmt) string {
 	return id.Name
 }
 
-func nextIfErrNotNil(rest []ast.Stmt, errName string) (*ast.IfStmt, bool) {
+func firstIfStmt(rest []ast.Stmt) (*ast.IfStmt, bool) {
 	if len(rest) == 0 {
 		return nil, false
 	}
 	ifst, ok := rest[0].(*ast.IfStmt)
-	if !ok {
-		return nil, false
-	}
-	if astutil.ErrIdentFromIfCond(ifst.Cond) != errName {
+	return ifst, ok
+}
+
+func nextIfErrNotNil(rest []ast.Stmt, errName string) (*ast.IfStmt, bool) {
+	ifst, ok := firstIfStmt(rest)
+	if !ok || astutil.ErrIdentFromIfCond(ifst.Cond) != errName {
 		return nil, false
 	}
 	return ifst, true
 }
 
 func nextIfValEqNil(rest []ast.Stmt, valName string) (*ast.IfStmt, bool) {
-	if len(rest) == 0 {
-		return nil, false
-	}
-	ifst, ok := rest[0].(*ast.IfStmt)
-	if !ok {
-		return nil, false
-	}
-	if !condIsValEqNil(ifst.Cond, valName) {
+	ifst, ok := firstIfStmt(rest)
+	if !ok || !condIsValEqNil(ifst.Cond, valName) {
 		return nil, false
 	}
 	return ifst, true

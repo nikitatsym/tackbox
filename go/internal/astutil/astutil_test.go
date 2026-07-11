@@ -3,13 +3,12 @@ package astutil_test
 import (
 	"go/ast"
 	"go/types"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"golang.org/x/tools/go/packages"
 
 	"github.com/nikitatsym/tackbox/go/internal/astutil"
+	"github.com/nikitatsym/tackbox/go/internal/gomodtest"
 )
 
 // source declares an unexported top-level function and a call site that
@@ -35,10 +34,7 @@ func Handler() error {
 func loadCall(t *testing.T) (*ast.CallExpr, *types.Info) {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module fixture\n\ngo 1.21\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "rep.go"), []byte(source), 0o644); err != nil {
+	if _, err := gomodtest.Write(dir, source); err != nil {
 		t.Fatal(err)
 	}
 	cfg := &packages.Config{

@@ -254,6 +254,22 @@ func EachFile(pass *analysis.Pass, fn func(f *ast.File)) {
 	}
 }
 
+// InspectNonDeclared walks each in-project file's AST, skipping the bodies of
+// externally-declared functions (asm/linkname stubs have no analyzable body).
+// perFile runs once per file and returns the node visitor, so per-file state
+// (a markers.Index) is built there rather than on every node.
+func InspectNonDeclared(pass *analysis.Pass, perFile func(f *ast.File) func(ast.Node) bool) {
+	EachFile(pass, func(f *ast.File) {
+		visit := perFile(f)
+		ast.Inspect(f, func(n ast.Node) bool {
+			if fn, ok := n.(*ast.FuncDecl); ok && IsDeclaredBody(pass.TypesInfo, fn) {
+				return false
+			}
+			return visit(n)
+		})
+	})
+}
+
 // EachTestFile invokes fn for every in-project *_test.go file - the
 // mirror of EachFile for rules whose subject is the tests themselves.
 func EachTestFile(pass *analysis.Pass, fn func(f *ast.File)) {

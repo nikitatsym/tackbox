@@ -7,7 +7,6 @@ import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.stmt.CatchClause;
 import com.github.javaparser.ast.stmt.ExpressionStmt;
-import java.util.ArrayList;
 import java.util.List;
 import nl.tsym.tackbox.javalint.Finding;
 import nl.tsym.tackbox.javalint.MarkerIndex;
@@ -17,7 +16,7 @@ import nl.tsym.tackbox.javalint.Recognition;
  *  by a report or a print of the caught, or carry a `// no-report: <reason>`
  *  marker. Otherwise the process dies on a swallowed error. Ordering matters -
  *  a report after the exit never runs on the exiting path (port of ERC003). */
-public final class ExitRule {
+public final class ExitRule extends CatchRule {
 
     public static final String ID = "JV005";
 
@@ -25,31 +24,26 @@ public final class ExitRule {
             ID + ": System.exit in catch must be preceded by a report or print of the"
             + " caught, or carry `// no-report: <reason>`";
 
-    private final Recognition rec;
-
     public ExitRule(Recognition rec) {
-        this.rec = rec;
+        super(rec);
     }
 
-    public List<Finding> check(String file, CompilationUnit cu, MarkerIndex markers) {
-        List<Finding> out = new ArrayList<>();
-        for (CatchClause cc : cu.findAll(CatchClause.class)) {
-            String caught = cc.getParameter().getNameAsString();
-            Frame f = Frame.scan(cc.getBody());
-            for (int i = 0; i < f.calls.size(); i++) {
-                MethodCallExpr call = f.calls.get(i);
-                if (!isSystemExit(call) || markerAboveExit(markers, call)
-                        || coveredBefore(cu, f.calls, i, caught)) {
-                    continue;
-                }
-                Position p = call.getBegin().orElseThrow();
-                String hint = call.findAncestor(ExpressionStmt.class)
-                        .map(st -> Markers.deadNoReportHint(markers, st))
-                        .orElse("");
-                out.add(new Finding(ID, file, p.line, p.column, p.line, p.column, MESSAGE + hint));
+    @Override
+    void check(String file, CompilationUnit cu, MarkerIndex markers, CatchClause cc, List<Finding> out) {
+        String caught = cc.getParameter().getNameAsString();
+        Frame f = Frame.scan(cc.getBody());
+        for (int i = 0; i < f.calls.size(); i++) {
+            MethodCallExpr call = f.calls.get(i);
+            if (!isSystemExit(call) || markerAboveExit(markers, call)
+                    || coveredBefore(cu, f.calls, i, caught)) {
+                continue;
             }
+            Position p = call.getBegin().orElseThrow();
+            String hint = call.findAncestor(ExpressionStmt.class)
+                    .map(st -> Markers.deadNoReportHint(markers, st))
+                    .orElse("");
+            out.add(new Finding(ID, file, p.line, p.column, p.line, p.column, MESSAGE + hint));
         }
-        return out;
     }
 
     private boolean coveredBefore(CompilationUnit cu, List<MethodCallExpr> calls, int exit, String caught) {

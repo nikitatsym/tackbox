@@ -28,12 +28,11 @@ from .engines import (
     resolve_hermetic_versions,
     run_engines,
 )
+from .gitfiles import collect_source_set
 from .source_set import (
     PathspecMagicError,
-    filter_source_set,
     group_go_packages_by_module,
     parse_git_diff_names,
-    parse_ls_files_stage,
     parse_ls_files_untracked,
 )
 
@@ -136,7 +135,7 @@ def _lint_results(
     propagate to the caller.
     """
     reporter_pairs = reporters.pairs(reporters.load(repo_root))
-    files, warnings = _collect_source_set(repo_root, scope, changed_scope)
+    files, warnings = collect_source_set(repo_root, scope, changed_scope)
     if not files:
         return None, warnings, []
 
@@ -261,6 +260,11 @@ def _apply_cache(
     filtered_plan: list[tuple[EngineSpec, list[str]]] = []
     pending: dict[str, dict] = {}
     for engine, args in plan:
+        if not engine.cacheable:
+            # Cross-file engine: always run the full arg set, and stay out of
+            # pending so _mark_clean_units never writes a clean marker for it.
+            filtered_plan.append((engine, args))
+            continue
         arg_digest, extras = _digests_for_engine(engine, args, repo_root)
         uncached: list[tuple[str, str]] = []
         for arg, digest in arg_digest:
@@ -299,6 +303,8 @@ def _mark_clean_units(
     for r in results:
         info = pending.get(r.engine_id)
         if not info:
+            # No pending entry: nothing ran uncached, or a non-cacheable engine
+            # (_apply_cache keeps it out) - either way, write no clean marker.
             continue
         clean_args = _clean_args(r, info)
         digest_of = dict(info["arg_digest"])
@@ -379,31 +385,6 @@ def _erclint_has_findings(stdout: str) -> bool:
         return True
 
 
-def _collect_source_set(
-    repo_root: Path, scope: str, changed_scope: set[str] | None = None
-):
-    stage_raw = subprocess.run(
-        ["git", "ls-files", "-s", "-z"],
-        cwd=repo_root,
-        capture_output=True,
-        check=True,
-    ).stdout
-    untracked_raw = subprocess.run(
-        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
-        cwd=repo_root,
-        capture_output=True,
-        check=True,
-    ).stdout
-    return filter_source_set(
-        parse_ls_files_stage(stage_raw),
-        parse_ls_files_untracked(untracked_raw),
-        scope,
-        exists=lambda p: (repo_root / p).exists(),
-        is_symlink=lambda p: (repo_root / p).is_symlink(),
-        changed_scope=changed_scope,
-    )
-
-
 def _compute_changed_scope(repo_root: Path, since: str | None) -> set[str]:
     """Union of dirty tree with (optional) three-dot diff against <since>.
 
@@ -470,7 +451,7 @@ def _print_banner(tackbox_root: Path) -> None:
 # -- Claude Code hook -----------------------------------------------------
 
 _HOOK_TOOLS = frozenset({"Edit", "Write", "MultiEdit"})
-_MARKER_RE = re.compile(r"(?:no-report|parse-skip|nil-return|long-comment|test-skip):")
+_MARKER_RE = re.compile(r"(?:no-report|parse-skip|nil-return|long-comment|test-skip|dup-ok):")
 
 
 def _run_hook() -> int:

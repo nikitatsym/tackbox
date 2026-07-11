@@ -3,7 +3,6 @@ package nl.tsym.tackbox.javalint.rules;
 import com.github.javaparser.Position;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.stmt.CatchClause;
-import java.util.ArrayList;
 import java.util.List;
 import nl.tsym.tackbox.javalint.Finding;
 import nl.tsym.tackbox.javalint.MarkerIndex;
@@ -16,7 +15,7 @@ import nl.tsym.tackbox.javalint.Recognition;
  *  above a statement for the paths executing it. Judged per path (the spec's
  *  same-branch doctrine): a guard's throw covers only its own leg, so a silent
  *  fall-through or else leg still swallows. */
-public final class SwallowRule {
+public final class SwallowRule extends CatchRule {
 
     public static final String ID = "JV001";
 
@@ -24,25 +23,20 @@ public final class SwallowRule {
             ID + ": a catch path swallows the exception; every path must propagate with"
             + " `throw`, report or print the caught, or carry `// no-report: <reason>`";
 
-    private final Recognition rec;
-
     public SwallowRule(Recognition rec) {
-        this.rec = rec;
+        super(rec);
     }
 
-    public List<Finding> check(String file, CompilationUnit cu, MarkerIndex markers) {
-        List<Finding> out = new ArrayList<>();
-        for (CatchClause cc : cu.findAll(CatchClause.class)) {
-            int silent = silentEnd(cu, cc, markers);
-            if (silent < 0) {
-                continue;
-            }
-            Position p = cc.getBegin().orElseThrow();
-            out.add(new Finding(ID, file, p.line, p.column, p.line, p.column,
-                    MESSAGE + " (a silent path ends at line " + silent + ")"
-                            + Markers.deadNoReportHint(markers, cc)));
+    @Override
+    void check(String file, CompilationUnit cu, MarkerIndex markers, CatchClause cc, List<Finding> out) {
+        int silent = silentEnd(cu, cc, markers);
+        if (silent < 0) {
+            return;
         }
-        return out;
+        Position p = cc.getBegin().orElseThrow();
+        out.add(new Finding(ID, file, p.line, p.column, p.line, p.column,
+                MESSAGE + " (a silent path ends at line " + silent + ")"
+                        + Markers.deadNoReportHint(markers, cc)));
     }
 
     /** The line the first silent path ends on, or -1 for a clean catch. */
