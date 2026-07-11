@@ -450,11 +450,13 @@ test('ts-exit-in-catch', () => {
   })
 })
 
-// A skip/todo/skipIf in a chain rooted at bare it/test/describe, or a bare
-// xit/xdescribe/xtest, drops the test unless a // test-skip: <reason> marker
-// sits above the statement. Chained forms (skipIf(...)(...), skip.each(...)(...))
-// report once, on the inner call carrying the skip property. A deeper root
-// (queue.skip, foo.test.skip) is out of scope.
+// A skip/todo/skipIf/fixme in a chain rooted at bare it/test/describe, or a
+// bare xit/xdescribe/xtest, drops the test unless it carries a non-empty
+// in-call reason (node:test options skip/todo, playwright (cond, 'reason'))
+// or a // test-skip: <reason> marker above the statement. Chained forms
+// (skipIf(...)(...), skip.each(...)(...)) report once, on the inner call
+// carrying the skip property. A deeper root (queue.skip, foo.test.skip) is
+// out of scope.
 test('no-skipped-test', () => {
   ruleTester.run('no-skipped-test', require('../rules/no-skipped-test'), {
     valid: [
@@ -463,6 +465,20 @@ test('no-skipped-test', () => {
       'queue.skip()',
       'foo.test.skip("x")',
       '// test-skip: pending backend, issue 34\nit.skipIf(cond)("n", f)',
+      // node:test options with a reason; non-literal reasons are trusted.
+      'it("n", { skip: "flaky upstream, issue 12" }, () => {})',
+      'test("n", { todo: "needs api endpoint" }, () => {})',
+      'test({ skip: "no name form, reason present" }, () => {})',
+      'it("n", { skip: why }, () => {})',
+      'it("n", { skip: `${why}` }, () => {})',
+      // falsy skip is not a skip; unrelated options are not inspectable.
+      'it("n", { skip: false }, () => {})',
+      'it("n", { concurrency: 2 }, () => {})',
+      '// test-skip: quarantined, issue 7\nit("n", { skip: true }, () => {})',
+      // playwright conditional with reason; non-literal reason trusted.
+      'test.skip(isMobile, "touch-only flow")',
+      'test.fixme(isWebkit, "portal rendering, issue 9")',
+      'test.skip(isMobile, reasonFor(env))',
     ],
     invalid: [
       { code: 'it.skip("later", () => {})', errors: [{ messageId: 'skipped' }] },
@@ -473,6 +489,16 @@ test('no-skipped-test', () => {
       { code: '// test-skip:\nit.skip("x", () => {})', errors: [{ messageId: 'skipped' }] },
       { code: '// test-skip: reason\n\nit.skip("x", () => {})', errors: [{ messageId: 'skipped' }] },
       { code: 'it.skip.each([1])("n", f)', errors: [{ messageId: 'skipped' }] },
+      // node:test reasonless options.
+      { code: 'it("n", { skip: true }, () => {})', errors: [{ messageId: 'skipped' }] },
+      { code: 'test("n", { skip: "" }, () => {})', errors: [{ messageId: 'skipped' }] },
+      { code: 'it("n", { skip: "   " }, () => {})', errors: [{ messageId: 'skipped' }] },
+      { code: 'test("n", { todo: true }, () => {})', errors: [{ messageId: 'skipped' }] },
+      // playwright cond-only, bare in-body, and declaration forms.
+      { code: 'test.skip(isMobile)', errors: [{ messageId: 'skipped' }] },
+      { code: 'test.skip()', errors: [{ messageId: 'skipped' }] },
+      { code: 'test.skip("title", () => {})', errors: [{ messageId: 'skipped' }] },
+      { code: 'test.fixme()', errors: [{ messageId: 'skipped' }] },
     ],
   })
 })

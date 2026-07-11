@@ -182,8 +182,19 @@ The same model is enforced beyond Go:
   ERC005), and JV007 skip (`@Disabled` / `@Ignore` must carry a
   non-empty reason string).
 - **Python** exception and test-skip rules ship as the `pyrules`
-  flake8 plugin (`TBX` codes); **JS / TS / Svelte** swallow and
-  test-skip rules run under ESLint.
+  flake8 plugin (`TBX` codes). A skip reason is accepted in any of
+  the natural forms: `@pytest.mark.skip(reason=...)`,
+  `@pytest.mark.skipif(cond, reason=...)`,
+  `@pytest.mark.xfail(reason=...)`, `pytest.skip(...)`, or
+  `@unittest.skip(...)`. `contextlib.suppress` is flagged as a
+  cosmetic dodge of the swallow rule; the one allowlisted use is
+  `asyncio.CancelledError` around `await task` after `task.cancel()`,
+  where the CancelledError on the await IS the confirmation that the
+  cancel propagated, not an error to log.
+- **JS / TS / Svelte** swallow and test-skip rules run under ESLint.
+  A skip reason is accepted in the call itself: node:test options
+  (`{ skip: 'reason' }` / `{ todo: 'reason' }`) and Playwright's
+  `test.skip(cond, 'reason')` / `test.fixme(cond, 'reason')`.
 
 ## No configuration
 
