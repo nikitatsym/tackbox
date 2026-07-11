@@ -38,4 +38,4 @@ dev = ["pytest>=8", "pyyaml>=6"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = [".", "tests"]

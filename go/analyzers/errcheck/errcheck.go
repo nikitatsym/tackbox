@@ -18,49 +18,40 @@ import (
 var Analyzer = &analysis.Analyzer{
 	Name: "errcheck",
 	Doc:  "ERC001: err-branches must propagate, capture, report via terminal exit, or carry `// no-report:` marker",
-	Run:  run,
+	Run:  markers.Runner(inspect),
 }
 
-func run(pass *analysis.Pass) (interface{}, error) {
-	astutil.EachFile(pass, func(f *ast.File) {
-		idx := markers.Build(pass.Fset, f)
-		ast.Inspect(f, func(n ast.Node) bool {
-			if fn, ok := n.(*ast.FuncDecl); ok && astutil.IsDeclaredBody(pass.TypesInfo, fn) {
-				return false
-			}
-			ifst, ok := n.(*ast.IfStmt)
-			if !ok {
-				return true
-			}
-			errIdent, ok := astutil.ErrIdentExprFromIfCond(ifst.Cond)
-			if !ok {
-				return true
-			}
-			// Type-gate: only guards of an error-assignable identifier are
-			// err-branches. `if conn != nil` on a *net.Conn is not one.
-			if !astutil.IsErrorAssignableExpr(pass.TypesInfo, errIdent) {
-				return true
-			}
-			errName := errIdent.Name
-			if m, ok := idx.Above(ifst); ok && m.Kind == markers.NoReport {
-				return true
-			}
-			// errors.As aliases hold the same error object: any exit
-			// through an alias is an exit of the guarded error.
-			for _, name := range astutil.ErrAliases(ifst.Body, errName) {
-				if propagates(pass.TypesInfo, ifst.Body, name) ||
-					captures(pass.TypesInfo, ifst.Body, name) ||
-					reportsDeath(ifst.Body, name) {
-					return true
-				}
-			}
-			pass.Reportf(ifst.Pos(),
-				"ERC001: err-branch must propagate, capture, carry the error into a terminal exit, or carry `// no-report: <reason>` (err=%s)",
-				errName)
+func inspect(idx *markers.Index, pass *analysis.Pass, n ast.Node) bool {
+	ifst, ok := n.(*ast.IfStmt)
+	if !ok {
+		return true
+	}
+	errIdent, ok := astutil.ErrIdentExprFromIfCond(ifst.Cond)
+	if !ok {
+		return true
+	}
+	// Type-gate: only guards of an error-assignable identifier are
+	// err-branches. `if conn != nil` on a *net.Conn is not one.
+	if !astutil.IsErrorAssignableExpr(pass.TypesInfo, errIdent) {
+		return true
+	}
+	errName := errIdent.Name
+	if m, ok := idx.Above(ifst); ok && m.Kind == markers.NoReport {
+		return true
+	}
+	// errors.As aliases hold the same error object: any exit
+	// through an alias is an exit of the guarded error.
+	for _, name := range astutil.ErrAliases(ifst.Body, errName) {
+		if propagates(pass.TypesInfo, ifst.Body, name) ||
+			captures(pass.TypesInfo, ifst.Body, name) ||
+			reportsDeath(ifst.Body, name) {
 			return true
-		})
-	})
-	return nil, nil
+		}
+	}
+	pass.Reportf(ifst.Pos(),
+		"ERC001: err-branch must propagate, capture, carry the error into a terminal exit, or carry `// no-report: <reason>` (err=%s)",
+		errName)
+	return true
 }
 
 // propagates reports whether the err-branch carries the checked error onward:

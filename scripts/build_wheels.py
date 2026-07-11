@@ -30,6 +30,7 @@ PY_DIR = REPO / "py"
 sys.path.insert(0, str(PY_DIR))
 from tackbox.cache import sha256_tree  # noqa: E402
 from tackbox.engines import engines_payload_tree_sha256  # noqa: E402
+from tackbox.hashing import sha256_file  # noqa: E402
 JS_ROOT = REPO
 CACHE_DIR = Path(os.environ.get("TACKBOX_BUILD_CACHE", str(Path.home() / ".cache" / "tackbox-build")))
 
@@ -77,14 +78,6 @@ def platform_for(manifest: dict, key: str) -> Platform:
 
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
-
-
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def fetch(url: str, expected_sha: str) -> Path:
@@ -334,7 +327,7 @@ def prepare_thin(
 
     thin_entries: list[dict] = []
 
-    for cmd in ("erclint", "erclint-opengrep"):
+    for cmd in ("erclint", "erclint-opengrep", "tackbox-jscpd"):
         out = thin_root / "bin" / f"{cmd}{exe_suffix}"
         print(f"go build {cmd} -> {out.relative_to(REPO)}", file=sys.stderr)
         env = {**os.environ, "GOOS": goos, "GOARCH": goarch, "CGO_ENABLED": "0"}

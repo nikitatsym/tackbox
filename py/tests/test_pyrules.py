@@ -14,57 +14,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from _fixtures import PY_ONE_PER_RULE
+
 _PY_DIR = str(Path(__file__).resolve().parents[1])
 
-# One violation per migrated python rule.
-ALL_SEVEN = """import sys
-import contextlib
-
-
-def swallowed():
-    try:
-        work()
-    except ValueError as e:
-        pass
-
-
-def bare():
-    try:
-        work()
-    except:
-        pass
-
-
-def reraise_no_cause():
-    try:
-        work()
-    except ValueError as e:
-        raise RuntimeError("wrapped")
-
-
-def useless():
-    try:
-        work()
-    except ValueError:
-        raise
-
-
-def exit_in_except():
-    try:
-        work()
-    except ValueError:
-        sys.exit(1)
-
-
-def suppressed():
-    with contextlib.suppress(Exception):
-        work()
-
-
-def import_inside():
-    import json
-    return json
-"""
+ALL_SEVEN = PY_ONE_PER_RULE
 
 REPORTER = """def report_it(e):
     print(e)

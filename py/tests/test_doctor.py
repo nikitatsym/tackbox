@@ -58,6 +58,17 @@ def _foreign_platform_key() -> str:
     return "linux-x86_64" if host != "linux-x86_64" else "macos-aarch64"
 
 
+def _setup_hermetic(tmp_path, monkeypatch, pkg, engines_json) -> None:
+    """Point the hermetic engine store at a tmp pkg + empty payload dir so
+    doctor runs offline against the supplied engines.json."""
+    (pkg / "engines.json").write_text(json.dumps(engines_json))
+    monkeypatch.setattr(engines_mod, "_TACKBOX_PKG_ROOT", pkg)
+    monkeypatch.setattr(engines_mod, "is_hermetic", lambda: True)
+    (tmp_path / "tackbox_engines" / "bin").mkdir(parents=True)
+    monkeypatch.setenv("TACKBOX_ENGINES_DIR", str(tmp_path / "tackbox_engines"))
+    monkeypatch.setattr(engines_mod, "hermetic_env", lambda base=None: dict(base or {}))
+
+
 def test_hermetic_platform_mismatch_flags_check(tmp_path, monkeypatch):
     engines_json = {
         "schema": 1,
@@ -105,12 +116,7 @@ def test_hermetic_payload_mismatch_flags_check(tmp_path, monkeypatch):
             },
         ],
     }
-    (pkg / "engines.json").write_text(json.dumps(engines_json))
-    monkeypatch.setattr(engines_mod, "_TACKBOX_PKG_ROOT", pkg)
-    monkeypatch.setattr(engines_mod, "is_hermetic", lambda: True)
-    (tmp_path / "tackbox_engines" / "bin").mkdir(parents=True)
-    monkeypatch.setenv("TACKBOX_ENGINES_DIR", str(tmp_path / "tackbox_engines"))
-    monkeypatch.setattr(engines_mod, "hermetic_env", lambda base=None: dict(base or {}))
+    _setup_hermetic(tmp_path, monkeypatch, pkg, engines_json)
 
     out = io.StringIO()
     rc = doctor.run(out)
@@ -137,12 +143,7 @@ def test_hermetic_missing_payload_flags_check(tmp_path, monkeypatch):
             },
         ],
     }
-    (pkg / "engines.json").write_text(json.dumps(engines_json))
-    monkeypatch.setattr(engines_mod, "_TACKBOX_PKG_ROOT", pkg)
-    monkeypatch.setattr(engines_mod, "is_hermetic", lambda: True)
-    (tmp_path / "tackbox_engines" / "bin").mkdir(parents=True)
-    monkeypatch.setenv("TACKBOX_ENGINES_DIR", str(tmp_path / "tackbox_engines"))
-    monkeypatch.setattr(engines_mod, "hermetic_env", lambda base=None: dict(base or {}))
+    _setup_hermetic(tmp_path, monkeypatch, pkg, engines_json)
 
     out = io.StringIO()
     doctor.run(out)
@@ -150,15 +151,21 @@ def test_hermetic_missing_payload_flags_check(tmp_path, monkeypatch):
     assert "fail payload-checksums: missing=1" in text
 
 
-def test_go_toolchain_ok_when_source_set_has_no_go(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+def _commit_one_file(tmp_path: Path, name: str, content: str) -> None:
+    """Commit a single file into a fresh repo at tmp_path - a source set of one,
+    used to prove a toolchain is/isn't needed by what the tree actually holds."""
     subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, check=True, capture_output=True)
-    (tmp_path / "hello.py").write_text("print('hi')\n")
+    (tmp_path / name).write_text(content)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(
         ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
         cwd=tmp_path, check=True, capture_output=True,
     )
+
+
+def test_go_toolchain_ok_when_source_set_has_no_go(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _commit_one_file(tmp_path, "hello.py", "print('hi')\n")
 
     with mock.patch("shutil.which", side_effect=lambda name: {"git": "/usr/bin/git", "go": None}.get(name)):
         result = doctor._check_go_toolchain()
@@ -171,24 +178,12 @@ def test_go_toolchain_ok_when_source_set_has_no_go(tmp_path, monkeypatch):
 
 def _java_repo(tmp_path: Path) -> None:
     """Commit one .java file so the source set needs the java toolchain."""
-    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, check=True, capture_output=True)
-    (tmp_path / "Handler.java").write_text("class Handler {}\n")
-    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
-        cwd=tmp_path, check=True, capture_output=True,
-    )
+    _commit_one_file(tmp_path, "Handler.java", "class Handler {}\n")
 
 
 def test_java_toolchain_ok_when_source_set_has_no_java(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, check=True, capture_output=True)
-    (tmp_path / "hello.py").write_text("print('hi')\n")
-    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
-        cwd=tmp_path, check=True, capture_output=True,
-    )
+    _commit_one_file(tmp_path, "hello.py", "print('hi')\n")
     with mock.patch("shutil.which", side_effect=lambda n: {"git": "/usr/bin/git", "java": None}.get(n)):
         result = doctor._check_java_toolchain()
     assert result.ok is True

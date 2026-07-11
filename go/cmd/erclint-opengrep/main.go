@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/nikitatsym/tackbox/go/internal/wrapcli"
 	"github.com/nikitatsym/tackbox/go/report"
 )
 
@@ -28,33 +29,7 @@ var rulesFS embed.FS
 var version = "dev"
 
 func main() {
-	for _, arg := range os.Args[1:] {
-		if arg == "--version" || arg == "-version" {
-			fmt.Printf("erclint-opengrep %s\n", version)
-			return
-		}
-	}
-	if dsn := report.DSNFromEnv(); dsn != "" {
-		// no-report: report itself failed, capture would be a no-op
-		if err := report.Init(report.Options{
-			DSN:           dsn,
-			Release:       "erclint-opengrep",
-			SilentMissing: true,
-		}); err != nil {
-			fmt.Fprintln(os.Stderr, "erclint-opengrep: report init:", err)
-		}
-		defer report.Flush()
-	}
-	code, err := run(os.Args[1:], os.Stdout, os.Stderr)
-	if err != nil {
-		report.SentryErr(context.Background(),
-			"opengrep wrapper failed",
-			err, nil, "erclint-opengrep.run")
-		fmt.Fprintln(os.Stderr, "erclint-opengrep:", err)
-		os.Exit(2)
-	}
-	// no-report: normal exit
-	os.Exit(code)
+	wrapcli.Main("erclint-opengrep", version, run)
 }
 
 func run(args []string, stdout, stderr io.Writer) (int, error) {
@@ -93,7 +68,7 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 	if machine {
 		full = append(full, "--json")
 	}
-	full = append(full, toAbs(origCwd, scanArgs)...)
+	full = append(full, wrapcli.ToAbs(origCwd, scanArgs)...)
 	cmd := exec.Command("opengrep", full...)
 	cmd.Dir = scanCwd
 	var outBuf, errBuf bytes.Buffer
@@ -146,18 +121,6 @@ func rejectSemgrepignore(dir string) error {
 	)
 }
 
-func toAbs(cwd string, args []string) []string {
-	out := make([]string, len(args))
-	for i, a := range args {
-		if filepath.IsAbs(a) {
-			out[i] = a
-			continue
-		}
-		out[i] = filepath.Join(cwd, a)
-	}
-	return out
-}
-
 func rewritePaths(s, cwd string) string {
 	if s == "" || cwd == "" {
 		return s
@@ -201,12 +164,6 @@ func splitMachine(args []string) (bool, []string) {
 	return machine, out
 }
 
-type machineFinding struct {
-	File string `json:"file"`
-	Line int    `json:"line"`
-	Rule string `json:"rule"`
-}
-
 // emitMachine translates opengrep's --json output into the internal contract:
 // one {file, line, rule} object per line. Paths are made repo-relative and
 // check_id is reduced to its final segment (the rule id, the temp rules dir
@@ -231,14 +188,14 @@ func emitMachine(w io.Writer, jsonOut []byte, cwd string) error {
 			"opengrep --json output unparseable", err, nil, "erclint-opengrep.machine")
 		// Never drop a finding: a location-unknown record makes the caller
 		// over-report rather than silently see zero findings.
-		return enc.Encode(machineFinding{Rule: "opengrep-json-unparseable"})
+		return enc.Encode(wrapcli.Finding{Rule: "opengrep-json-unparseable"})
 	}
 	for _, r := range parsed.Results {
 		rule := r.CheckID
 		if i := strings.LastIndex(rule, "."); i >= 0 {
 			rule = rule[i+1:]
 		}
-		if err := enc.Encode(machineFinding{
+		if err := enc.Encode(wrapcli.Finding{
 			File: rewritePaths(r.Path, cwd),
 			Line: r.Start.Line,
 			Rule: rule,

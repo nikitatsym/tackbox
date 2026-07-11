@@ -96,6 +96,7 @@ final class Flow {
         }
 
         private St step(Statement st, St in) {
+            // dup-ok: parallel state walkers kept separate on purpose; generic merge couples them
             if (found != null || in.dead()) {
                 return in;
             }
@@ -117,6 +118,8 @@ final class Flow {
             }
             if (st instanceof ReturnStmt || st instanceof BreakStmt
                     || st instanceof ContinueStmt) {
+                // dup-ok: parallel state walkers kept separate on purpose; generic merge couples them
+                // (DoubleScan leg; the SilentScan twin sits below)
                 return DEAD;
             }
             if (st instanceof ExpressionStmt e) {
@@ -206,6 +209,7 @@ final class Flow {
         }
 
         private St step(Statement st, St in) {
+            // dup-ok: parallel state walkers kept separate on purpose; generic merge couples them
             if (hitLine >= 0 || in.dead()) {
                 return in;
             }
@@ -228,6 +232,8 @@ final class Flow {
             }
             if (st instanceof BreakStmt || st instanceof ContinueStmt) {
                 terminate(in, st);
+                // dup-ok: parallel state walkers kept separate on purpose; generic merge couples them
+                // (SilentScan leg; the DoubleScan twin sits above)
                 return DEAD;
             }
             if (st instanceof ExpressionStmt e) {

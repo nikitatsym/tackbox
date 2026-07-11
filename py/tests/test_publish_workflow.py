@@ -247,39 +247,25 @@ def test_publish_fat_skips_when_version_already_on_pypi(workflow):
     Enforced via the pypa action's skip-existing input, which turns the
     409 into success at upload time - simpler than a pre-check probe and
     removes shell interpolation of engines/VERSION into a python -c."""
-    fat = _publish_fat_job(workflow["jobs"])
-    for step in fat["steps"]:
-        if not isinstance(step, dict):
-            continue
-        if "pypa/gh-action-pypi-publish" not in str(step.get("uses", "")):
-            continue
-        with_args = step.get("with") or {}
-        assert with_args.get("skip-existing") is True, (
-            "publish-fat's pypa publish step must set skip-existing: true so "
-            "an identical fat republish (thin-only patch bump) succeeds "
-            "instead of crashing on a PyPI 409"
-        )
-        return
-    raise AssertionError("no pypa/gh-action-pypi-publish step found in publish-fat")
+    with_args = _pypi_publish_with(_publish_fat_job(workflow["jobs"]))
+    assert with_args is not None, "no pypa/gh-action-pypi-publish step in publish-fat"
+    assert with_args.get("skip-existing") is True, (
+        "publish-fat's pypa publish step must set skip-existing: true so "
+        "an identical fat republish (thin-only patch bump) succeeds "
+        "instead of crashing on a PyPI 409"
+    )
 
 
 def test_publish_thin_does_not_set_skip_existing(workflow):
     """Thin version comes from the pushed tag; a duplicate publish means the
     engineer rebased or re-tagged. That is a workflow bug, not a silent-skip
     case - 409 loud fail is the correct signal."""
-    thin = _publish_thin_job(workflow["jobs"])
-    for step in thin["steps"]:
-        if not isinstance(step, dict):
-            continue
-        if "pypa/gh-action-pypi-publish" not in str(step.get("uses", "")):
-            continue
-        with_args = step.get("with") or {}
-        assert with_args.get("skip-existing") is not True, (
-            "publish-thin must not skip-existing: a duplicate thin version "
-            "signals a tag rebase or force-push and must fail loudly"
-        )
-        return
-    raise AssertionError("no pypa/gh-action-pypi-publish step found in publish-thin")
+    with_args = _pypi_publish_with(_publish_thin_job(workflow["jobs"]))
+    assert with_args is not None, "no pypa/gh-action-pypi-publish step in publish-thin"
+    assert with_args.get("skip-existing") is not True, (
+        "publish-thin must not skip-existing: a duplicate thin version "
+        "signals a tag rebase or force-push and must fail loudly"
+    )
 
 
 def test_canary_matrix_covers_required_platforms(verify_workflow):
@@ -395,19 +381,23 @@ def _find_smoke_job(jobs: dict) -> dict | None:
     return None
 
 
-def _pypi_publish_packages_dir(job: dict) -> str | None:
-    """Extract the packages-dir arg of the pypa/gh-action-pypi-publish step
-    in this job, or None if no publish step exists. Publish-fat and
-    publish-thin are distinguished by whether packages-dir points at the
-    fat or thin isolate directory."""
+def _pypi_publish_with(job: dict) -> dict | None:
+    """The `with:` args of this job's pypa/gh-action-pypi-publish step, or None
+    when the job has no such step."""
     for step in (job or {}).get("steps", []):
         if not isinstance(step, dict):
             continue
         if "pypa/gh-action-pypi-publish" in str(step.get("uses", "")):
             with_args = step.get("with") or {}
-            if isinstance(with_args, dict):
-                return with_args.get("packages-dir")
+            return with_args if isinstance(with_args, dict) else {}
     return None
+
+
+def _pypi_publish_packages_dir(job: dict) -> str | None:
+    """The packages-dir arg of the job's pypa publish step - fat and thin are
+    distinguished by whether it points at the fat or thin isolate dir."""
+    with_args = _pypi_publish_with(job)
+    return with_args.get("packages-dir") if with_args is not None else None
 
 
 def _publish_fat_job(jobs: dict) -> dict:

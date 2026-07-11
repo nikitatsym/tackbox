@@ -1,6 +1,5 @@
-const { hasMarkerAbove } = require('./_shared')
+const { hasMarkerAbove, matchesTestModifier } = require('./_shared')
 
-const ROOTS = new Set(['it', 'test', 'describe'])
 const SKIP_PROPS = new Set(['skip', 'todo', 'skipIf'])
 const BARE = new Set(['xit', 'xdescribe', 'xtest'])
 
@@ -27,20 +26,7 @@ module.exports = {
   create(context) {
     return {
       CallExpression(node) {
-        const callee = node.callee
-        let hit = false
-        if (callee.type === 'Identifier') {
-          hit = BARE.has(callee.name)
-        } else if (callee.type === 'MemberExpression') {
-          let cur = callee
-          let prop = false
-          while (cur && cur.type === 'MemberExpression') {
-            if (!cur.computed && cur.property.type === 'Identifier' && SKIP_PROPS.has(cur.property.name)) prop = true
-            cur = cur.object
-          }
-          hit = prop && cur.type === 'Identifier' && ROOTS.has(cur.name)
-        }
-        if (!hit) return
+        if (!matchesTestModifier(node.callee, BARE, n => SKIP_PROPS.has(n))) return
         if (hasMarkerAbove(context, outermostCall(node), 'test-skip')) return
         context.report({ node, messageId: 'skipped' })
       },

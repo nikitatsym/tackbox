@@ -10,10 +10,11 @@ and points `cwd` at the fixture instead.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
+
+from conftest import init_repo, tackbox_env
 
 from tackbox.cli import _partition_findings, _span_lines
 from tackbox.engines import Finding
@@ -91,22 +92,8 @@ func B() error {
 """
 
 
-def _git(cwd: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
-
-
 def _init(root: Path) -> None:
-    _git(root, "init", "-q", "-b", "main")
-    _git(root, "config", "user.email", "t@t")
-    _git(root, "config", "user.name", "t")
-    _git(root, "add", ".")
-    _git(root, "commit", "-q", "-m", "fixture")
-
-
-def _env() -> dict[str, str]:
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(TACKBOX_ROOT / "py")
-    return env
+    init_repo(root, commit=True)
 
 
 def _hook(event: dict) -> subprocess.CompletedProcess:
@@ -121,7 +108,7 @@ def _hook_raw(stdin: str) -> subprocess.CompletedProcess:
         [sys.executable, "-m", "tackbox.cli", "hook"],
         input=stdin,
         cwd=TACKBOX_ROOT,
-        env=_env(),
+        env=tackbox_env(),
         capture_output=True,
         text=True,
     )
@@ -374,94 +361,48 @@ def _ask(r: subprocess.CompletedProcess) -> dict:
     return out
 
 
-def test_pre_introduce_marker_ask(tmp_path):
+def _pre_edit(tmp_path: Path, old: str, new: str) -> subprocess.CompletedProcess:
+    """PreToolUse Edit of svc.go from old_string to new_string in a fresh
+    dev-guarded repo - the marker gate's canonical input."""
     _dev_py(tmp_path)
     _init(tmp_path)
-    r = _hook(
+    return _hook(
         {
             "hook_event_name": "PreToolUse",
             "tool_name": "Edit",
             "cwd": str(tmp_path),
             "tool_input": {
                 "file_path": str(tmp_path / "svc.go"),
-                "old_string": "x := 1",
-                "new_string": "// no-report: bootstrap only\nx := 1",
+                "old_string": old,
+                "new_string": new,
             },
         }
     )
+
+
+def test_pre_introduce_marker_ask(tmp_path):
+    r = _pre_edit(tmp_path, "x := 1", "// no-report: bootstrap only\nx := 1")
     assert "no-report" in _ask(r)["permissionDecisionReason"]
 
 
 def test_pre_remove_marker_allow(tmp_path):
-    _dev_py(tmp_path)
-    _init(tmp_path)
-    r = _hook(
-        {
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Edit",
-            "cwd": str(tmp_path),
-            "tool_input": {
-                "file_path": str(tmp_path / "svc.go"),
-                "old_string": "// no-report: bootstrap only\nx := 1",
-                "new_string": "x := 1",
-            },
-        }
-    )
+    r = _pre_edit(tmp_path, "// no-report: bootstrap only\nx := 1", "x := 1")
     assert r.returncode == 0, r.stderr
     assert r.stdout == "", f"removing a marker is free (no output):\n{r.stdout}"
 
 
 def test_pre_change_reason_ask(tmp_path):
-    _dev_py(tmp_path)
-    _init(tmp_path)
-    r = _hook(
-        {
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Edit",
-            "cwd": str(tmp_path),
-            "tool_input": {
-                "file_path": str(tmp_path / "svc.go"),
-                "old_string": "// no-report: old reason\nx := 1",
-                "new_string": "// no-report: new reason\nx := 1",
-            },
-        }
-    )
+    r = _pre_edit(tmp_path, "// no-report: old reason\nx := 1", "// no-report: new reason\nx := 1")
     assert "no-report" in _ask(r)["permissionDecisionReason"]
 
 
 def test_pre_introduce_test_skip_marker_ask(tmp_path):
-    _dev_py(tmp_path)
-    _init(tmp_path)
-    r = _hook(
-        {
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Edit",
-            "cwd": str(tmp_path),
-            "tool_input": {
-                "file_path": str(tmp_path / "svc.go"),
-                "old_string": "x := 1",
-                "new_string": "// test-skip: flaky under race\nx := 1",
-            },
-        }
-    )
+    r = _pre_edit(tmp_path, "x := 1", "// test-skip: flaky under race\nx := 1")
     assert "test-skip" in _ask(r)["permissionDecisionReason"]
 
 
 def test_pre_remove_test_skip_marker_allow(tmp_path):
-    _dev_py(tmp_path)
-    _init(tmp_path)
-    r = _hook(
-        {
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Edit",
-            "cwd": str(tmp_path),
-            "tool_input": {
-                "file_path": str(tmp_path / "svc.go"),
-                "old_string": "// test-skip: flaky under race\nx := 1",
-                "new_string": "x := 1",
-            },
-        }
-    )
+    r = _pre_edit(tmp_path, "// test-skip: flaky under race\nx := 1", "x := 1")
     assert r.returncode == 0, r.stderr
     assert r.stdout == "", f"removing a marker is free (no output):\n{r.stdout}"
 
@@ -521,19 +462,6 @@ def test_pre_reporters_remove_line_allow(tmp_path):
 
 
 def test_pre_plain_edit_no_marker_allow(tmp_path):
-    _dev_py(tmp_path)
-    _init(tmp_path)
-    r = _hook(
-        {
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Edit",
-            "cwd": str(tmp_path),
-            "tool_input": {
-                "file_path": str(tmp_path / "svc.go"),
-                "old_string": "a := 1",
-                "new_string": "a := 2",
-            },
-        }
-    )
+    r = _pre_edit(tmp_path, "a := 1", "a := 2")
     assert r.returncode == 0, r.stderr
     assert r.stdout == "", f"a plain edit is free:\n{r.stdout}"

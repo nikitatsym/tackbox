@@ -18,13 +18,13 @@ sees them.
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from conftest import commit_all, git, init_repo, tackbox_env
 
 
 MD_CLEAN = "# Notes\n\nAll ASCII here.\n"
@@ -64,31 +64,13 @@ def _needs_go():
         pytest.fail("go toolchain not installed; install it, do not skip")
 
 
-def _git(root: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
-
-
-def _init_repo(root: Path) -> None:
-    _git(root, "init", "-q", "-b", "main")
-    _git(root, "config", "user.email", "t@t")
-    _git(root, "config", "user.name", "t")
-
-
-def _commit_all(root: Path, msg: str = "snap") -> None:
-    _git(root, "add", ".")
-    _git(root, "commit", "-q", "-m", msg)
-
-
 def _run_tackbox(
     repo: Path, *flags: str, path: str = "."
 ) -> subprocess.CompletedProcess:
-    tackbox_root = Path(__file__).resolve().parents[2]
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(tackbox_root / "py")
     return subprocess.run(
         [sys.executable, "-m", "tackbox.cli", "lint", path, "--no-cache", *flags],
         cwd=repo,
-        env=env,
+        env=tackbox_env(),
         capture_output=True,
         text=True,
     )
@@ -101,8 +83,8 @@ def test_changed_on_clean_repo_reports_empty_scope(tmp_path):
     """No staged, unstaged, or untracked -> scope is empty -> exit 2."""
     _needs_node()
     (tmp_path / "notes.md").write_text(MD_CLEAN)
-    _init_repo(tmp_path)
-    _commit_all(tmp_path)
+    init_repo(tmp_path)
+    commit_all(tmp_path)
 
     r = _run_tackbox(tmp_path, "--changed")
     assert r.returncode == 2, (
@@ -118,11 +100,11 @@ def test_changed_on_clean_repo_reports_empty_scope(tmp_path):
 def test_changed_picks_up_staged_file(tmp_path):
     _needs_node()
     (tmp_path / "notes.md").write_text(MD_CLEAN)
-    _init_repo(tmp_path)
-    _commit_all(tmp_path)
+    init_repo(tmp_path)
+    commit_all(tmp_path)
 
     (tmp_path / "notes.md").write_text(MD_VIOLATE)
-    _git(tmp_path, "add", "notes.md")
+    git(tmp_path, "add", "notes.md")
 
     r = _run_tackbox(tmp_path, "--changed")
     assert r.returncode == 1, (
@@ -135,8 +117,8 @@ def test_changed_picks_up_staged_file(tmp_path):
 def test_changed_picks_up_unstaged_file(tmp_path):
     _needs_node()
     (tmp_path / "notes.md").write_text(MD_CLEAN)
-    _init_repo(tmp_path)
-    _commit_all(tmp_path)
+    init_repo(tmp_path)
+    commit_all(tmp_path)
 
     (tmp_path / "notes.md").write_text(MD_VIOLATE)
     # Do not `git add`; violation lives only in the worktree.
@@ -152,8 +134,8 @@ def test_changed_picks_up_unstaged_file(tmp_path):
 def test_changed_picks_up_untracked_file(tmp_path):
     _needs_node()
     (tmp_path / "notes.md").write_text(MD_CLEAN)
-    _init_repo(tmp_path)
-    _commit_all(tmp_path)
+    init_repo(tmp_path)
+    commit_all(tmp_path)
 
     (tmp_path / "extra.md").write_text(MD_VIOLATE)
     # extra.md is not tracked.
@@ -173,8 +155,8 @@ def test_changed_excludes_committed_but_unmodified_files(tmp_path):
     _needs_node()
     (tmp_path / "dirty.md").write_text(MD_CLEAN)
     (tmp_path / "old-violation.md").write_text(MD_VIOLATE)
-    _init_repo(tmp_path)
-    _commit_all(tmp_path)
+    init_repo(tmp_path)
+    commit_all(tmp_path)
 
     # Modify only dirty.md (still clean content); old-violation.md is not
     # touched in the worktree.
@@ -199,8 +181,8 @@ def test_changed_intersects_with_path_prefix(tmp_path):
     (tmp_path / "docs").mkdir()
     (tmp_path / "src" / "notes.md").write_text(MD_CLEAN)
     (tmp_path / "docs" / "notes.md").write_text(MD_CLEAN)
-    _init_repo(tmp_path)
-    _commit_all(tmp_path)
+    init_repo(tmp_path)
+    commit_all(tmp_path)
 
     # Both files are dirty with violations.
     (tmp_path / "src" / "notes.md").write_text(MD_VIOLATE)
@@ -226,8 +208,8 @@ def test_changed_go_file_expands_to_containing_package(tmp_path):
     (tmp_path / "pkg").mkdir()
     (tmp_path / "pkg" / "clean.go").write_text(GO_CLEAN)
     (tmp_path / "pkg" / "violate.go").write_text(GO_ERC001)
-    _init_repo(tmp_path)
-    _commit_all(tmp_path)
+    init_repo(tmp_path)
+    commit_all(tmp_path)
 
     # Only clean.go is modified; violate.go is untouched but shares the
     # package. Plan step 7 acceptance: erclint expands to the whole package.
@@ -264,18 +246,18 @@ def _setup_forked_repo(tmp_path: Path) -> Path:
     (tmp_path / "feature.md").write_text(MD_CLEAN)
     (tmp_path / "main-only.md").write_text(MD_CLEAN)
     (tmp_path / "unrelated.md").write_text(MD_CLEAN)
-    _init_repo(tmp_path)
-    _commit_all(tmp_path, "base A")
+    init_repo(tmp_path)
+    commit_all(tmp_path, "base A")
 
-    _git(tmp_path, "checkout", "-q", "-b", "feature")
+    git(tmp_path, "checkout", "-q", "-b", "feature")
     (tmp_path / "feature.md").write_text(MD_CLEAN + "\nSecond line.\n")
-    _commit_all(tmp_path, "feature edit F")
+    commit_all(tmp_path, "feature edit F")
 
-    _git(tmp_path, "checkout", "-q", "main")
+    git(tmp_path, "checkout", "-q", "main")
     (tmp_path / "main-only.md").write_text(MD_VIOLATE)
-    _commit_all(tmp_path, "main violation M")
+    commit_all(tmp_path, "main violation M")
 
-    _git(tmp_path, "checkout", "-q", "feature")
+    git(tmp_path, "checkout", "-q", "feature")
     return tmp_path
 
 
@@ -301,12 +283,12 @@ def test_since_ref_picks_up_files_changed_on_the_feature_branch(tmp_path):
     _needs_node()
     (tmp_path / "feature.md").write_text(MD_CLEAN)
     (tmp_path / "unrelated.md").write_text(MD_CLEAN)
-    _init_repo(tmp_path)
-    _commit_all(tmp_path, "base")
+    init_repo(tmp_path)
+    commit_all(tmp_path, "base")
 
-    _git(tmp_path, "checkout", "-q", "-b", "feature")
+    git(tmp_path, "checkout", "-q", "-b", "feature")
     (tmp_path / "feature.md").write_text(MD_VIOLATE)
-    _commit_all(tmp_path, "feature violation")
+    commit_all(tmp_path, "feature violation")
 
     r = _run_tackbox(tmp_path, "--since=main")
     assert r.returncode == 1, (
@@ -322,10 +304,10 @@ def test_since_ref_includes_dirty_tree_union_with_diff(tmp_path):
     the branch - plan: 'иначе --since=main пропустит несохранённые правки'."""
     _needs_node()
     (tmp_path / "committed.md").write_text(MD_CLEAN)
-    _init_repo(tmp_path)
-    _commit_all(tmp_path)
+    init_repo(tmp_path)
+    commit_all(tmp_path)
 
-    _git(tmp_path, "checkout", "-q", "-b", "feature")
+    git(tmp_path, "checkout", "-q", "-b", "feature")
     # No commits on feature. Just an untracked file with a violation.
     (tmp_path / "dirty.md").write_text(MD_VIOLATE)
 
@@ -344,12 +326,12 @@ def test_changed_and_since_together_equals_since_alone(tmp_path):
     in completion order, but the set of findings must be identical."""
     _needs_node()
     (tmp_path / "committed.md").write_text(MD_CLEAN)
-    _init_repo(tmp_path)
-    _commit_all(tmp_path, "base")
+    init_repo(tmp_path)
+    commit_all(tmp_path, "base")
 
-    _git(tmp_path, "checkout", "-q", "-b", "feature")
+    git(tmp_path, "checkout", "-q", "-b", "feature")
     (tmp_path / "committed.md").write_text(MD_VIOLATE)
-    _commit_all(tmp_path, "branch violation")
+    commit_all(tmp_path, "branch violation")
 
     # Also add an untracked dirty file.
     (tmp_path / "extra.md").write_text(MD_VIOLATE)
@@ -368,8 +350,8 @@ def test_since_requires_a_value(tmp_path):
     """`--since` without a value must fail argparse - the ref is required."""
     _needs_node()
     (tmp_path / "notes.md").write_text(MD_CLEAN)
-    _init_repo(tmp_path)
-    _commit_all(tmp_path)
+    init_repo(tmp_path)
+    commit_all(tmp_path)
 
     r = _run_tackbox(tmp_path, "--since")
     assert r.returncode == 2, (
@@ -382,8 +364,8 @@ def test_since_unknown_ref_fails_loudly(tmp_path):
     """An unresolved ref must fail loud, not silently degrade to full-scan."""
     _needs_node()
     (tmp_path / "notes.md").write_text(MD_CLEAN)
-    _init_repo(tmp_path)
-    _commit_all(tmp_path)
+    init_repo(tmp_path)
+    commit_all(tmp_path)
 
     r = _run_tackbox(tmp_path, "--since=does-not-exist")
     assert r.returncode != 0, (
@@ -395,7 +377,7 @@ def test_since_unknown_ref_fails_loudly(tmp_path):
 def test_changed_on_fresh_repo_without_commits_fails_cleanly(tmp_path):
     """`git init` with no commit: HEAD does not resolve. Onboarding case -
     must surface a tackbox message, not a Python traceback."""
-    _init_repo(tmp_path)
+    init_repo(tmp_path)
     (tmp_path / "notes.md").write_text(MD_CLEAN)
 
     r = _run_tackbox(tmp_path, "--changed")

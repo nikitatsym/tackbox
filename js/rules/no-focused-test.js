@@ -1,4 +1,5 @@
-const ROOTS = new Set(['it', 'test', 'describe'])
+const { matchesTestModifier } = require('./_shared')
+
 const BARE = new Set(['fit', 'fdescribe', 'ftest'])
 
 module.exports = {
@@ -13,20 +14,7 @@ module.exports = {
   create(context) {
     return {
       CallExpression(node) {
-        const callee = node.callee
-        let hit = false
-        if (callee.type === 'Identifier') {
-          hit = BARE.has(callee.name)
-        } else if (callee.type === 'MemberExpression') {
-          let cur = callee
-          let prop = false
-          while (cur && cur.type === 'MemberExpression') {
-            if (!cur.computed && cur.property.type === 'Identifier' && cur.property.name === 'only') prop = true
-            cur = cur.object
-          }
-          hit = prop && cur.type === 'Identifier' && ROOTS.has(cur.name)
-        }
-        if (!hit) return
+        if (!matchesTestModifier(node.callee, BARE, n => n === 'only')) return
         context.report({ node, messageId: 'focused' })
       },
     }

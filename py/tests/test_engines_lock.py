@@ -14,7 +14,6 @@ regenerates it.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import shutil
@@ -24,6 +23,8 @@ from pathlib import Path
 
 import pytest
 
+from tackbox.hashing import sha256_file
+
 REPO = Path(__file__).resolve().parents[2]
 VERSION_FILE = REPO / "engines" / "VERSION"
 LOCK_FILE = REPO / "engines" / "lock.json"
@@ -32,14 +33,6 @@ VENDOR_LOCK_FILE = REPO / "engines" / "vendor" / "package-lock.json"
 LOCK_SCRIPT = REPO / "scripts" / "lock_engines.py"
 
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
-
-
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def test_engines_version_file_exists_and_is_semver():
@@ -73,8 +66,8 @@ def test_engines_lock_version_matches_version_file():
 
 def test_engines_lock_shas_match_current_sources():
     data = json.loads(LOCK_FILE.read_text())
-    expected_manifest = _sha256_file(MANIFEST_FILE)
-    expected_vendor_lock = _sha256_file(VENDOR_LOCK_FILE)
+    expected_manifest = sha256_file(MANIFEST_FILE)
+    expected_vendor_lock = sha256_file(VENDOR_LOCK_FILE)
     assert data["manifest_sha256"] == expected_manifest, (
         "engines/lock.json.manifest_sha256 does not match current "
         "engines/manifest.json. Regenerate: "

@@ -24,13 +24,10 @@ var Analyzer = &analysis.Analyzer{
 }
 
 func run(pass *analysis.Pass) (interface{}, error) {
-	astutil.EachFile(pass, func(f *ast.File) {
+	astutil.InspectNonDeclared(pass, func(f *ast.File) func(ast.Node) bool {
 		idx := markers.Build(pass.Fset, f)
 		branchErr := enclosingErrNames(f)
-		ast.Inspect(f, func(n ast.Node) bool {
-			if fn, ok := n.(*ast.FuncDecl); ok && astutil.IsDeclaredBody(pass.TypesInfo, fn) {
-				return false
-			}
+		return func(n ast.Node) bool {
 			block, ok := n.(*ast.BlockStmt)
 			if !ok {
 				return true
@@ -54,7 +51,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 					astutil.QualifiedName(call.Fun))
 			}
 			return true
-		})
+		}
 	})
 	return nil, nil
 }

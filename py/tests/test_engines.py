@@ -234,6 +234,7 @@ def test_dev_engines_registry_order_locked():
     assert [e.id for e in DEV_ENGINES] == [
         "erclint",
         "erclint-opengrep",
+        "tackbox-jscpd",
         "javalint",
         "tackbox-eslint",
         "tackbox-mdlint",
@@ -273,9 +274,12 @@ def test_dev_engines_opengrep_covers_multi_language():
 
 
 def test_dispatch_dev_engines_routes_java_to_javalint():
+    # Java goes to javalint (not opengrep) and to tackbox-jscpd (duplication
+    # spans every language); dispatch order follows the registry.
     javalint = next(e for e in DEV_ENGINES if e.id == "javalint")
+    jscpd = next(e for e in DEV_ENGINES if e.id == "tackbox-jscpd")
     plan = dispatch(["src/Main.java"], DEV_ENGINES)
-    assert plan == [(javalint, ["src/Main.java"])]
+    assert plan == [(jscpd, ["src/Main.java"]), (javalint, ["src/Main.java"])]
 
 
 def test_dev_engines_javalint_extension_is_only_java():

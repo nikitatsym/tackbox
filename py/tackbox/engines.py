@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import zipfile
 from dataclasses import dataclass
@@ -290,6 +291,10 @@ class EngineSpec:
     # Accepts the internal --machine flag (one {file, line, rule} JSON per
     # finding). erclint is False: its -json output is parsed directly.
     machine_flag: bool = False
+    # Included in the per-file content cache. jscpd is False: duplication is
+    # cross-file, so a per-file key is false by construction - it always runs
+    # and never writes clean markers.
+    cacheable: bool = True
 
 
 @dataclass(frozen=True)
@@ -330,6 +335,19 @@ def dispatch(
     return plan
 
 
+@dataclass(frozen=True)
+class EngineRun:
+    """Everything one engine invocation needs, bundled so it flows unchanged
+    from run_engines through the dispatch helpers (frozen: read-only en route)."""
+
+    engine: EngineSpec
+    args: list[str]
+    repo_root: Path
+    tackbox_root: Path
+    reporters: tuple[tuple[str, str], ...] = ()
+    machine: bool = False
+
+
 def run_engines(
     plan: list[tuple[EngineSpec, list[str]]],
     repo_root: Path,
@@ -347,7 +365,8 @@ def run_engines(
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(plan)) as pool:
         futures = {
             pool.submit(
-                _run_one, engine, args, repo_root, tackbox_root, reporters, machine
+                _run_one,
+                EngineRun(engine, args, repo_root, tackbox_root, reporters, machine),
             ): engine.id
             for engine, args in plan
         }
@@ -359,48 +378,38 @@ def _machine_argv(engine: EngineSpec, argv: list[str], machine: bool) -> list[st
     return [*argv, "--machine"] if machine and engine.machine_flag else argv
 
 
-def _run_one(
-    engine: EngineSpec,
-    args: list[str],
-    repo_root: Path,
-    tackbox_root: Path,
-    reporters: tuple[tuple[str, str], ...] = (),
-    machine: bool = False,
-) -> EngineResult:
-    if engine.package_mode:
-        return _run_per_module(engine, args, repo_root, tackbox_root, reporters, machine)
-    argv = _machine_argv(engine, engine.build_argv(repo_root, tackbox_root, args, reporters), machine)
+def _run_one(run: EngineRun) -> EngineResult:
+    if run.engine.package_mode:
+        return _run_per_module(run)
+    argv = _machine_argv(
+        run.engine,
+        run.engine.build_argv(run.repo_root, run.tackbox_root, run.args, run.reporters),
+        run.machine,
+    )
     env = hermetic_env() if is_hermetic() else None
     completed = subprocess.run(
         argv,
-        cwd=repo_root,
+        cwd=run.repo_root,
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
     return EngineResult(
-        engine_id=engine.id,
+        engine_id=run.engine.id,
         exit_code=normalize_exit_code(completed.returncode),
         stdout=completed.stdout.decode("utf-8", errors="replace"),
         stderr=completed.stderr.decode("utf-8", errors="replace"),
     )
 
 
-def _run_per_module(
-    engine: EngineSpec,
-    args: list[str],
-    repo_root: Path,
-    tackbox_root: Path,
-    reporters: tuple[tuple[str, str], ...] = (),
-    machine: bool = False,
-) -> EngineResult:
+def _run_per_module(run: EngineRun) -> EngineResult:
     """One subprocess per Go module, cwd at the module root.
 
     `go list`-style patterns resolve against the module containing cwd,
     so packages from different modules cannot share one invocation.
     """
     groups, orphans = group_go_packages_by_module(
-        args, lambda d: (repo_root / d / "go.mod").is_file()
+        run.args, lambda d: (run.repo_root / d / "go.mod").is_file()
     )
     env = hermetic_env() if is_hermetic() else None
     max_code = 0
@@ -408,10 +417,14 @@ def _run_per_module(
     errs: list[str] = []
     for module in sorted(groups):
         rel = [module_relative(module, p) for p in groups[module]]
-        argv = _machine_argv(engine, engine.build_argv(repo_root, tackbox_root, rel, reporters), machine)
+        argv = _machine_argv(
+            run.engine,
+            run.engine.build_argv(run.repo_root, run.tackbox_root, rel, run.reporters),
+            run.machine,
+        )
         completed = subprocess.run(
             argv,
-            cwd=repo_root / module,
+            cwd=run.repo_root / module,
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -422,7 +435,7 @@ def _run_per_module(
     for pkg in orphans:
         errs.append(f"no enclosing go.mod, skipped: {pkg}\n")
     return EngineResult(
-        engine_id=engine.id,
+        engine_id=run.engine.id,
         exit_code=max_code,
         stdout="".join(outs),
         stderr="".join(errs),
@@ -627,6 +640,9 @@ _JAVA_EXTS = frozenset([".java"])
 _OPENGREP_EXTS = frozenset(
     [".go", ".py", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"]
 )
+# jscpd tokenizes go/py/java and the JS family (svelte included); markdown is
+# excluded as noise (prose duplication is not a defect).
+_JSCPD_EXTS = _GO_EXTS | _PY_EXTS | _JAVA_EXTS | _JS_EXTS
 
 
 def _built_go_binary(tackbox_root: Path, name: str) -> Path:
@@ -709,6 +725,60 @@ def _erclint_opengrep_argv(
 ) -> list[str]:
     bin_ = _built_go_binary(tackbox_root, "erclint-opengrep")
     return [str(bin_), *files]
+
+
+def _dev_jscpd_bin(tackbox_root: Path) -> Path:
+    """Host jscpd binary for dev mode, fetched + extracted per engines/manifest.json
+    into .tackbox-dev/bin, cached by the tarball sha256.
+
+    Dev checkouts have no engine store (opengrep rides the system PATH; jscpd has
+    no such install), so the wrapper is pointed at this copy. The archive sha is
+    verified on download - a mismatch fails loudly, never yields a stale binary.
+    """
+    key = detect_platform_key()
+    if key is None:
+        raise EnginesStoreError(
+            f"no jscpd manifest platform for host {sys.platform}/{platform.machine()}"
+        )
+    manifest = json.loads((tackbox_root / "engines" / "manifest.json").read_text())
+    entry = manifest["platforms"][key]["jscpd"]
+    archive_sha = entry["archive_sha256"]
+    bin_dir = tackbox_root / ".tackbox-dev" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    suffix = ".exe" if sys.platform.startswith("win") else ""
+    bin_path = bin_dir / f"jscpd-{archive_sha[:16]}{suffix}"
+    if bin_path.is_file():
+        return bin_path
+    with tempfile.TemporaryDirectory() as td:
+        tgz = Path(td) / "jscpd.tgz"
+        with urlopen(entry["source_url"], timeout=300) as r, tgz.open("wb") as out:
+            shutil.copyfileobj(r, out)
+        got = sha256_file(tgz)
+        if got != archive_sha:
+            raise EnginesStoreError(
+                f"jscpd tarball sha256 mismatch for {entry['source_url']}: "
+                f"expected {archive_sha}, got {got}"
+            )
+        with tarfile.open(tgz, "r:gz") as tf:
+            src = tf.extractfile(entry["archive_member"])
+            if src is None:
+                raise EnginesStoreError(
+                    f"member {entry['archive_member']} not in {entry['source_url']}"
+                )
+            tmp = bin_dir / f".jscpd-{os.getpid()}.tmp"
+            with tmp.open("wb") as out:
+                shutil.copyfileobj(src, out)
+    os.chmod(tmp, 0o755)
+    os.replace(tmp, bin_path)
+    return bin_path
+
+
+def _tackbox_jscpd_argv(
+    _repo_root: Path, tackbox_root: Path, files: list[str], reporters=()
+) -> list[str]:
+    bin_ = _built_go_binary(tackbox_root, "tackbox-jscpd")
+    jscpd = _dev_jscpd_bin(tackbox_root)
+    return [str(bin_), "--jscpd", str(jscpd), *files]
 
 
 def _javalint_src_hash(tackbox_root: Path) -> str:
@@ -813,6 +883,14 @@ DEV_ENGINES: list[EngineSpec] = [
         machine_flag=True,
     ),
     EngineSpec(
+        id="tackbox-jscpd",
+        extensions=_JSCPD_EXTS,
+        build_argv=_tackbox_jscpd_argv,
+        path_filter=_drop_go_testdata,
+        machine_flag=True,
+        cacheable=False,
+    ),
+    EngineSpec(
         id="javalint",
         extensions=_JAVA_EXTS,
         build_argv=_javalint_argv,
@@ -870,6 +948,16 @@ def _erclint_opengrep_argv_hermetic(
     return [str(_hermetic_erclint_bin("erclint-opengrep")), *files]
 
 
+def _tackbox_jscpd_argv_hermetic(
+    _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=()
+) -> list[str]:
+    """Wrapper from the thin wheel; jscpd from the versioned engine store. Unlike
+    node/opengrep the wrapper takes the store path explicitly (--jscpd) rather
+    than resolving off PATH, so dev and hermetic share one wrapper contract."""
+    jscpd = hermetic_engines_root() / "bin" / exe_name("jscpd")
+    return [str(_hermetic_erclint_bin("tackbox-jscpd")), "--jscpd", str(jscpd), *files]
+
+
 def _javalint_argv_hermetic(
     _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=()
 ) -> list[str]:
@@ -917,6 +1005,14 @@ HERMETIC_ENGINES: list[EngineSpec] = [
         build_argv=_erclint_opengrep_argv_hermetic,
         path_filter=_drop_go_testdata,
         machine_flag=True,
+    ),
+    EngineSpec(
+        id="tackbox-jscpd",
+        extensions=_JSCPD_EXTS,
+        build_argv=_tackbox_jscpd_argv_hermetic,
+        path_filter=_drop_go_testdata,
+        machine_flag=True,
+        cacheable=False,
     ),
     EngineSpec(
         id="javalint",

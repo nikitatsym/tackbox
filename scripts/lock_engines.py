@@ -17,7 +17,6 @@ engine source.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import sys
@@ -29,15 +28,10 @@ LOCK_FILE = REPO / "engines" / "lock.json"
 MANIFEST_FILE = REPO / "engines" / "manifest.json"
 VENDOR_LOCK_FILE = REPO / "engines" / "vendor" / "package-lock.json"
 
+sys.path.insert(0, str(REPO / "py"))
+from tackbox.hashing import sha256_file  # noqa: E402
+
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
-
-
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def read_version() -> str:

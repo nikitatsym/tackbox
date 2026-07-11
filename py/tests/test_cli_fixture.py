@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _fixtures import PY_ONE_PER_RULE
 
 
 GO_MOD = """module tackboxfixture
@@ -60,55 +61,7 @@ MD_NON_ASCII = """# Notes
 Some line with an em-dash: hello - world.
 """
 
-# One violation per migrated python rule.
-PY_VIOLATIONS = """import sys
-import contextlib
-
-
-def swallowed():
-    try:
-        work()
-    except ValueError as e:
-        pass
-
-
-def bare():
-    try:
-        work()
-    except:
-        pass
-
-
-def reraise_no_cause():
-    try:
-        work()
-    except ValueError as e:
-        raise RuntimeError("wrapped")
-
-
-def useless():
-    try:
-        work()
-    except ValueError:
-        raise
-
-
-def exit_in_except():
-    try:
-        work()
-    except ValueError:
-        sys.exit(1)
-
-
-def suppressed():
-    with contextlib.suppress(Exception):
-        work()
-
-
-def import_inside():
-    import json
-    return json
-"""
+PY_VIOLATIONS = PY_ONE_PER_RULE
 
 # One violation per javalint rule; also pins .java dispatch to the javalint engine.
 JAVA_VIOLATIONS = """class Violations {
@@ -287,7 +240,7 @@ def test_banner_shape_on_stderr(fixture_repo):
     ), f"unexpected banner: {banner!r}"
 
 
-def test_all_six_engine_sections_present(fixture_repo):
+def test_all_seven_engine_sections_present(fixture_repo):
     result = _run_tackbox(fixture_repo)
     sections = _split_engine_sections(result.stdout)
     assert set(sections) == {
@@ -296,6 +249,7 @@ def test_all_six_engine_sections_present(fixture_repo):
         "javalint",
         "pyrules",
         "tackbox-eslint",
+        "tackbox-jscpd",
         "tackbox-mdlint",
     }
 
@@ -343,6 +297,7 @@ def test_engine_sections_appear_in_alphabetical_order(fixture_repo):
         "javalint",
         "pyrules",
         "tackbox-eslint",
+        "tackbox-jscpd",
         "tackbox-mdlint",
     ]
 
@@ -382,8 +337,9 @@ def test_scoped_go_only_run_promotes_erclint_findings(fixture_repo):
     """erclint's `-json` mode exits 0 with findings; aggregate must be 1.
 
     Scope the run to pkg/swallow.go so eslint/mdlint drop out entirely.
-    Only erclint and opengrep dispatch; opengrep finds nothing on this
-    file, so the nonzero aggregate must come from erclint promotion.
+    erclint, opengrep, and jscpd dispatch on the .go file; opengrep and
+    jscpd (no intra-file clone) find nothing, so the nonzero aggregate must
+    come from erclint promotion.
     """
     tackbox_root = Path(__file__).resolve().parents[2]
     env = dict(os.environ)
@@ -397,7 +353,7 @@ def test_scoped_go_only_run_promotes_erclint_findings(fixture_repo):
     )
     sections = _split_engine_sections(result.stdout)
     # eslint / mdlint dropped: no matching files in scope.
-    assert set(sections) == {"erclint", "erclint-opengrep"}
+    assert set(sections) == {"erclint", "erclint-opengrep", "tackbox-jscpd"}
     assert result.returncode == 1, (
         f"expected 1, got {result.returncode}\n"
         f"stdout={result.stdout!r}\nstderr={result.stderr!r}"

@@ -3,6 +3,7 @@ const {
   enclosingFn,
   fnReturnsResultLike,
   errObjectFlows,
+  objectCarriesErr,
   walk,
 } = require('./_shared')
 
@@ -34,21 +35,10 @@ function tryBlockParses(block) {
 
 // boundaryPropagates: `{ ok: false, cause|message: <err object> }` - a Result
 // boundary that carries the caught error as a live object. Stricter than
-// _shared.isBoundaryValue: F7c breaks on stringification (message: err.message).
+// _shared.isBoundaryValue: F7c breaks on stringification (message: err.message),
+// so the value predicate is object-flow, not a bare ref.
 function boundaryPropagates(expr, errName) {
-  if (!errName || !expr || expr.type !== 'ObjectExpression') return false
-  const ok = expr.properties.find(
-    p => p.type === 'Property' && p.key && p.key.type === 'Identifier' && p.key.name === 'ok',
-  )
-  if (!ok || ok.value.type !== 'Literal' || ok.value.value !== false) return false
-  return expr.properties.some(
-    p =>
-      p.type === 'Property' &&
-      p.key &&
-      p.key.type === 'Identifier' &&
-      (p.key.name === 'cause' || p.key.name === 'message') &&
-      errObjectFlows(p.value, errName),
-  )
+  return objectCarriesErr(expr, errName, errObjectFlows)
 }
 
 // localCarrierRHS: the RHS of the last local assignment to `name` among stmts

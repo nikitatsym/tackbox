@@ -10,11 +10,12 @@ self-lint never encounters them.
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+from conftest import init_repo, tackbox_env
 
 
 GO_MOD_NESTED = """module nestedfixture
@@ -51,26 +52,15 @@ func main() {}
 """
 
 
-def _git(cwd: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
-
-
 def _init_repo(root: Path) -> None:
-    _git(root, "init", "-q", "-b", "main")
-    _git(root, "config", "user.email", "t@t")
-    _git(root, "config", "user.name", "t")
-    _git(root, "add", ".")
-    _git(root, "commit", "-q", "-m", "fixture")
+    init_repo(root, commit=True)
 
 
 def _run_tackbox(repo: Path, *argv: str) -> subprocess.CompletedProcess:
-    tackbox_root = Path(__file__).resolve().parents[2]
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(tackbox_root / "py")
     return subprocess.run(
         [sys.executable, "-m", "tackbox.cli", *argv],
         cwd=repo,
-        env=env,
+        env=tackbox_env(),
         capture_output=True,
         text=True,
     )
