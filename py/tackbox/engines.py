@@ -36,9 +36,9 @@ from .source_set import (
 )
 
 # (repo_root, tackbox_root, args, reporters) -> argv.
-# reporters = (repo-relative-file, function) pairs from .tackbox-reporters.
+# reporters = (repo-relative-file, function, kind) triples from .tackbox-reporters.
 ArgvBuilder = Callable[
-    [Path, Path, list[str], "tuple[tuple[str, str], ...]"], list[str]
+    [Path, Path, list[str], "tuple[tuple[str, str, str], ...]"], list[str]
 ]
 
 _TACKBOX_PKG_ROOT = Path(__file__).parent
@@ -344,7 +344,7 @@ class EngineRun:
     args: list[str]
     repo_root: Path
     tackbox_root: Path
-    reporters: tuple[tuple[str, str], ...] = ()
+    reporters: tuple[tuple[str, str, str], ...] = ()
     machine: bool = False
 
 
@@ -352,7 +352,7 @@ def run_engines(
     plan: list[tuple[EngineSpec, list[str]]],
     repo_root: Path,
     tackbox_root: Path,
-    reporters: tuple[tuple[str, str], ...] = (),
+    reporters: tuple[tuple[str, str, str], ...] = (),
     machine: bool = False,
 ) -> list[EngineResult]:
     """Run each dispatched engine as a subprocess in parallel.
@@ -630,21 +630,25 @@ def _has_ext(path: str, exts: frozenset[str]) -> bool:
 
 
 def _reporters_flag(
-    reporters: tuple[tuple[str, str], ...],
+    reporters: tuple[tuple[str, str, str], ...],
     exts: frozenset[str],
     transform: Callable[[str], str],
+    kind: str = "capture",
+    flag: str = "--reporters",
 ) -> list[str]:
-    """Format `--reporters=<path>#<func>,...` for one engine's language.
+    """Format `<flag>=<path>#<func>,...` for one engine's language and kind.
 
-    Only declarations whose file matches `exts` are passed; each engine
-    self-filters so the same declaration set reaches every builder. erclint
-    gets absolute paths (its `file=` load is cwd-independent); the syntactic
-    engines get the paths as written.
+    Each engine self-filters the shared declaration set. Capture sinks ride
+    `--reporters`; usage sinks ride `--usage-sinks` (erclint-only today).
+    erclint gets absolute paths (its `file=` load is cwd-independent); the
+    syntactic engines get the paths as written.
     """
     picked = [
-        f"{transform(f)}#{fn}" for f, fn in reporters if _has_ext(f, exts)
+        f"{transform(f)}#{fn}"
+        for f, fn, k in reporters
+        if k == kind and _has_ext(f, exts)
     ]
-    return [f"--reporters={','.join(picked)}"] if picked else []
+    return [f"{flag}={','.join(picked)}"] if picked else []
 
 
 # --- Dev-mode engine specs ------------------------------------------------
@@ -741,7 +745,14 @@ def _erclint_argv(
 ) -> list[str]:
     bin_ = _built_go_binary(tackbox_root, "erclint")
     flag = _reporters_flag(reporters, _GO_EXTS, lambda f: str(repo_root / f))
-    return [str(bin_), "-json", *flag, *(f"./{p}" for p in pkgs)]
+    usage = _reporters_flag(
+        reporters,
+        _GO_EXTS,
+        lambda f: str(repo_root / f),
+        kind="usage",
+        flag="--usage-sinks",
+    )
+    return [str(bin_), "-json", *flag, *usage, *(f"./{p}" for p in pkgs)]
 
 
 def _erclint_opengrep_argv(
@@ -958,10 +969,18 @@ def _erclint_argv_hermetic(
     repo_root: Path, _tackbox_root: Path, pkgs: list[str], reporters=()
 ) -> list[str]:
     flag = _reporters_flag(reporters, _GO_EXTS, lambda f: str(repo_root / f))
+    usage = _reporters_flag(
+        reporters,
+        _GO_EXTS,
+        lambda f: str(repo_root / f),
+        kind="usage",
+        flag="--usage-sinks",
+    )
     return [
         str(_hermetic_erclint_bin("erclint")),
         "-json",
         *flag,
+        *usage,
         *(f"./{p}" for p in pkgs),
     ]
 

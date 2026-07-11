@@ -47,6 +47,47 @@ func main() {
 }
 """
 
+GO_USAGE = """package fixture
+
+import (
+\t"fmt"
+\t"os"
+)
+
+func usage(msg string) {
+\tfmt.Fprintln(os.Stderr, msg)
+\tos.Exit(2)
+}
+
+func Check(args []string) {
+\tif len(args) < 2 {
+\t\tusage("usage: tool <cmd>")
+\t}
+}
+"""
+
+GO_USAGE_ERR_BRANCH = """package fixture
+
+import (
+\t"errors"
+\t"fmt"
+\t"os"
+)
+
+func usage(msg string) {
+\tfmt.Fprintln(os.Stderr, msg)
+\tos.Exit(2)
+}
+
+func Run() error {
+\terr := errors.New("x")
+\tif err != nil {
+\t\tusage("bad input")
+\t}
+\treturn errors.New("noop")
+}
+"""
+
 JS_DECLARED = """export function myReport(m, e) {}
 
 try {
@@ -110,6 +151,43 @@ def test_go_dead_symbol_exit_2(tmp_path):
     r = _lint(tmp_path)
     assert r.returncode == 2, f"dead go symbol must exit 2:\n{r.stdout}\n{r.stderr}"
     assert "no top-level function nope" in r.stderr, r.stderr
+
+
+def test_go_usage_sink_declared_clean(tmp_path):
+    (tmp_path / "go.mod").write_text(GO_MOD)
+    (tmp_path / "cli.go").write_text(GO_USAGE)
+    (tmp_path / ".tackbox-reporters").write_text(
+        "cli.go#usage [usage]: diagnostic exit\n"
+    )
+    _init(tmp_path)
+    r = _lint(tmp_path)
+    assert r.returncode == 0, (
+        f"declared usage sink should be clean outside err-branches:\n{r.stdout}\n{r.stderr}"
+    )
+
+
+def test_go_usage_helper_undeclared_stays_strict(tmp_path):
+    (tmp_path / "go.mod").write_text(GO_MOD)
+    (tmp_path / "cli.go").write_text(GO_USAGE)
+    _init(tmp_path)
+    r = _lint(tmp_path)
+    assert r.returncode == 1, (
+        f"undeclared usage helper body must keep ERC003:\n{r.stdout}\n{r.stderr}"
+    )
+
+
+def test_go_usage_sink_err_branch_fires(tmp_path):
+    (tmp_path / "go.mod").write_text(GO_MOD)
+    (tmp_path / "cli.go").write_text(GO_USAGE_ERR_BRANCH)
+    (tmp_path / ".tackbox-reporters").write_text(
+        "cli.go#usage [usage]: diagnostic exit\n"
+    )
+    _init(tmp_path)
+    r = _lint(tmp_path)
+    assert r.returncode == 1, (
+        f"usage sink in an err-branch must fire:\n{r.stdout}\n{r.stderr}"
+    )
+    assert "failure path" in r.stdout, r.stdout
 
 
 def test_js_declaration_recognized(tmp_path):

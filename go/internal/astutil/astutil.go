@@ -27,11 +27,13 @@ var reportErrCapture = map[string]bool{"SentryErr": true, "Warn": true}
 var reportPanicCapture = map[string]bool{"Panic": true}
 
 // DeclaredReporter is a `.tackbox-reporters` sink resolved to its package
-// path and function name. A call to it captures when the caught error flows
-// into the call's arguments (argument-flow).
+// path and function name. A capture sink's call captures when the caught
+// error flows into the call's arguments (argument-flow). A usage sink
+// (`[usage]`) never captures; ERC003 owns its semantics.
 type DeclaredReporter struct {
 	PkgPath string
 	Name    string
+	Usage   bool
 }
 
 var declaredReporters []DeclaredReporter
@@ -63,11 +65,28 @@ func captureKind(info *types.Info, call *ast.CallExpr, errName string) capKind {
 		return capNone
 	}
 	for _, d := range declaredReporters {
+		if d.Usage {
+			continue
+		}
 		if d.PkgPath == fn.Pkg().Path() && d.Name == fn.Name() && argFlows(call, errName) {
 			return capErr
 		}
 	}
 	return capNone
+}
+
+// IsUsageSink reports whether call's callee resolves to a declared usage sink.
+func IsUsageSink(info *types.Info, call *ast.CallExpr) bool {
+	fn, ok := calleeFunc(info, call)
+	if !ok || fn.Pkg() == nil {
+		return false
+	}
+	for _, d := range declaredReporters {
+		if d.Usage && d.PkgPath == fn.Pkg().Path() && d.Name == fn.Name() {
+			return true
+		}
+	}
+	return false
 }
 
 // calleeFunc resolves call's callee to the *types.Func it denotes.

@@ -22,3 +22,9 @@ func TestDeclaredReporters(t *testing.T) {
 	defer astutil.SetDeclaredReporters(nil)
 	analysistest.Run(t, analysistest.TestData(), errcheck.Analyzer, "declared")
 }
+
+func TestUsageSinkNotCapture(t *testing.T) {
+	astutil.SetDeclaredReporters([]astutil.DeclaredReporter{{PkgPath: "usagesink", Name: "usage", Usage: true}})
+	defer astutil.SetDeclaredReporters(nil)
+	analysistest.Run(t, analysistest.TestData(), errcheck.Analyzer, "usagesink")
+}

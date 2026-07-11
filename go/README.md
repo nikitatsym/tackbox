@@ -45,7 +45,9 @@ Details per rule:
   must be preceded by a capture, carry the error into their own
   arguments (`log.Fatal(err)`, a reported death), resolve to a declared
   sink, or carry `// no-report: <reason>` (e.g. the normal `os.Exit(0)`
-  at the end of `main`).
+  at the end of `main`). A declared `[usage]` sink is the opposite,
+  single-purpose lane: clean outside err-branches, a finding inside
+  one regardless of arguments.
 - ERC004 `returnnil` - bare `return nil` on `*T`/`[]T`/`map` needs
   `// nil-return: <reason>` or use `(val, ok)` / `(val, err)`.
 - ERC005 `doublecapture` - a single err-branch may not both capture

@@ -92,5 +92,22 @@ def test_load_parses_and_validates(tmp_path):
 
 
 def test_pairs():
-    decls = [Declaration("a.go", "F", "r"), Declaration("b.ts", "g", "r2")]
-    assert reporters.pairs(decls) == (("a.go", "F"), ("b.ts", "g"))
+    decls = [
+        Declaration("a.go", "F", "r"),
+        Declaration("b.ts", "g", "r2", kind="usage"),
+    ]
+    assert reporters.pairs(decls) == (
+        ("a.go", "F", "capture"),
+        ("b.ts", "g", "usage"),
+    )
+
+
+def test_parse_usage_kind():
+    assert reporters.parse("cli.go#usage [usage]: diagnostic exit\n") == [
+        Declaration("cli.go", "usage", "diagnostic exit", kind="usage")
+    ]
+
+
+def test_parse_unknown_kind_rejected():
+    with pytest.raises(ReportersError, match=r"unknown sink kind \[fatal\]"):
+        reporters.parse("cli.go#die [fatal]: nope\n")
