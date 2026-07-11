@@ -47,7 +47,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 					continue
 				}
 				pass.Reportf(call.Pos(),
-					"ERC003: terminal exit `%s` must be preceded by a capture, carry the error into its arguments, or carry `// no-report: <reason>`",
+					"ERC003: terminal exit `%s` must be preceded by a capture or carry the error into its arguments",
 					astutil.QualifiedName(call.Fun))
 			}
 			return true

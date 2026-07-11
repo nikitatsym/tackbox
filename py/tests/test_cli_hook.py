@@ -16,7 +16,7 @@ from pathlib import Path
 
 from conftest import init_repo, tackbox_env
 
-from tackbox.cli import _partition_findings, _span_lines
+from tackbox.cli import _finding_line, _partition_findings, _span_lines
 from tackbox.engines import Finding
 
 TACKBOX_ROOT = Path(__file__).resolve().parents[2]
@@ -138,6 +138,9 @@ def test_post_go_erc001_exit2_stderr(tmp_path):
     assert r.returncode == 2, f"findings must block with exit 2:\n{r.stdout}\n{r.stderr}"
     # No new_string in the event -> whole-file scope; the erclint finding blocks.
     assert "pkg/bad.go:7" in r.stderr and "errcheck" in r.stderr, r.stderr
+    # The one-line explanation rides along; the invariant, never a marker recipe.
+    assert "ERC001" in r.stderr and "err-branch must propagate" in r.stderr, r.stderr
+    assert "no-report" not in r.stderr, f"marker recipe leaked into hook output:\n{r.stderr}"
     # Other direction of the compile-break contract: a compiling package that
     # merely has a finding is not reported as a compile break.
     assert "does not compile" not in r.stderr, r.stderr
@@ -347,6 +350,21 @@ def test_partition_whole_file_when_affected_none():
     f = Finding(rule="errcheck", file="a.go", line=7)
     on, els = _partition_findings([f], "a.go", None)
     assert on == [f] and els == []
+
+
+def test_finding_line_with_message_collapses_whitespace():
+    f = Finding(rule="errcheck", file="a.go", line=7, message="must  propagate\n or capture")
+    assert _finding_line(f) == "a.go:7: errcheck: must propagate or capture"
+
+
+def test_finding_line_without_message_keeps_old_format():
+    f = Finding(rule="errcheck", file="a.go", line=7)
+    assert _finding_line(f) == "a.go:7: errcheck"
+
+
+def test_finding_line_location_unknown():
+    f = Finding(rule="r", file=None, line=None, message="m")
+    assert _finding_line(f) == "?: r: m"
 
 
 # -- PreToolUse -----------------------------------------------------------

@@ -223,13 +223,17 @@ func emit(rep *jscpdReport, fl *fileLines, cwd string, machine bool, w io.Writer
 		bRel := relTo(cwd, c.SecondFile.Name)
 		if machine {
 			if !aSup {
-				if err := enc.Encode(wrapcli.Finding{File: aRel, Line: c.FirstFile.lineNo(), Rule: ruleID}); err != nil {
+				msg := fmt.Sprintf("duplicated block, clone of %s:%d-%d (%d tokens); extract the shared code",
+					bRel, c.SecondFile.Start, c.SecondFile.End, c.Tokens)
+				if err := enc.Encode(wrapcli.Finding{File: aRel, Line: c.FirstFile.lineNo(), Rule: ruleID, Message: msg}); err != nil {
 					return 0, err
 				}
 				surviving++
 			}
 			if !bSup {
-				if err := enc.Encode(wrapcli.Finding{File: bRel, Line: c.SecondFile.lineNo(), Rule: ruleID}); err != nil {
+				msg := fmt.Sprintf("duplicated block, clone of %s:%d-%d (%d tokens); extract the shared code",
+					aRel, c.FirstFile.Start, c.FirstFile.End, c.Tokens)
+				if err := enc.Encode(wrapcli.Finding{File: bRel, Line: c.SecondFile.lineNo(), Rule: ruleID, Message: msg}); err != nil {
 					return 0, err
 				}
 				surviving++
@@ -354,7 +358,11 @@ func emitIgnoreBans(fl *fileLines, absFiles []string, cwd string, machine bool, 
 			found++
 			rel := relTo(cwd, f)
 			if machine {
-				if err := enc.Encode(wrapcli.Finding{File: rel, Line: i + 1, Rule: banRuleID}); err != nil {
+				// Machine messages reach the hook and must not spell marker
+				// recipes; the human line keeps the migration hint.
+				msg := fmt.Sprintf("native %s marker is banned: it bypasses the gated duplication-suppression channel; remove it",
+					ignoreMarker)
+				if err := enc.Encode(wrapcli.Finding{File: rel, Line: i + 1, Rule: banRuleID, Message: msg}); err != nil {
 					return 0, err
 				}
 				continue

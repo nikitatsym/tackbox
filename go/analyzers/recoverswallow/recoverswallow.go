@@ -21,7 +21,7 @@ var Analyzer = &analysis.Analyzer{
 	Run:  markers.Runner(inspect),
 }
 
-const msg = "ERC007: recovered panic must be reported (go/report or declared sink receiving it) or re-panicked, or carry `// no-report: <reason>`"
+const msg = "ERC007: recovered panic must be reported (go/report or declared sink receiving it) or re-panicked"
 
 func inspect(idx *markers.Index, pass *analysis.Pass, n ast.Node) bool {
 	switch x := n.(type) {

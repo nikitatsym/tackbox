@@ -1,9 +1,8 @@
 rules:
   - id: erc006-fingerprint-user-input-go
     message: >-
-      Capture argument references raw user input from
-      *http.Request (URL.Path, Header.Get, Body). Use a routing
-      pattern or a scrubbed value instead.
+      Raw *http.Request input in capture arg; use a routing pattern or
+      scrubbed value
     severity: ERROR
     languages: [go]
     pattern-either:

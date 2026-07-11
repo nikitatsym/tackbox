@@ -108,7 +108,7 @@ function emitMachine(results) {
     const file = path.relative(process.cwd(), r.filePath)
     for (const m of r.messages) {
       if (m.severity !== 2) continue
-      process.stdout.write(JSON.stringify({ file, line: m.line ?? null, rule: m.ruleId }) + '\n')
+      process.stdout.write(JSON.stringify({ file, line: m.line ?? null, rule: m.ruleId, message: m.message }) + '\n')
     }
   }
 }

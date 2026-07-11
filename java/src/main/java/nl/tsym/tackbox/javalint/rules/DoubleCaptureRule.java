@@ -25,8 +25,8 @@ public final class DoubleCaptureRule {
     public static final String ID = "JV006";
 
     private static final String MESSAGE =
-            ID + ": a catch path both reports the caught and rethrows it; the upstream handler"
-            + " reports it again (report and swallow, or propagate without reporting - not both)";
+            ID + ": a catch path both reports the caught and rethrows it; upstream"
+            + " reports it again - pick one";
 
     private final Recognition rec;
 

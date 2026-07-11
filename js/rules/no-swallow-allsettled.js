@@ -34,7 +34,7 @@ module.exports = {
     type: 'problem',
     docs: { description: 'every Promise.allSettled call needs at least one `.reason` access in the enclosing function, else rejected outcomes are silently dropped - allSettled never rejects, so a discarded result is the quietest swallow. Escape with a // no-report: marker.' },
     messages: {
-      swallow: 'Promise.allSettled swallows rejections: no `.reason` is read in the enclosing function, and allSettled never rejects on its own. Read `.reason` on the rejected entries, or carry `// no-report: <reason>` above',
+      swallow: 'read `.reason` on the rejected entries in the enclosing function',
     },
     schema: [],
   },

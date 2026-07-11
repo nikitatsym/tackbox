@@ -516,6 +516,7 @@ class Finding:
     rule: str
     file: str | None
     line: int | None
+    message: str | None = None
 
 
 def parse_machine_findings(stdout: str) -> list[Finding]:
@@ -528,7 +529,14 @@ def parse_machine_findings(stdout: str) -> list[Finding]:
         if not line:
             continue
         obj = json.loads(line)
-        out.append(Finding(rule=obj.get("rule") or "", file=obj.get("file"), line=obj.get("line")))
+        out.append(
+            Finding(
+                rule=obj.get("rule") or "",
+                file=obj.get("file"),
+                line=obj.get("line"),
+                message=obj.get("message") or None,
+            )
+        )
     return out
 
 
@@ -546,7 +554,12 @@ def erclint_located_findings(stdout: str, repo_root: Path) -> list[Finding]:
     for f in parse_erclint_findings(stdout):
         path, line = _split_posn(f.get("posn", ""))
         rel = os.path.relpath(path, repo_root) if path is not None else None
-        out.append(Finding(rule=f.get("analyzer", ""), file=rel, line=line))
+        out.append(
+            Finding(
+                rule=f.get("analyzer", ""), file=rel, line=line,
+                message=f.get("message") or None,
+            )
+        )
     return out
 
 
@@ -558,28 +571,39 @@ def javalint_located_findings(stdout: str, _repo_root: Path) -> list[Finding]:
     out: list[Finding] = []
     for f in parse_erclint_findings(stdout):
         _, line = _split_posn(f.get("posn", ""))
-        out.append(Finding(rule=f.get("analyzer", ""), file=f.get("pkg"), line=line))
+        out.append(
+            Finding(
+                rule=f.get("analyzer", ""), file=f.get("pkg"), line=line,
+                message=f.get("message") or None,
+            )
+        )
     return out
 
 
 # flake8's `path:row:col: CODE msg`. file is non-greedy so a windows drive colon
 # stays with the path; only the TBX code is tokenized (the message carries colons).
-_FLAKE8_LINE = re.compile(r"^(?P<file>.+?):(?P<line>\d+):\d+: (?P<code>TBX\d+) ")
+_FLAKE8_LINE = re.compile(r"^(?P<file>.+?):(?P<line>\d+):\d+: (?P<code>TBX\d+) (?P<msg>.*)$")
 
 
 def pyrules_located_findings(stdout: str, _repo_root: Path) -> list[Finding]:
     """Parse flake8's `path:row:col: TBXNNN <id>: <msg>` lines. The rule id comes
-    from the TBX code via CODE_TO_ID - the message text is not tokenized."""
+    from the TBX code via CODE_TO_ID; the leading `<id>: ` echo is stripped from
+    the message so downstream `rule: message` lines do not repeat the id."""
     out: list[Finding] = []
     for line in stdout.splitlines():
         m = _FLAKE8_LINE.match(line)
         if m is None:
             continue
+        rule = CODE_TO_ID.get(m["code"], m["code"])
+        msg = m["msg"]
+        if msg.startswith(rule + ": "):
+            msg = msg[len(rule) + 2:]
         out.append(
             Finding(
-                rule=CODE_TO_ID.get(m["code"], m["code"]),
+                rule=rule,
                 file=m["file"],
                 line=int(m["line"]),
+                message=msg or None,
             )
         )
     return out

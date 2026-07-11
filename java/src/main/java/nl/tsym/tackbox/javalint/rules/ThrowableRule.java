@@ -21,7 +21,7 @@ public final class ThrowableRule {
     public static final String ID = "JV003";
 
     private static final String MESSAGE =
-            ID + ": catch of Throwable/Error must rethrow or carry `// no-report: <reason>`"
+            ID + ": catch of Throwable/Error must rethrow"
             + " (an unrecoverable Error must never be swallowed)";
 
     public List<Finding> check(String file, CompilationUnit cu, MarkerIndex markers) {

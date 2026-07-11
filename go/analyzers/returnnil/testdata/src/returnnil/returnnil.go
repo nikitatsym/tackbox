@@ -26,15 +26,15 @@ func okConcreteErrorNil() *probeErr {
 }
 
 func violationPtr() *int {
-	return nil // want `ERC004:.*nil-return`
+	return nil // want `ERC004:.*widen the signature`
 }
 
 func violationSlice() []string {
-	return nil // want `ERC004:.*nil-return`
+	return nil // want `ERC004:.*widen the signature`
 }
 
 func violationMap() map[string]int {
-	return nil // want `ERC004:.*nil-return`
+	return nil // want `ERC004:.*widen the signature`
 }
 
 // --- err-branch guard covered by a valid `// no-report:` marker (same gate ERC001 uses) ---
@@ -53,7 +53,7 @@ func okErrGuardMarkerCoversReturnNil() *int {
 func errGuardNoMarkerFires() *int {
 	err := errors.New("x")
 	if err != nil {
-		return nil // want `ERC004:.*nil-return`
+		return nil // want `ERC004:.*widen the signature`
 	}
 	v := 1
 	return &v
@@ -68,7 +68,7 @@ func markerOnUnrelatedGuardDoesNotLeak() *int {
 		v := 1
 		return &v
 	}
-	return nil // want `ERC004:.*nil-return`
+	return nil // want `ERC004:.*widen the signature`
 }
 
 // empty-reason no-report is not a marker at all: markers.Index rejects it.
@@ -76,7 +76,7 @@ func emptyReasonMarkerStillFires() *int {
 	err := errors.New("x")
 	// no-report:
 	if err != nil {
-		return nil // want `ERC004:.*nil-return`
+		return nil // want `ERC004:.*widen the signature`
 	}
 	v := 1
 	return &v
@@ -87,7 +87,7 @@ func emptyReasonMarkerStillFires() *int {
 func nonErrorGuardMarkerStillFires(conn *int) *int {
 	// no-report: conn nilness is not an error branch
 	if conn != nil {
-		return nil // want `ERC004:.*nil-return`
+		return nil // want `ERC004:.*widen the signature`
 	}
 	v := 1
 	return &v

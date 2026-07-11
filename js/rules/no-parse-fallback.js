@@ -129,7 +129,7 @@ module.exports = {
     type: 'problem',
     docs: { description: 'a try containing JSON.parse must propagate the parse error on every catch path (throw the caught object, or a Result boundary carrying it). A fallback value, a stringified rethrow, or report-and-continue swallows it. Escape with a // parse-skip: marker.' },
     messages: {
-      fallback: 'try around JSON.parse must propagate the parse error: every catch path must `throw` the caught error object or return a Result boundary carrying it (`return { ok: false, cause: <err> }` when the enclosing function returns Result/Attempt). A fallback value, a stringified rethrow, or report-and-continue swallows it; add `// parse-skip: <reason>` above the try to opt out',
+      fallback: 'propagate the parse error: throw it or return a Result boundary carrying it',
     },
     schema: [],
   },

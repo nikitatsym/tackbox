@@ -49,7 +49,7 @@ func inspect(idx *markers.Index, pass *analysis.Pass, n ast.Node) bool {
 		}
 	}
 	pass.Reportf(ifst.Pos(),
-		"ERC001: err-branch must propagate, capture, carry the error into a terminal exit, or carry `// no-report: <reason>` (err=%s)",
+		"ERC001: err-branch must propagate, capture, or carry the error into a terminal exit (err=%s)",
 		errName)
 	return true
 }

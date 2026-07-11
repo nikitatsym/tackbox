@@ -23,7 +23,8 @@ async function run() {
       if (machine) {
         // Internal {file, line, rule} contract for the hook; human output below
         // is unchanged.
-        process.stdout.write(JSON.stringify({ file, line: e.lineNumber, rule: e.ruleNames[0] }) + '\n')
+        const message = e.ruleDescription + (e.errorDetail ? ' [' + e.errorDetail + ']' : '')
+        process.stdout.write(JSON.stringify({ file, line: e.lineNumber, rule: e.ruleNames[0], message }) + '\n')
         continue
       }
       const col = e.errorRange ? ':' + e.errorRange[0] : ''
