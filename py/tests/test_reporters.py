@@ -111,3 +111,20 @@ def test_parse_usage_kind():
 def test_parse_unknown_kind_rejected():
     with pytest.raises(ReportersError, match=r"unknown sink kind \[fatal\]"):
         reporters.parse("cli.go#die [fatal]: nope\n")
+
+
+def test_validate_usage_non_go_rejected(tmp_path):
+    # No engine enforces non-Go usage sinks yet; a silently dead line is worse
+    # than a loud rejection.
+    (tmp_path / "cli.js").write_text("")
+    with pytest.raises(ReportersError, match="Go-only"):
+        reporters.validate_paths(
+            [Declaration("cli.js", "usage", "r", kind="usage")], tmp_path
+        )
+
+
+def test_validate_usage_go_accepted(tmp_path):
+    (tmp_path / "cli.go").write_text("package x\n")
+    reporters.validate_paths(
+        [Declaration("cli.go", "usage", "r", kind="usage")], tmp_path
+    )

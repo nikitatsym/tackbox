@@ -304,9 +304,8 @@ def test_hermetic_javalint_argv_uses_system_java_and_thin_jar():
     assert argv[-1] == "a.java"
 
 
-def test_hermetic_erclint_argv_splits_capture_and_usage_flags():
-    ec = next(e for e in engines.HERMETIC_ENGINES if e.id == "erclint")
-    argv = ec.build_argv(
+def _assert_erclint_splits_usage_flag(spec):
+    argv = spec.build_argv(
         Path("/repo"),
         Path("/tb"),
         ["pkg"],
@@ -314,6 +313,19 @@ def test_hermetic_erclint_argv_splits_capture_and_usage_flags():
     )
     assert f"--reporters={Path('/repo') / 'rep.go'}#myReport" in argv
     assert f"--usage-sinks={Path('/repo') / 'cli.go'}#usage" in argv
+
+
+def test_dev_erclint_argv_splits_capture_and_usage_flags(monkeypatch):
+    monkeypatch.setattr(
+        engines, "_built_go_binary", lambda root, name: Path("/tb/bin") / name
+    )
+    _assert_erclint_splits_usage_flag(next(e for e in DEV_ENGINES if e.id == "erclint"))
+
+
+def test_hermetic_erclint_argv_splits_capture_and_usage_flags():
+    _assert_erclint_splits_usage_flag(
+        next(e for e in engines.HERMETIC_ENGINES if e.id == "erclint")
+    )
 
 
 def test_eslint_argv_drops_usage_declarations():

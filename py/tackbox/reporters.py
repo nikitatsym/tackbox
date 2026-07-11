@@ -101,6 +101,12 @@ def validate_paths(decls: list[Declaration], repo_root: Path) -> None:
             raise ReportersError(
                 f"{FILENAME}: unsupported language (extension) for {d.file}"
             )
+        if d.kind == KIND_USAGE and _ext(d.file) not in _GO_EXTS:
+            # No engine enforces or validates non-Go usage sinks yet;
+            # accepting one would be a silently dead line.
+            raise ReportersError(
+                f"{FILENAME}: [usage] sinks are Go-only (erclint ERC003): {d.file}"
+            )
 
 
 def load(repo_root: Path) -> list[Declaration]:

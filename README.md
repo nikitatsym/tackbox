@@ -219,8 +219,10 @@ opposite lane: a deliberate user-facing diagnostic exit, e.g. a CLI
 `usage()` helper. It is never a capture. Its calls are clean outside
 err-branches (nothing failed - no marker needed) and a finding inside
 one (wrong sink for a failure path), regardless of arguments. Only
-erclint (ERC003) consumes usage sinks today; the declaration format is
-language-uniform so other engines can adopt the same contract.
+erclint (ERC003) consumes usage sinks today, so a `[usage]` declaration
+on a non-Go file is rejected - a dead line would be silent. The format
+is language-uniform; the restriction lifts as other engines adopt the
+contract.
 
 ## Agent hook (Claude Code)
 

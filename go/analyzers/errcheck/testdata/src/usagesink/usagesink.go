@@ -12,3 +12,15 @@ func usageSinkDoesNotCapture() error {
 	}
 	return errors.New("noop")
 }
+
+// die is declared `[usage]` here: the usage kind wins over the by-name
+// printing-terminal credit, so this is not a reported death.
+func die(msg string) {}
+
+func usageNamedDieDoesNotReportDeath() error {
+	err := errors.New("x")
+	if err != nil { // want `ERC001:.*err=err`
+		die("bad: " + err.Error())
+	}
+	return errors.New("noop")
+}
