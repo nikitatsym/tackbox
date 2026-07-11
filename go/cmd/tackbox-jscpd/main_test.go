@@ -239,6 +239,33 @@ func TestReadReportMissingIsError(t *testing.T) {
 	}
 }
 
+// jscpd names SFC sub-blocks as virtual files (`X.svelte:css`) with real-file
+// line numbers; readReport must resolve them so dup-ok lookup reads the disk.
+func TestReadReportResolvesVirtualSFCNames(t *testing.T) {
+	dir := t.TempDir()
+	a := writeSrc(t, dir, "A.svelte", 5, []string{"// dup-ok: shared palette, extraction tracked"})
+	b := writeSrc(t, dir, "B.svelte", 5, nil)
+	repFile := filepath.Join(t.TempDir(), "jscpd-report.json")
+	rep0 := mkSpanReport("css", a+":css", 5, 8, b+":css", 5, 8)
+	if err := os.WriteFile(repFile, rep0, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := readReport(repFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Duplicates[0].FirstFile.Name != a || rep.Duplicates[0].SecondFile.Name != b {
+		t.Fatalf("virtual names not resolved to real files: %+v", rep.Duplicates[0])
+	}
+	var buf strings.Builder
+	if _, err := emit(rep, newFileLines(), dir, false, &buf); err != nil {
+		t.Fatalf("emit over resolved names: %v", err)
+	}
+	if !strings.Contains(buf.String(), "A.svelte") || strings.Contains(buf.String(), ":css") {
+		t.Fatalf("output should carry the real path: %q", buf.String())
+	}
+}
+
 func TestReadReportGarbageIsError(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "jscpd-report.json")
 	if err := os.WriteFile(p, []byte("{not json"), 0o644); err != nil {
