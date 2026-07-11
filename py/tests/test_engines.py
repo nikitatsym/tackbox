@@ -293,7 +293,7 @@ def test_dev_engines_javalint_extension_is_only_java():
 def test_hermetic_javalint_argv_uses_system_java_and_thin_jar():
     jl = next(e for e in engines.HERMETIC_ENGINES if e.id == "javalint")
     argv = jl.build_argv(
-        Path("/repo"), Path("/tb"), ["a.java"], (("Rep.java", "Rep.report"),)
+        Path("/repo"), Path("/tb"), ["a.java"], (("Rep.java", "Rep.report", "capture"),)
     )
     assert argv[:3] == [
         "java", "-jar", str(engines._TACKBOX_PKG_ROOT / "bin" / "javalint.jar")
@@ -302,6 +302,30 @@ def test_hermetic_javalint_argv_uses_system_java_and_thin_jar():
     # erclint's absolute paths); the java sink is passed through.
     assert "--reporters=Rep.java#Rep.report" in argv
     assert argv[-1] == "a.java"
+
+
+def test_hermetic_erclint_argv_splits_capture_and_usage_flags():
+    ec = next(e for e in engines.HERMETIC_ENGINES if e.id == "erclint")
+    argv = ec.build_argv(
+        Path("/repo"),
+        Path("/tb"),
+        ["pkg"],
+        (("rep.go", "myReport", "capture"), ("cli.go", "usage", "usage")),
+    )
+    assert f"--reporters={Path('/repo') / 'rep.go'}#myReport" in argv
+    assert f"--usage-sinks={Path('/repo') / 'cli.go'}#usage" in argv
+
+
+def test_eslint_argv_drops_usage_declarations():
+    es = next(e for e in DEV_ENGINES if e.id == "tackbox-eslint")
+    argv = es.build_argv(
+        Path("/repo"),
+        Path("/tb"),
+        ["a.js"],
+        (("rep.js", "myReport", "capture"), ("cli.js", "usage", "usage")),
+    )
+    assert "--reporters=rep.js#myReport" in argv
+    assert not any("cli.js" in a for a in argv)
 
 
 def test_dev_engines_eslint_covers_ts_and_svelte():

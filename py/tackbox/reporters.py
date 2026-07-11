@@ -6,6 +6,12 @@ the swallow rules do not fire on a catch that hands the error to it. The
 file lives at repo root; one declaration per line:
 
     <repo-relative-file>#<function>: <reason>
+    <repo-relative-file>#<function> [usage]: <reason>
+
+`[usage]` declares the opposite kind of sink: a deliberate diagnostic
+exit (a CLI `usage()` helper) - never a capture; ERC003 frees its calls
+outside err-branches and bans them inside. Untagged declarations are
+capture sinks.
 
 Empty lines are ignored; every other line must parse. The CLI checks that
 each `<file>` exists and is inside the repo (here); symbol existence is the
@@ -14,10 +20,16 @@ resolving engine's job (eslint scope, erclint types).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 FILENAME = ".tackbox-reporters"
+
+KIND_CAPTURE = "capture"
+KIND_USAGE = "usage"
+
+_KIND_RE = re.compile(r"^(?P<fn>.*\S)\s+\[(?P<kind>[a-z]+)\]$")
 
 _JS_EXTS = frozenset([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".svelte"])
 _GO_EXTS = frozenset([".go"])
@@ -37,6 +49,7 @@ class Declaration:
     file: str  # repo-relative, as written
     function: str
     reason: str
+    kind: str = KIND_CAPTURE
 
 
 def parse(text: str) -> list[Declaration]:
@@ -54,11 +67,21 @@ def parse(text: str) -> list[Declaration]:
         file = line[:hash_i].strip()
         function = line[hash_i + 1 : colon_i].strip()
         reason = line[colon_i + 1 :].strip()
+        kind = KIND_CAPTURE
+        if (m := _KIND_RE.match(function)) is not None:
+            function, kind = m.group("fn"), m.group("kind")
+            if kind != KIND_USAGE:
+                raise ReportersError(
+                    f"{FILENAME}:{lineno}: unknown sink kind [{kind}]"
+                    f" (only [{KIND_USAGE}])"
+                )
         if not file or not function or not reason:
             raise ReportersError(
                 f"{FILENAME}:{lineno}: file, function and reason must be non-empty"
             )
-        decls.append(Declaration(file=file, function=function, reason=reason))
+        decls.append(
+            Declaration(file=file, function=function, reason=reason, kind=kind)
+        )
     return decls
 
 
@@ -90,9 +113,9 @@ def load(repo_root: Path) -> list[Declaration]:
     return decls
 
 
-def pairs(decls: list[Declaration]) -> tuple[tuple[str, str], ...]:
-    """The (file, function) transport tuple handed to engine argv builders."""
-    return tuple((d.file, d.function) for d in decls)
+def pairs(decls: list[Declaration]) -> tuple[tuple[str, str, str], ...]:
+    """The (file, function, kind) transport tuple handed to engine argv builders."""
+    return tuple((d.file, d.function, d.kind) for d in decls)
 
 
 def _ext(path: str) -> str:

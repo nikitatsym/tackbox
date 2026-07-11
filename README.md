@@ -214,6 +214,14 @@ tier-2. A declaration names a report sink - it is not an exclude: it
 disables no rule, and a declared call is honored only when the caught
 error flows into its arguments.
 
+A `[usage]` declaration (`file#function [usage]: reason`) names the
+opposite lane: a deliberate user-facing diagnostic exit, e.g. a CLI
+`usage()` helper. It is never a capture. Its calls are clean outside
+err-branches (nothing failed - no marker needed) and a finding inside
+one (wrong sink for a failure path), regardless of arguments. Only
+erclint (ERC003) consumes usage sinks today; the declaration format is
+language-uniform so other engines can adopt the same contract.
+
 ## Agent hook (Claude Code)
 
 `tackbox hook` wires the rules into an agent's edit loop. It reads a

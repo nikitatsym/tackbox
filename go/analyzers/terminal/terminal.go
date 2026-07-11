@@ -4,6 +4,11 @@
 // reported death), or carry a `// no-report: <reason>` marker directly above
 // the call. A silent exit (`os.Exit(1)` in an err-branch, `log.Fatal("msg")`
 // with the live error dropped) stays a finding.
+//
+// A declared usage sink (`[usage]` in `.tackbox-reporters`) is the opposite,
+// single-purpose lane: a deliberate diagnostic exit - clean outside
+// err-branches, a finding inside one regardless of arguments. Raw exits and
+// undeclared wrappers keep the strict contract above.
 package terminal
 
 import (
@@ -26,18 +31,26 @@ var Analyzer = &analysis.Analyzer{
 func run(pass *analysis.Pass) (interface{}, error) {
 	astutil.InspectNonDeclared(pass, func(f *ast.File) func(ast.Node) bool {
 		idx := markers.Build(pass.Fset, f)
-		branchErr := enclosingErrNames(f)
+		branchErr := enclosingErrNames(pass.TypesInfo, f)
 		return func(n ast.Node) bool {
 			block, ok := n.(*ast.BlockStmt)
 			if !ok {
 				return true
 			}
 			for i, st := range block.List {
-				call, ok := terminalCall(st)
-				if !ok {
+				call, class := classify(pass.TypesInfo, st)
+				if class == callNone {
 					continue
 				}
 				if m, ok := idx.Above(st); ok && m.Kind == markers.NoReport {
+					continue
+				}
+				if class == callUsage {
+					if len(branchErr[call]) > 0 {
+						pass.Reportf(call.Pos(),
+							"ERC003: usage sink `%s` on a failure path - capture and exit, or log.Fatal(err)",
+							astutil.QualifiedName(call.Fun))
+					}
 					continue
 				}
 				if hasCaptureBefore(pass.TypesInfo, block.List[:i]) {
@@ -56,10 +69,11 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	return nil, nil
 }
 
-// enclosingErrNames maps each terminal call to the error identifiers of the
-// `if <e> != nil` branches lexically enclosing it (nested closures excluded).
-// A terminal carrying any such error in its own arguments is a reported death.
-func enclosingErrNames(f *ast.File) map[*ast.CallExpr][]string {
+// enclosingErrNames maps each terminal or usage-sink call to the error
+// identifiers of the `if <e> != nil` branches lexically enclosing it (nested
+// closures excluded). A terminal carrying any such error in its own arguments
+// is a reported death; a usage sink with any entry is on a failure path.
+func enclosingErrNames(info *types.Info, f *ast.File) map[*ast.CallExpr][]string {
 	out := map[*ast.CallExpr][]string{}
 	ast.Inspect(f, func(n ast.Node) bool {
 		ifst, ok := n.(*ast.IfStmt)
@@ -70,7 +84,7 @@ func enclosingErrNames(f *ast.File) map[*ast.CallExpr][]string {
 		if e == "" {
 			return true
 		}
-		for _, call := range terminalCallsIn(ifst.Body) {
+		for _, call := range terminalCallsIn(info, ifst.Body) {
 			out[call] = append(out[call], e)
 		}
 		return true
@@ -91,14 +105,14 @@ func carriesErr(call *ast.CallExpr, errNames []string) bool {
 	return false
 }
 
-func terminalCallsIn(body *ast.BlockStmt) []*ast.CallExpr {
+func terminalCallsIn(info *types.Info, body *ast.BlockStmt) []*ast.CallExpr {
 	var out []*ast.CallExpr
 	ast.Inspect(body, func(n ast.Node) bool {
 		if _, ok := n.(*ast.FuncLit); ok {
 			return false
 		}
 		if st, ok := n.(*ast.ExprStmt); ok {
-			if call, ok := terminalCall(st); ok {
+			if call, class := classify(info, st); class != callNone {
 				out = append(out, call)
 			}
 		}
@@ -107,22 +121,35 @@ func terminalCallsIn(body *ast.BlockStmt) []*ast.CallExpr {
 	return out
 }
 
-func terminalCall(st ast.Stmt) (*ast.CallExpr, bool) {
+type callClass int
+
+const (
+	callNone callClass = iota
+	callTerminal
+	callUsage
+)
+
+// classify sorts a statement into the two exit lanes. Usage wins over the
+// terminal names: a declared usage sink named `die` gets usage semantics.
+func classify(info *types.Info, st ast.Stmt) (*ast.CallExpr, callClass) {
 	exprSt, ok := st.(*ast.ExprStmt)
 	if !ok {
-		return nil, false
+		return nil, callNone
 	}
 	call, ok := exprSt.X.(*ast.CallExpr)
 	if !ok {
-		return nil, false
+		return nil, callNone
+	}
+	if astutil.IsUsageSink(info, call) {
+		return call, callUsage
 	}
 	if name := astutil.QualifiedName(call.Fun); name == "os.Exit" || strings.HasPrefix(name, "log.Fatal") {
-		return call, true
+		return call, callTerminal
 	}
 	if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "die" {
-		return call, true
+		return call, callTerminal
 	}
-	return nil, false
+	return nil, callNone
 }
 
 func hasCaptureBefore(info *types.Info, stmts []ast.Stmt) bool {
