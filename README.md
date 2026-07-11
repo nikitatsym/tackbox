@@ -94,6 +94,21 @@ repos:
         always_run: true
 ```
 
+## CodeClimate report
+
+`tackbox lint --codequality <path>` also writes a CodeClimate-format JSON
+array of every finding to `<path>` (console output and exit code unchanged;
+the report is written even when findings exist). Wire it into GitLab CI as a
+`codequality` report so the MR widget renders the findings:
+
+```yaml
+lint:
+  script: uvx tackbox@latest lint . --codequality gl-code-quality.json
+  artifacts:
+    reports:
+      codequality: gl-code-quality.json
+```
+
 ## Distribution
 
 `uvx tackbox@latest` installs one small wheel; the engine payload is
