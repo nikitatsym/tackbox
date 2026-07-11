@@ -44,7 +44,7 @@ func inspect(idx *markers.Index, pass *analysis.Pass, n ast.Node) bool {
 	for _, name := range astutil.ErrAliases(ifst.Body, errName) {
 		if propagates(pass.TypesInfo, ifst.Body, name) ||
 			captures(pass.TypesInfo, ifst.Body, name) ||
-			reportsDeath(ifst.Body, name) {
+			reportsDeath(pass.TypesInfo, ifst.Body, name) {
 			return true
 		}
 	}
@@ -87,9 +87,9 @@ func captures(info *types.Info, body *ast.BlockStmt, errName string) bool {
 // printing terminal (`log.Fatal*`/`die`) carrying the checked error into its
 // arguments - the same argument-flow ERC003 uses. The error reaches a call that
 // prints it and never returns, so the branch is handled.
-func reportsDeath(body *ast.BlockStmt, errName string) bool {
+func reportsDeath(info *types.Info, body *ast.BlockStmt, errName string) bool {
 	for _, call := range astutil.BlockCalls(body) {
-		if astutil.IsPrintingTerminal(call) && astutil.ArgFlows(call, errName) {
+		if astutil.IsPrintingTerminal(info, call) && astutil.ArgFlows(call, errName) {
 			return true
 		}
 	}

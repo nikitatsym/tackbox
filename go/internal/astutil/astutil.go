@@ -178,8 +178,12 @@ func ErrAliases(body *ast.BlockStmt, errName string) []string {
 
 // IsPrintingTerminal reports whether call is a terminal that prints its
 // arguments (`log.Fatal*` or the in-repo `die`). os.Exit is excluded: it
-// prints nothing, so carrying the error into it reports nothing.
-func IsPrintingTerminal(call *ast.CallExpr) bool {
+// prints nothing, so carrying the error into it reports nothing. A callee
+// declared `[usage]` is excluded too - the usage lane never reports a death.
+func IsPrintingTerminal(info *types.Info, call *ast.CallExpr) bool {
+	if IsUsageSink(info, call) {
+		return false
+	}
 	if strings.HasPrefix(QualifiedName(call.Fun), "log.Fatal") {
 		return true
 	}

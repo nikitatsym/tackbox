@@ -161,7 +161,7 @@ func errBranchHandled(info *types.Info, body *ast.BlockStmt, errName string) boo
 			return true
 		}
 		for _, call := range astutil.BlockCalls(body) {
-			if astutil.IsPrintingTerminal(call) && astutil.ArgFlows(call, name) {
+			if astutil.IsPrintingTerminal(info, call) && astutil.ArgFlows(call, name) {
 				return true
 			}
 		}
