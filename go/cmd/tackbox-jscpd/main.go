@@ -427,10 +427,13 @@ func suppressed(fl *fileLines, e endpoint) (bool, error) {
 	return false, nil
 }
 
-// commentBody strips a leading line-comment marker (// or #) and returns the
-// trimmed remainder; ok is false when the line is not a whole-line comment.
+// commentBody strips a whole-line comment marker (`//`, `#`, or a single-line
+// `/* ... */` - CSS has no line comments) and returns the trimmed remainder;
+// ok is false when the line is not a whole-line comment.
 func commentBody(text string) (string, bool) {
 	switch {
+	case strings.HasPrefix(text, "/*") && strings.HasSuffix(text, "*/") && len(text) >= 4:
+		return strings.TrimSpace(text[2 : len(text)-2]), true
 	case strings.HasPrefix(text, "//"):
 		return strings.TrimSpace(text[2:]), true
 	case strings.HasPrefix(text, "#"):
