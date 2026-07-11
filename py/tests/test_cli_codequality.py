@@ -36,12 +36,13 @@ PY_SWALLOW = """def cleanup():
 # engine's machine NDJSON. Two engines, two parse paths into one report.
 MD_NON_ASCII = "# Notes\n\nSome text — dash.\n"
 
-# Golden: sorted by (path, line, rule); fingerprint = sha256("rule:path:line").
+# Golden: sorted by (path, line, rule); fingerprint = sha256("rule:path:line"),
+# message excluded; description = "rule: message" carried from the engine.
 EXPECTED = [
     {
         "type": "issue",
         "check_name": "MD-ASCII",
-        "description": "MD-ASCII",
+        "description": "MD-ASCII: Non-ASCII character [Non-ASCII character U+2014 (—)]",
         "categories": ["Bug Risk"],
         "location": {"path": "docs/notes.md", "lines": {"begin": 3}},
         "fingerprint": "c577a943053a272ef58ecb3aa515e721cb5eca4264535186a8903cfe538e6c0c",
@@ -50,7 +51,10 @@ EXPECTED = [
     {
         "type": "issue",
         "check_name": "python-swallowed-exception",
-        "description": "python-swallowed-exception",
+        "description": (
+            "python-swallowed-exception: let the exception propagate "
+            "or wrap+reraise via raise ... from e"
+        ),
         "categories": ["Bug Risk"],
         "location": {"path": "py/swallow.py", "lines": {"begin": 2}},
         "fingerprint": "d44b873ef6b9d98af99e240ec43960a42686882cb1aca0139122b7a0141c1755",
@@ -182,3 +186,24 @@ def test_build_report_sorts_by_path_line_rule():
 
 def test_build_report_empty_is_empty_list():
     assert build_report([]) == []
+
+
+def test_build_report_description_carries_message():
+    [issue] = build_report(
+        [Finding(rule="errcheck", file="a.go", line=3, message="must  propagate\n or capture")]
+    )
+    assert issue["description"] == "errcheck: must propagate or capture"
+    assert issue["check_name"] == "errcheck"
+
+
+def test_build_report_description_bare_rule_without_message():
+    [issue] = build_report([Finding(rule="errcheck", file="a.go", line=3)])
+    assert issue["description"] == "errcheck"
+
+
+def test_build_report_fingerprint_ignores_message():
+    [bare] = build_report([Finding(rule="errcheck", file="a.go", line=3)])
+    [worded] = build_report(
+        [Finding(rule="errcheck", file="a.go", line=3, message="reworded diagnostic")]
+    )
+    assert bare["fingerprint"] == worded["fingerprint"]
