@@ -40,6 +40,7 @@ class Platform:
     wheel_plat: str
     node: dict
     opengrep: dict
+    jscpd: dict
 
 
 def detect_platform_key() -> str:
@@ -70,6 +71,7 @@ def platform_for(manifest: dict, key: str) -> Platform:
         wheel_plat=entry["wheel_plat"],
         node=entry["node"],
         opengrep=entry["opengrep"],
+        jscpd=entry["jscpd"],
     )
 
 
@@ -206,6 +208,33 @@ def prepare_fat(pl: Platform, manifest: dict, engines_version: str) -> tuple[Pat
         "license": og_notice["spdx"],
         "license_path": "tackbox_engines/third_party/licenses/opengrep.LICENSE.txt",
         "path": f"tackbox_engines/bin/{pl.opengrep['bin_name']}",
+    })
+
+    # jscpd rides as an npm platform-package tarball (.tgz); the binary sits at a
+    # fixed member path inside, so extract it by name like the node archive.
+    jscpd_archive = fetch(pl.jscpd["source_url"], pl.jscpd["archive_sha256"])
+    jscpd_bin = fat_root / "bin" / pl.jscpd["bin_name"]
+    member = pl.jscpd["archive_member"]
+    with tarfile.open(jscpd_archive, "r:gz") as tf:
+        src = tf.extractfile(member)
+        if src is None:
+            raise SystemExit(f"member {member} not found in {jscpd_archive}")
+        with jscpd_bin.open("wb") as out:
+            shutil.copyfileobj(src, out)
+    st = jscpd_bin.stat().st_mode
+    jscpd_bin.chmod(st | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    jscpd_notice = manifest["licenses"]["jscpd"]
+    (fat_root / "third_party" / "licenses" / "jscpd.LICENSE.txt").write_text(jscpd_notice["notice"] + "\n")
+    entries.append({
+        "id": "jscpd",
+        "kind": "binary",
+        "version": pl.jscpd["version"],
+        "source_url": pl.jscpd["source_url"],
+        "archive_sha256": pl.jscpd["archive_sha256"],
+        "sha256": sha256_file(jscpd_bin),
+        "license": jscpd_notice["spdx"],
+        "license_path": "tackbox_engines/third_party/licenses/jscpd.LICENSE.txt",
+        "path": f"tackbox_engines/bin/{pl.jscpd['bin_name']}",
     })
 
     vendor_src = ENGINES_DIR / "vendor"

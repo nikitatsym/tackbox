@@ -1,6 +1,6 @@
 {
-  "manifest_sha256": "2fce84a244e673b4c2b094a89f1922f82a03307ada8e95dfa317993e48372393",
+  "manifest_sha256": "7a605722d8e5cbe3a63d010180a23a74d7a07388d40a739376fcc335febeaba2",
   "schema": 1,
   "vendor_lock_sha256": "84f0d556fa7be8d7a565cb7ca1cf8e0d6c9c5e11aad6a92ae8ae3caefbe63a33",
-  "version": "0.1.1"
+  "version": "0.1.2"
 }
