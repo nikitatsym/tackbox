@@ -137,6 +137,9 @@ func TestMachineBothEndpointsReported(t *testing.T) {
 		if want[f.File] != f.Line {
 			t.Fatalf("finding %+v not in expected %v", f, want)
 		}
+		if !strings.Contains(f.Message, "clone of") {
+			t.Fatalf("finding %+v: message must name the clone counterpart", f)
+		}
 	}
 }
 

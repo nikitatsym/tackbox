@@ -1,9 +1,7 @@
 rules:
   - id: erc006-dedupkey-missing
     message: >-
-      Capture call must include a dedupKey. Expected signature
-      `(ctx, msg, err, tags, key)` — 5 arguments. A missing or
-      extra-argument call breaks fingerprint stability.
+      Capture call must have exactly 5 args: (ctx, msg, err, tags, dedupKey)
     severity: ERROR
     languages: [go]
     patterns:
@@ -32,9 +30,7 @@ rules:
 
   - id: erc006-dedupkey-bad-format
     message: >-
-      dedupKey must follow `area.suffix[:identifier]` format —
-      lowercase area, dot, suffix, optional `:identifier`. The
-      area prefix is extracted as the `area` tag.
+      dedupKey must match area.suffix[:identifier], lowercase, single optional :id
     severity: ERROR
     languages: [go]
     patterns:

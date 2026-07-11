@@ -113,20 +113,20 @@ func handleErrParserAssign(pass *analysis.Pass, idx *markers.Index, assign *ast.
 	errName := errIdentFromLHS(assign)
 	if errName == "" {
 		pass.Reportf(assign.Pos(),
-			"ERC002: %s err discarded, requires `// parse-skip: <reason>` marker",
+			"ERC002: %s err discarded; bind it and handle the error branch",
 			callee)
 		return
 	}
 	ifst, ok := nextIfErrNotNil(rest, errName)
 	if !ok {
 		pass.Reportf(assign.Pos(),
-			"ERC002: %s err `%s` not checked, requires capture or `// parse-skip:` marker",
+			"ERC002: %s err `%s` not checked; check it and capture on the error branch",
 			callee, errName)
 		return
 	}
 	if !errBranchHandled(pass.TypesInfo, ifst.Body, errName) {
 		pass.Reportf(ifst.Pos(),
-			"ERC002: %s err-branch must capture, propagate the error chain-preservingly, or carry `// parse-skip: <reason>` (err=%s)",
+			"ERC002: %s err-branch must capture or propagate the error chain-preservingly (err=%s)",
 			callee, errName)
 	}
 }
@@ -138,7 +138,7 @@ func handleErrParserShort(pass *analysis.Pass, idx *markers.Index, ifst *ast.IfS
 	errName := errIdentFromLHS(assign)
 	if errName == "" {
 		pass.Reportf(ifst.Pos(),
-			"ERC002: %s err discarded in short form, requires `// parse-skip: <reason>` marker",
+			"ERC002: %s err discarded in short form; bind it and handle the error branch",
 			callee)
 		return
 	}
@@ -147,7 +147,7 @@ func handleErrParserShort(pass *analysis.Pass, idx *markers.Index, ifst *ast.IfS
 	}
 	if !errBranchHandled(pass.TypesInfo, ifst.Body, errName) {
 		pass.Reportf(ifst.Pos(),
-			"ERC002: %s err-branch must capture, propagate the error chain-preservingly, or carry `// parse-skip: <reason>` (err=%s)",
+			"ERC002: %s err-branch must capture or propagate the error chain-preservingly (err=%s)",
 			callee, errName)
 	}
 }
@@ -176,19 +176,19 @@ func handleParseIPAssign(pass *analysis.Pass, idx *markers.Index, assign *ast.As
 	valName := firstIdentLHS(assign)
 	if valName == "" {
 		pass.Reportf(assign.Pos(),
-			"ERC002: net.ParseIP result discarded, requires `// parse-skip: <reason>` marker")
+			"ERC002: net.ParseIP result discarded; bind it and nil-check the invalid input")
 		return
 	}
 	ifst, ok := nextIfValEqNil(rest, valName)
 	if !ok {
 		pass.Reportf(assign.Pos(),
-			"ERC002: net.ParseIP result `%s` not nil-checked, requires capture or `// parse-skip:` marker",
+			"ERC002: net.ParseIP result `%s` not nil-checked; nil-check it and capture the invalid input",
 			valName)
 		return
 	}
 	if !hasCaptureInBody(pass.TypesInfo, ifst.Body, valName) {
 		pass.Reportf(ifst.Pos(),
-			"ERC002: net.ParseIP nil-branch must capture or carry `// parse-skip: <reason>` (val=%s)",
+			"ERC002: net.ParseIP nil-branch must capture the invalid input (val=%s)",
 			valName)
 	}
 }
@@ -200,7 +200,7 @@ func handleParseIPShort(pass *analysis.Pass, idx *markers.Index, ifst *ast.IfStm
 	valName := firstIdentLHS(assign)
 	if valName == "" {
 		pass.Reportf(ifst.Pos(),
-			"ERC002: net.ParseIP result discarded in short form, requires `// parse-skip: <reason>` marker")
+			"ERC002: net.ParseIP result discarded in short form; bind it and nil-check the invalid input")
 		return
 	}
 	if !condIsValEqNil(ifst.Cond, valName) {
@@ -208,7 +208,7 @@ func handleParseIPShort(pass *analysis.Pass, idx *markers.Index, ifst *ast.IfStm
 	}
 	if !hasCaptureInBody(pass.TypesInfo, ifst.Body, valName) {
 		pass.Reportf(ifst.Pos(),
-			"ERC002: net.ParseIP nil-branch must capture or carry `// parse-skip: <reason>` (val=%s)",
+			"ERC002: net.ParseIP nil-branch must capture the invalid input (val=%s)",
 			valName)
 	}
 }

@@ -18,7 +18,7 @@ module.exports = {
     type: 'problem',
     docs: { description: 'every path out of a promise rejection handler (.catch(onErr) or the second arg of .then(onOk, onErr)) must throw or call a reporter, or carry a // no-report: marker. Result-boundary conversion is not accepted in promise handlers.' },
     messages: {
-      swallow: 'promise rejection handler has a path that swallows the error: every path must throw or call a reporter (tackbox/report import or .tackbox-reporters declaration), or carry `// no-report: <reason>` above',
+      swallow: 'every rejection-handler path must throw or call a reporter',
     },
     schema: [],
   },

@@ -607,13 +607,21 @@ def _hook_post(event: dict) -> int:
     if not on_diff:
         return 0  # nothing on the edited lines; dev.py check owns the whole file
     for f in on_diff:
-        loc = f"{f.file}:{f.line}" if f.line is not None else (f.file or "?")
-        sys.stderr.write(f"{loc}: {f.rule}\n")
+        sys.stderr.write(_finding_line(f) + "\n")
     if elsewhere:
         sys.stderr.write(
             f"{len(elsewhere)} pre-existing elsewhere (dev.py check enforces)\n"
         )
     return 2
+
+
+def _finding_line(f) -> str:
+    """`file:line: rule: message` hook line; message whitespace collapsed to
+    single spaces, `file:line: rule` when the engine carried no message."""
+    loc = f"{f.file}:{f.line}" if f.line is not None else (f.file or "?")
+    if f.message:
+        return f"{loc}: {f.rule}: {' '.join(f.message.split())}"
+    return f"{loc}: {f.rule}"
 
 
 def _located(results: list, root: Path) -> list:

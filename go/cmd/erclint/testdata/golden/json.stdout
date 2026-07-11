@@ -4,7 +4,7 @@
 			{
 				"posn": "<FIXTURE>/pkga/violate.go:7:2",
 				"end": "<FIXTURE>/pkga/violate.go:7:2",
-				"message": "ERC001: err-branch must propagate, capture, carry the error into a terminal exit, or carry `// no-report: \u003creason\u003e` (err=err)"
+				"message": "ERC001: err-branch must propagate, capture, or carry the error into a terminal exit (err=err)"
 			}
 		]
 	}

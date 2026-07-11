@@ -51,7 +51,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 				return true
 			}
 			pass.Reportf(call.Pos(),
-				"ERC008: skipped test must state a reason: pass it to %s or carry `// test-skip: <reason>`",
+				"ERC008: skipped test must state a reason: pass it to %s",
 				sel.Sel.Name)
 			return true
 		})

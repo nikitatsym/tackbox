@@ -21,7 +21,7 @@ public final class SwallowRule extends CatchRule {
 
     private static final String MESSAGE =
             ID + ": a catch path swallows the exception; every path must propagate with"
-            + " `throw`, report or print the caught, or carry `// no-report: <reason>`";
+            + " `throw`, or report or print the caught";
 
     public SwallowRule(Recognition rec) {
         super(rec);

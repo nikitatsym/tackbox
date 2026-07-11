@@ -1,10 +1,9 @@
-"""TBX rule codes, their canonical rule ids, and verbatim messages.
+"""TBX rule codes, their canonical rule ids, and one-line messages.
 
 Single source of truth for the code<->id mapping: the flake8 plugin emits
 `TBXNNN <id>: <message>` and the CLI's machine parser maps the TBX code back
-to the id via CODE_TO_ID. Messages are the exceptions-python.yaml text carried
-verbatim (only newlines flattened to spaces so flake8's one-line-per-finding
-format holds); they are model-facing teach-text - the remedy list is the point.
+to the id via CODE_TO_ID. Messages are one line, ~100 chars: the violated
+invariant plus the primary fix; details and rationale live in the rule docs.
 """
 
 from __future__ import annotations
@@ -22,59 +21,13 @@ CODE_TO_ID: dict[str, str] = {
 }
 
 
-def _flat(text: str) -> str:
-    return " ".join(text.split())
-
-
 MESSAGES: dict[str, str] = {
-    "TBX001": _flat(
-        "`except` block has no `raise` - exception is silently swallowed. "
-        "Fail-fast: let it propagate (remove the except) or wrap+reraise "
-        "with context via `raise NewError(...) from e`."
-    ),
-    "TBX002": _flat(
-        "`contextlib.suppress(...)` silently drops the exception - no log, "
-        "no record, no rethrow. By default this is a cosmetic dodge of the "
-        "python-swallowed-exception rule. Restructure the code so the "
-        "exception cannot raise (precondition guards, atomic state tracking, "
-        "narrower syscall sequence), or - if there is a legitimate "
-        "async/cleanup boundary - use try/except with a `# no-report: "
-        "<reason>` marker. Narrowly allowlisted (documented control-flow "
-        "signal, not a dodge): asyncio.CancelledError around `await task` "
-        "after task.cancel() - the CancelledError on the await IS the "
-        "confirmation that cancel propagated, not an error to log."
-    ),
-    "TBX003": _flat(
-        "Bare `except:` / `except BaseException:` catches KeyboardInterrupt, "
-        "SystemExit, MemoryError - things you never want to swallow. Catch "
-        "a specific exception type."
-    ),
-    "TBX004": _flat(
-        "Raising a new exception in `except` without `from $E` (or "
-        "`from None`) discards the original traceback. Use "
-        "`raise NewError(...) from $E` to preserve the chain."
-    ),
-    "TBX005": _flat(
-        "`except` that only re-raises the caught exception is a no-op "
-        "wrapper. Remove the try/except and let the exception propagate "
-        "naturally."
-    ),
-    "TBX006": _flat(
-        "Import inside a function/method. Imports must live at the top of "
-        "the file (after module docstring / `from __future__`). Move it "
-        "out - lazy imports hide dependencies and slow first call."
-    ),
-    "TBX007": _flat(
-        "`sys.exit` / `os._exit` inside `except` masks the original error. "
-        "Exit code tells nothing about what actually failed. Let the "
-        "exception propagate."
-    ),
-    "TBX008": _flat(
-        "Skipped / xfailed test with no reason is a silent hole in the suite - "
-        "nobody knows why it is off or when it comes back. State a non-empty "
-        "reason: `@pytest.mark.skip(reason=...)`, `@pytest.mark.skipif(cond, "
-        "reason=...)`, `@pytest.mark.xfail(reason=...)`, `pytest.skip(...)`, "
-        "or `@unittest.skip(...)`. A deliberate, self-evident skip keeps a "
-        "`# test-skip: <reason>` marker in the comment block directly above."
-    ),
+    "TBX001": "let the exception propagate or wrap+reraise via raise ... from e",
+    "TBX002": "restructure so the error cannot raise instead of suppressing it",
+    "TBX003": "bare except catches KeyboardInterrupt/SystemExit; catch a specific exception type",
+    "TBX004": "raise in except without from e discards the traceback; use raise NewError(...) from e",
+    "TBX005": "except that only re-raises is a no-op; remove the try/except",
+    "TBX006": "Import inside a function; move it to module top",
+    "TBX007": "sys.exit inside except masks the original error; let the exception propagate",
+    "TBX008": "Skipped/xfailed test without a reason is a silent hole in the suite; pass a non-empty reason",
 }

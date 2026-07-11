@@ -29,7 +29,7 @@ public final class ChainRule {
 
     private static final String MESSAGE =
             ID + ": new exception thrown in catch drops the caught cause; pass the caught"
-            + " as the cause (throw new X(msg, e), initCause, or addSuppressed)";
+            + " as the cause (throw new X(msg, e))";
 
     public List<Finding> check(String file, CompilationUnit cu, MarkerIndex markers) {
         List<Finding> out = new ArrayList<>();

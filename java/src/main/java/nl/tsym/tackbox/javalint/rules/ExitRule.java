@@ -22,7 +22,7 @@ public final class ExitRule extends CatchRule {
 
     private static final String MESSAGE =
             ID + ": System.exit in catch must be preceded by a report or print of the"
-            + " caught, or carry `// no-report: <reason>`";
+            + " caught";
 
     public ExitRule(Recognition rec) {
         super(rec);

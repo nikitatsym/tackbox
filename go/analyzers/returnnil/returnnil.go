@@ -68,7 +68,7 @@ func checkBody(pass *analysis.Pass, idx *markers.Index, body *ast.BlockStmt) {
 			return true
 		}
 		pass.Reportf(ret.Pos(),
-			"ERC004: bare `return nil` requires `// nil-return: <reason>` marker or wider signature `(val, ok)` / `(val, err)`")
+			"ERC004: bare `return nil` hides absence; widen the signature to `(val, ok)` / `(val, err)`")
 		return true
 	})
 }

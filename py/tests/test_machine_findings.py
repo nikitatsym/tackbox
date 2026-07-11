@@ -35,6 +35,13 @@ def test_parse_machine_findings_ndjson():
     ]
 
 
+def test_parse_machine_findings_carries_message():
+    out = '{"file": "a.py", "line": 4, "rule": "r", "message": "why it is wrong"}\n'
+    assert parse_machine_findings(out) == [
+        Finding(rule="r", file="a.py", line=4, message="why it is wrong")
+    ]
+
+
 def test_parse_machine_findings_missing_location_is_none():
     # location-unknown: reported, not dropped.
     out = '{"rule": "opengrep-json-unparseable"}\n'
@@ -50,21 +57,21 @@ def test_parse_machine_findings_skips_blank_lines():
 def test_erclint_located_findings_relativizes_posn():
     raw = '{"pkg": {"errcheck": [{"posn": "/repo/pkg/a.go:7:2", "message": "ERC001: x"}]}}'
     assert erclint_located_findings(raw, Path("/repo")) == [
-        Finding(rule="errcheck", file="pkg/a.go", line=7)
+        Finding(rule="errcheck", file="pkg/a.go", line=7, message="ERC001: x")
     ]
 
 
 def test_erclint_malformed_posn_is_location_unknown():
     raw = '{"pkg": {"errcheck": [{"posn": "weird", "message": "x"}]}}'
     assert erclint_located_findings(raw, Path("/repo")) == [
-        Finding(rule="errcheck", file=None, line=None)
+        Finding(rule="errcheck", file=None, line=None, message="x")
     ]
 
 
 def test_located_findings_dispatches_erclint_vs_machine():
     erc = '{"p": {"errcheck": [{"posn": "/r/a.go:3:1", "message": "m"}]}}'
     assert located_findings("erclint", erc, Path("/r")) == [
-        Finding(rule="errcheck", file="a.go", line=3)
+        Finding(rule="errcheck", file="a.go", line=3, message="m")
     ]
     nd = '{"file": "b.js", "line": 9, "rule": "tackbox/no-swallow-catch"}\n'
     assert located_findings("tackbox-eslint", nd, Path("/r")) == [
@@ -82,7 +89,19 @@ def test_located_findings_javalint_keeps_repo_relative_file():
         "    ]\n  }\n}\n"
     )
     assert located_findings("javalint", jl, Path("/some/unrelated/root")) == [
-        Finding(rule="JV001", file="java/Foo.java", line=5)
+        Finding(rule="JV001", file="java/Foo.java", line=5, message="m")
+    ]
+
+
+def test_pyrules_located_findings_strips_rule_id_echo():
+    out = "a.py:4:9: TBX001 python-swallowed-exception: `except` block has no `raise`\n"
+    assert located_findings("pyrules", out, Path("/r")) == [
+        Finding(
+            rule="python-swallowed-exception",
+            file="a.py",
+            line=4,
+            message="`except` block has no `raise`",
+        )
     ]
 
 
@@ -125,18 +144,22 @@ def _hit(findings, rule_substr, file):
 def test_erclint_machine_location(machine_findings):
     hits = _hit(machine_findings, "errcheck", "pkg/bad.go")
     assert hits and hits[0].line == 7, machine_findings
+    assert hits[0].message and "ERC001" in hits[0].message, hits
 
 
 def test_pyrules_machine_location(machine_findings):
     hits = _hit(machine_findings, "python-swallowed-exception", "bad.py")
     assert hits and hits[0].line == 2, machine_findings
+    assert hits[0].message and not hits[0].message.startswith(hits[0].rule), hits
 
 
 def test_eslint_machine_location(machine_findings):
     hits = _hit(machine_findings, "no-swallow-catch", "bad.js")
     assert hits and hits[0].line == 1, machine_findings
+    assert hits[0].message and "every catch path" in hits[0].message, hits
 
 
 def test_mdlint_machine_location(machine_findings):
     hits = _hit(machine_findings, "MD-ASCII", "bad.md")
     assert hits and hits[0].line == 3, machine_findings
+    assert hits[0].message, hits
