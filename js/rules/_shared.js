@@ -657,6 +657,7 @@ module.exports = {
   TACKBOX_MODULES,
   SECRET_WORDS,
   DEDUP_KEY_RE,
+  TEST_ROOTS,
   calleeName,
   tier1ReporterName,
   isTier1ReporterCall,
