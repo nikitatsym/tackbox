@@ -191,6 +191,28 @@ func TestDupOkPythonHashComment(t *testing.T) {
 	}
 }
 
+func TestDupOkCssBlockComment(t *testing.T) {
+	dir := t.TempDir()
+	a := writeSrc(t, dir, "a.css", 5, []string{"/* dup-ok: shared grid, extraction tracked */"})
+	b := writeSrc(t, dir, "b.css", 8, nil)
+	_, n := emitTo(t, dir, mkSpanReport("css", a, 5, 8, b, 8, 11), true)
+	if n != 1 {
+		t.Fatalf("expected 1 survivor after /* dup-ok */, got %d", n)
+	}
+}
+
+func TestDupOkMultiLineBlockCommentNotStandalone(t *testing.T) {
+	dir := t.TempDir()
+	// Only a single-line /* ... */ counts; an unterminated opener is not a
+	// whole-line comment and must not suppress.
+	a := writeSrc(t, dir, "a.css", 6, []string{"/* dup-ok: reason", "spanning two lines */"})
+	b := writeSrc(t, dir, "b.css", 8, nil)
+	_, n := emitTo(t, dir, mkSpanReport("css", a, 6, 9, b, 8, 11), true)
+	if n != 2 {
+		t.Fatalf("expected 2 survivors for multi-line block comment, got %d", n)
+	}
+}
+
 func TestDupOkMultiLineBlockMarkerAnyLine(t *testing.T) {
 	dir := t.TempDir()
 	// Marker on the upper line of a two-line contiguous block still counts.
