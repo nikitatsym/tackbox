@@ -483,3 +483,68 @@ def test_pre_plain_edit_no_marker_allow(tmp_path):
     r = _pre_edit(tmp_path, "a := 1", "a := 2")
     assert r.returncode == 0, r.stderr
     assert r.stdout == "", f"a plain edit is free:\n{r.stdout}"
+
+
+# -- PreToolUse: markdown lang marker (rides the suppression-marker gate) --
+
+
+def _pre_edit_md(tmp_path: Path, old: str, new: str) -> subprocess.CompletedProcess:
+    """PreToolUse Edit of notes.md - the lang marker rides the same gate as a
+    // no-report suppression, so it flows through _marker_gate unchanged."""
+    _dev_py(tmp_path)
+    _init(tmp_path)
+    return _hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Edit",
+            "cwd": str(tmp_path),
+            "tool_input": {
+                "file_path": str(tmp_path / "notes.md"),
+                "old_string": old,
+                "new_string": new,
+            },
+        }
+    )
+
+
+def test_pre_introduce_lang_marker_ask(tmp_path):
+    # A newly added markdown lang marker escalates for approval exactly like a
+    # new // no-report suppression.
+    r = _pre_edit_md(
+        tmp_path, "# notes\n", "<!-- tackbox: lang=ru personal repo -->\n# notes\n"
+    )
+    assert "lang=ru" in _ask(r)["permissionDecisionReason"]
+
+
+def test_pre_remove_lang_marker_allow(tmp_path):
+    r = _pre_edit_md(
+        tmp_path, "<!-- tackbox: lang=ru personal repo -->\n# notes\n", "# notes\n"
+    )
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == "", f"removing a marker is free (no output):\n{r.stdout}"
+
+
+def test_pre_change_lang_marker_reason_ask(tmp_path):
+    r = _pre_edit_md(
+        tmp_path,
+        "<!-- tackbox: lang=ru old reason -->\n",
+        "<!-- tackbox: lang=ru new reason -->\n",
+    )
+    assert "lang=ru" in _ask(r)["permissionDecisionReason"]
+
+
+def test_pre_write_new_md_with_lang_marker_ask(tmp_path):
+    _dev_py(tmp_path)
+    _init(tmp_path)
+    r = _hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Write",
+            "cwd": str(tmp_path),
+            "tool_input": {
+                "file_path": str(tmp_path / "new.md"),
+                "content": "<!-- tackbox: lang=ru fresh file -->\n# hi\n",
+            },
+        }
+    )
+    assert "lang=ru" in _ask(r)["permissionDecisionReason"]

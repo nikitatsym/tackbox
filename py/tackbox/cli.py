@@ -493,7 +493,12 @@ def _print_banner(tackbox_root: Path) -> None:
 # -- Claude Code hook -----------------------------------------------------
 
 _HOOK_TOOLS = frozenset({"Edit", "Write", "MultiEdit"})
-_MARKER_RE = re.compile(r"(?:no-report|parse-skip|nil-return|long-comment|test-skip|dup-ok):")
+# Suppression markers plus the markdown `tackbox: lang=<code>` marker: adding or
+# editing any of them rides the same PreToolUse approval gate (_marker_gate).
+_MARKER_RE = re.compile(
+    r"(?:no-report|parse-skip|nil-return|long-comment|test-skip|dup-ok):"
+    r"|tackbox:\s*lang=\S*"
+)
 
 
 def _run_hook() -> int:
