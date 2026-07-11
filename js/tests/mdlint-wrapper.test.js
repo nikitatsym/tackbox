@@ -52,3 +52,34 @@ test('exits 0 on clean ASCII file', () => {
     assert.equal(r.stdout, '')
   })
 })
+
+// End-to-end (default rules + noInlineConfig): the lang marker survives the
+// real CLI path, not just the rule unit tests.
+
+const PRIVET = '\u{41F}\u{440}\u{438}\u{432}\u{435}\u{442}' // "Privet" (hello)
+const MIR = '\u{43C}\u{438}\u{440}' // "mir" (world)
+
+test('ru marker: Russian prose passes the real wrapper clean', () => {
+  withTmp(dir => {
+    writeFileSync(
+      path.join(dir, 'ru.md'),
+      '<!-- tackbox: lang=ru personal repo -->\n\n# notes\n\n' + PRIVET + ' \u{2014} ' + MIR + '.\n'
+    )
+    const r = lintInTmp(dir, 'ru.md')
+    assert.equal(r.status, 0, r.stdout + r.stderr)
+    assert.equal(r.stdout, '')
+  })
+})
+
+test('ru marker still flags an emoji, not the Cyrillic', () => {
+  withTmp(dir => {
+    writeFileSync(
+      path.join(dir, 'ru.md'),
+      '<!-- tackbox: lang=ru note -->\n\n# notes\n\n' + PRIVET + ' \u{1F680}\n'
+    )
+    const r = lintInTmp(dir, 'ru.md')
+    assert.equal(r.status, 1, r.stdout + r.stderr)
+    assert.match(r.stdout, /U\+1F680/)
+    assert.doesNotMatch(r.stdout, /U\+41F/)
+  })
+})
