@@ -161,6 +161,7 @@ def _check_binaries_start() -> CheckResult:
         ),
         ("opengrep", [str(engines_root / "bin" / exe("opengrep")), "--version"], True),
         ("node", [str(engines_root / "bin" / exe("node")), "--version"], True),
+        ("jscpd", [str(engines_root / "bin" / exe("jscpd")), "--version"], True),
     ]
     env = engines_mod.hermetic_env()
     failures: list[str] = []
