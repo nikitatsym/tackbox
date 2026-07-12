@@ -65,7 +65,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 // checkArg reports a secret-named identifier and raw *http.Request input found
 // anywhere in one argument's subtree. Both are independent findings.
 func checkArg(pass *analysis.Pass, arg ast.Expr) {
-	if name, ok := secretIdent(arg); ok {
+	if name, ok := secretIdent(pass.TypesInfo, arg); ok {
 		pass.Reportf(arg.Pos(), "ERC006: capture arg names a secret (%s)", name)
 	}
 	if desc, ok := userInput(pass.TypesInfo, arg); ok {
@@ -73,21 +73,28 @@ func checkArg(pass *analysis.Pass, arg ast.Expr) {
 	}
 }
 
-// secretIdent returns the first identifier in arg whose name deep-contains a
-// stop-word. String literals are not identifiers - domain prose in a message
-// stays clean.
-func secretIdent(arg ast.Expr) (string, bool) {
+// secretIdent returns the first value identifier in arg whose name deep-contains
+// a stop-word. Type and package names denote no value, so they cannot leak a
+// secret; string literals are not identifiers - domain prose stays clean.
+func secretIdent(info *types.Info, arg ast.Expr) (string, bool) {
 	var name string
 	found := false
 	ast.Inspect(arg, func(n ast.Node) bool {
 		if found {
 			return false
 		}
-		if id, ok := n.(*ast.Ident); ok && matchesStopWord(id.Name) {
-			name, found = id.Name, true
-			return false
+		id, ok := n.(*ast.Ident)
+		if !ok || !matchesStopWord(id.Name) {
+			return true
 		}
-		return true
+		// A composite-literal type name or type-conversion/package callee is
+		// not a value expression - skip it, keep var/field/func callees.
+		switch info.ObjectOf(id).(type) {
+		case *types.TypeName, *types.PkgName:
+			return true
+		}
+		name, found = id.Name, true
+		return false
 	})
 	return name, found
 }

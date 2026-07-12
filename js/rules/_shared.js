@@ -249,14 +249,22 @@ function argFlows(call, errName) {
   return found
 }
 
-function isDeclaredReporterCall(context, call, errName) {
+// resolvesToDeclaredReporter: `call`'s callee resolves to a function declared in
+// `.tackbox-reporters` for its origin file. Pure origin recognition - the single
+// declared-reporter resolver. no-swallow layers an argument-flow gate on top
+// (the caught err must reach the call); no-secret-in-report scans all args of
+// every such call (a declared reporter is a capture sink at every call site).
+function resolvesToDeclaredReporter(context, call) {
   const decls = declaredReporters(context)
   if (decls.length === 0) return false
   const callee = call.callee
   if (!callee || callee.type !== 'Identifier') return false
   const target = resolveDeclTarget(context, callee)
-  if (!target || !matchesDecl(decls, target.file, target.name)) return false
-  return argFlows(call, errName)
+  return !!target && matchesDecl(decls, target.file, target.name)
+}
+
+function isDeclaredReporterCall(context, call, errName) {
+  return resolvesToDeclaredReporter(context, call) && argFlows(call, errName)
 }
 
 // isInDeclaredReporterBody: `node` is lexically inside a function declared in
@@ -652,6 +660,7 @@ module.exports = {
   calleeName,
   tier1ReporterName,
   isTier1ReporterCall,
+  resolvesToDeclaredReporter,
   isDeclaredReporterCall,
   isReporterCall,
   isInDeclaredReporterBody,

@@ -42,6 +42,22 @@ func cleanBareLocal(ctx context.Context, err error, authToken string) {
 	SentryErr(ctx, authToken, err, nil, "auth.creds")
 }
 
+// composite-literal TYPE name deep-contains a stop-word: a type carries no
+// secret value, so the type name must not fire.
+type KeyStore struct{}
+
+func cleanTypeNameCompositeLit(ctx context.Context, err error) {
+	report.SentryErr(ctx, "m", err, KeyStore{}, "a.b")
+}
+
+// type-conversion callee whose TYPE name deep-contains a stop-word: still a
+// type name, not a value expression - must not fire.
+type SecretText string
+
+func cleanTypeConversion(ctx context.Context, err error) {
+	report.SentryErr(ctx, SecretText("x"), err, nil, "a.b")
+}
+
 // ---- dedupkey (tier-1 report.SentryErr/Warn only) ----
 
 // wrong arity: dedupKey missing.
@@ -91,6 +107,14 @@ func secretSelectorDedup(ctx context.Context, err error) {
 // secret-arg fires on a Panic reporter too.
 func secretOnPanic(apiKey string) {
 	report.Panic("worker", apiKey) // want `ERC006: capture arg names a secret \(apiKey\)`
+}
+
+// secret-named function call as an arg: the callee is a value (func), so it
+// still fires - the retired opengrep rule matched call callees, keep that.
+func getSecret() string { return "" }
+
+func secretFuncCall(ctx context.Context, err error) {
+	report.SentryErr(ctx, getSecret(), err, nil, "auth.fn") // want `ERC006: capture arg names a secret \(getSecret\)`
 }
 
 // ---- user-input (any recognized reporter) ----
