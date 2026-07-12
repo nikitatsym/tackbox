@@ -18,6 +18,7 @@ CODE_TO_ID: dict[str, str] = {
     "TBX006": "python-import-inside-function",
     "TBX007": "python-exit-in-except",
     "TBX008": "python-test-skip",
+    "TBX009": "erc006-fingerprint-secret-arg",
 }
 
 
@@ -30,4 +31,5 @@ MESSAGES: dict[str, str] = {
     "TBX006": "Import inside a function; move it to module top",
     "TBX007": "sys.exit inside except masks the original error; let the exception propagate",
     "TBX008": "Skipped/xfailed test without a reason is a silent hole in the suite; pass a non-empty reason",
+    "TBX009": "capture argument names a secret (token/password/key/secret/cookie); do not pass it to a reporter",
 }

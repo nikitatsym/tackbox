@@ -130,6 +130,41 @@ func IsCaptureErr(info *types.Info, call *ast.CallExpr, errName string) bool {
 	return captureKind(info, call, errName) == capErr
 }
 
+// IsReportErrHelper reports whether call's callee resolves to a tier-1
+// go/report error helper (SentryErr/Warn) - the known 5-arg
+// (ctx, msg, err, tags, dedupKey) signature. ERC006's dedupkey rule is gated
+// on it: Panic and tier-2 declared sinks carry no dedupKey of known shape to
+// validate. Mirrors captureKind's package gate.
+func IsReportErrHelper(info *types.Info, call *ast.CallExpr) bool {
+	fn, ok := calleeFunc(info, call)
+	if !ok || fn.Pkg() == nil {
+		return false
+	}
+	return fn.Pkg().Path() == reportPkgPath && reportErrCapture[fn.Name()]
+}
+
+// IsReporterCall reports whether call's callee resolves to any recognized
+// reporter: a tier-1 go/report capture (SentryErr/Warn/Panic) or a tier-2
+// `.tackbox-reporters` capture sink. Unlike captureKind it does not require
+// the caught error to flow in - ERC006 scrubs every argument of a reporter
+// call for secrets and raw user input regardless of which arg carries the
+// error. Usage sinks are not reporters and are excluded.
+func IsReporterCall(info *types.Info, call *ast.CallExpr) bool {
+	fn, ok := calleeFunc(info, call)
+	if !ok || fn.Pkg() == nil {
+		return false
+	}
+	if fn.Pkg().Path() == reportPkgPath {
+		return reportErrCapture[fn.Name()] || reportPanicCapture[fn.Name()]
+	}
+	for _, d := range declaredReporters {
+		if !d.Usage && d.PkgPath == fn.Pkg().Path() && d.Name == fn.Name() {
+			return true
+		}
+	}
+	return false
+}
+
 // IsDeclaredBody reports whether fn is a declared reporter: its body is the
 // trust boundary, reviewed at declaration time - analyzers do not look
 // inside. A die-helper's own os.Exit is what the declaration vouches for.

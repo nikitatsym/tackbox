@@ -1,54 +1,36 @@
-const {
-  tier1ReporterName, exprIsSecretRef, matchesSecret,
-  isStaticString, staticStringValue,
-} = require('./_shared')
+const { tier1ReporterName, matchesSecret, walk } = require('./_shared')
+
+// Deep-scan every reporter argument for a secret-named identifier or member
+// (token/password/key/secret/cookie, case-insensitive substring). The name is
+// the risk: an identifier/field so named carries a live secret VALUE into
+// telemetry. Reaches interpolations, `+` concatenation, and nested tag values,
+// since every one surfaces the offending Identifier node. String-literal prose
+// is clean (a message reading "auth token expired" is text, not a value) -
+// mirrors the opengrep `erc006-fingerprint-secret-arg` `$ID` match and the
+// spec's "secret-like names".
 
 module.exports = {
   meta: {
     type: 'problem',
-    docs: { description: 'reporter args may not name or contain secret stop-words (token/password/key/secret/cookie)' },
+    docs: { description: 'reporter args may not name a secret via identifier or member (token/password/key/secret/cookie); string-literal prose is clean' },
     messages: {
       secretIdent: '{{name}}: argument references a secret-named identifier ({{word}}); these must never reach Sentry',
-      secretString: '{{name}}: argument contains the secret stop-word "{{word}}" in a string literal; redact before capture',
     },
     schema: [],
   },
   create(context) {
-    function checkExpr(arg, nameArg) {
-      const word = exprIsSecretRef(arg)
-      if (word) {
-        context.report({ node: arg, messageId: 'secretIdent', data: { name: nameArg, word } })
-        return true
-      }
-      if (isStaticString(arg)) {
-        const value = staticStringValue(arg)
-        const w = matchesSecret(value)
-        if (w) {
-          context.report({ node: arg, messageId: 'secretString', data: { name: nameArg, word: w } })
-          return true
-        }
-      }
-      return false
-    }
-
     return {
       CallExpression(node) {
         const name = tier1ReporterName(context, node)
         if (!name) return
+        const seen = new Set()
         for (const arg of node.arguments) {
-          if (checkExpr(arg, name)) continue
-          if (arg.type === 'ObjectExpression') {
-            for (const prop of arg.properties) {
-              if (prop.type !== 'Property') continue
-              const keyName = prop.key && (prop.key.name || prop.key.value)
-              const keyHit = matchesSecret(keyName)
-              if (keyHit) {
-                context.report({ node: prop, messageId: 'secretIdent', data: { name, word: keyHit } })
-                continue
-              }
-              checkExpr(prop.value, name)
-            }
-          }
+          walk(arg, n => {
+            if (n.type !== 'Identifier' || seen.has(n)) return
+            seen.add(n)
+            const word = matchesSecret(n.name)
+            if (word) context.report({ node: n, messageId: 'secretIdent', data: { name, word } })
+          })
         }
       },
     }

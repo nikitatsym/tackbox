@@ -46,7 +46,7 @@ def test_materialize_creates_expected_layout(tmp_path):
     _run(root)
     assert (root / "go.mod").is_file()
     assert (root / "pkga" / "violate.go").is_file()
-    assert (root / "pkgb" / "secret.go").is_file()
+    assert (root / "pkgb" / "recover.go").is_file()
     assert (root / "swallow.js").is_file()
     assert (root / "notes.md").is_file()
     assert (root / "Handler.java").is_file()
@@ -59,8 +59,8 @@ def test_planted_violations_are_present(tmp_path):
     _run(root)
     erc001 = (root / "pkga" / "violate.go").read_text()
     assert "errors.New" in erc001 and "err != nil" in erc001
-    erc006 = (root / "pkgb" / "secret.go").read_text()
-    assert "sentryErr" in erc006 and "user.token" in erc006
+    recover = (root / "pkgb" / "recover.go").read_text()
+    assert "recover()" in recover and "os.Exit" in recover
     swallow = (root / "swallow.js").read_text()
     assert "catch" in swallow and swallow.count("{") == 2
     md = (root / "notes.md").read_text()

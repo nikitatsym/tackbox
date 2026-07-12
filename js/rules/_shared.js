@@ -376,15 +376,6 @@ function matchesSecret(name) {
   return null
 }
 
-function exprIsSecretRef(expr) {
-  if (!expr) return null
-  if (expr.type === 'Identifier') return matchesSecret(expr.name)
-  if (expr.type === 'MemberExpression' && expr.property && expr.property.type === 'Identifier') {
-    return matchesSecret(expr.property.name)
-  }
-  return null
-}
-
 // --- F2b: path-sensitive no-swallow analysis -----------------------------
 // One coherent path analysis for all three legal catch exits: throw and a
 // Result-boundary return terminate a path; a recognized reporter call is a
@@ -672,7 +663,6 @@ module.exports = {
   blockHasReport,
   hasMarkerAbove,
   matchesSecret,
-  exprIsSecretRef,
   enclosingFn,
   fnReturnsResultLike,
   someNode,

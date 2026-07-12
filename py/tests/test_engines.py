@@ -130,7 +130,7 @@ def test_dispatch_dev_engines_erclint_skips_go_testdata():
     assert plan == [(erclint, ["go/pkg"])]
 
 
-def test_dispatch_dev_engines_opengrep_skips_go_testdata_but_not_other_langs():
+def test_dispatch_dev_engines_opengrep_go_only_and_skips_go_testdata():
     opengrep = next(e for e in DEV_ENGINES if e.id == "erclint-opengrep")
     plan = dispatch(
         [
@@ -140,8 +140,9 @@ def test_dispatch_dev_engines_opengrep_skips_go_testdata_but_not_other_langs():
         ],
         [opengrep],
     )
-    # Go testdata dropped; Python testdata kept - the convention is Go-only.
-    assert plan == [(opengrep, ["src/app.go", "src/testdata/case.py"])]
+    # opengrep is Go-only (exceptions-go); the .py file is not eligible, and the
+    # Go testdata file is dropped by the path filter.
+    assert plan == [(opengrep, ["src/app.go"])]
 
 
 # -- parse_erclint_findings ------------------------------------------------
@@ -263,12 +264,15 @@ def test_dev_engines_erclint_is_package_mode():
             assert e.package_mode is False
 
 
-def test_dev_engines_opengrep_covers_multi_language():
+def test_dev_engines_opengrep_is_go_only():
+    # ERC006 fingerprint moved off opengrep into each language's own
+    # origin-aware engine (erclint/pyrules/eslint); the only opengrep rule left
+    # is exceptions-go, so opengrep now scans Go and nothing else.
     og = next(e for e in DEV_ENGINES if e.id == "erclint-opengrep")
     assert ".go" in og.extensions
-    assert ".py" in og.extensions
-    assert ".ts" in og.extensions
-    # java moved to the javalint engine; svelte has no opengrep parser.
+    assert ".py" not in og.extensions
+    assert ".js" not in og.extensions
+    assert ".ts" not in og.extensions
     assert ".java" not in og.extensions
     assert ".svelte" not in og.extensions
 

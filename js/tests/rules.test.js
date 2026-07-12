@@ -17,6 +17,11 @@ const tsRuleTester = new RuleTester({
 const R =
   "import { reportError, reportSynth, reportSynthError, reportApiError, reportWarn, reportLayerError } from 'tackbox/report'\n"
 
+// Namespace import: qualified `report.reportError(...)` calls must resolve to the
+// same tier-1 origin as the bare named form. Proves origin resolution on
+// member-expression callees, not only bare identifiers.
+const NS = "import * as report from 'tackbox/report'\n"
+
 test('no-swallow-catch', () => {
   ruleTester.run('no-swallow-catch', require('../rules/no-swallow-catch'), {
     valid: [
@@ -329,14 +334,26 @@ test('valid-error-report', () => {
       R + 'reportError("connection lost mid-stream", err, null, "api.lost")',
       R + 'reportError("connection lost mid-stream", err, { area: "api" }, "api.lost")',
       R + 'reportSynthError("retry budget exhausted at boot stage", null, "boot.retry")',
+      // namespace call: qualified callee resolves to the tier-1 origin.
+      NS + 'report.reportError("connection lost mid-stream", err, null, "api.lost")',
+      // CJS named destructure resolves to the tier-1 origin.
+      "const { reportError } = require('tackbox/report')\nreportError('connection lost mid-stream', err, null, 'api.lost')",
+      // a same-named LOCAL function is not a reporter: origin gating means an
+      // otherwise-invalid call (no args) earns nothing.
+      'function reportError() {}\nreportError()',
     ],
     invalid: [
       { code: R + 'reportError(`oops ${x}`, err, null, "api.lost")', errors: [{ messageId: 'msgNotStatic' }] },
       { code: R + 'reportError("short", err, null, "api.lost")', errors: [{ messageId: 'msgTooShort' }] },
+      { code: R + 'reportError("' + 'x'.repeat(201) + '", err, null, "api.lost")', errors: [{ messageId: 'msgTooLong' }] },
       { code: R + 'reportError("connection lost mid-stream", null, null, "api.lost")', errors: [{ messageId: 'causeMissing' }] },
       { code: R + 'reportError("connection lost mid-stream", err, {}, "api.lost")', errors: [{ messageId: 'tagsEmpty' }] },
       { code: R + 'reportError("connection lost mid-stream", err)', errors: [{ messageId: 'dedupMissing' }] },
       { code: R + 'reportError()', errors: [{ messageId: 'noArgs' }] },
+      // synth arity: (msg, tags, dedupKey); a 2-arg call is missing the dedupKey.
+      { code: R + 'reportSynthError("retry budget exhausted at boot stage", null)', errors: [{ messageId: 'dedupMissing' }] },
+      // namespace form: origin resolution on a qualified callee still enforces arity.
+      { code: NS + 'report.reportError("connection lost mid-stream", err)', errors: [{ messageId: 'dedupMissing' }] },
     ],
   })
 })
@@ -346,12 +363,27 @@ test('valid-dedup-key', () => {
     valid: [
       R + 'reportError("connection lost mid-stream", err, null, "api.lost")',
       R + 'reportError("connection lost mid-stream", err, null, "api.lost:user_42")',
+      // full-reporter dedupKey lives at slot 3; synth at slot 2.
       R + 'reportSynthError("retry budget exhausted at boot stage", null, "boot.retry")',
+      // no-expression template literal is a static string -> accepted.
+      R + 'reportError("connection lost mid-stream", err, null, `api.lost`)',
+      // namespace call: dedupKey slot is validated on the qualified callee too.
+      NS + 'report.reportError("connection lost mid-stream", err, null, "api.lost")',
+      // CJS namespace resolves to the tier-1 origin.
+      "const report = require('tackbox/report')\nreport.reportError('connection lost mid-stream', err, null, 'api.lost')",
+      // a same-named LOCAL function is not a reporter: a non-literal key earns nothing.
+      'function reportError(m, e, t, k) {}\nreportError("m", err, null, dynKey)',
     ],
     invalid: [
       { code: R + 'reportError("connection lost mid-stream", err, null, key)', errors: [{ messageId: 'notLiteral' }] },
       { code: R + 'reportError("connection lost mid-stream", err, null, "BadFormat")', errors: [{ messageId: 'badFormat' }] },
       { code: R + 'reportError("connection lost mid-stream", err, null, "no_dot")', errors: [{ messageId: 'badFormat' }] },
+      // synth slot (2): a non-dotted key is bad format at the right positional slot.
+      { code: R + 'reportSynthError("retry budget exhausted at boot stage", null, "nodot")', errors: [{ messageId: 'badFormat' }] },
+      // synth slot (2): a non-literal key is caught at the right positional slot.
+      { code: R + 'reportSynthError("retry budget exhausted at boot stage", null, dyn)', errors: [{ messageId: 'notLiteral' }] },
+      // namespace form: origin resolution on a qualified callee catches a non-literal key.
+      { code: NS + 'report.reportError("connection lost mid-stream", err, null, key)', errors: [{ messageId: 'notLiteral' }] },
     ],
   })
 })
@@ -361,26 +393,59 @@ test('no-secret-in-report', () => {
     valid: [
       R + 'reportError("connection lost mid-stream", err, { area: "api" }, "api.lost")',
       R + 'reportSynth("retry budget exhausted at boot stage", { area: "api" }, "boot.retry")',
+      // namespace call with a clean arg list.
+      NS + 'report.reportError("connection lost mid-stream", err, { area: "api" }, "api.lost")',
+      // a same-named LOCAL function is not a reporter: a secret-named arg is not
+      // scanned (origin gating). Without gating this would be a finding.
+      'function reportError(m, e, t, k) {}\nreportError(secretToken, err, { area: "api" }, "api.lost")',
+      // domain prose: stop-words token/password/cookie live only in the string
+      // LITERAL message -> clean (text, not a value).
+      R + 'reportError("password reset cookie token expired mid-request", err, { area: "auth" }, "auth.expired")',
+      // tags whose string KEY and string VALUES contain domain nouns
+      // (tokens.persist / userkey / session cookie) are literals -> clean.
+      R + 'reportError("connection lost mid-stream", err, { "tokens.persist": count, area: "session cookie store" }, "api.lost")',
     ],
     invalid: [
+      // secret-named identifier as the message (first) arg.
       {
-        code: R + 'reportError("connection lost mid-stream", err, { area: "api" }, token)',
+        code: R + 'reportError(secretToken, err, { area: "api" }, "api.lost")',
         errors: [{ messageId: 'secretIdent' }],
       },
+      // secret interpolated into a template-literal message.
+      {
+        code: R + 'reportError(`login failed for ${authToken}`, err, { area: "api" }, "api.lost")',
+        errors: [{ messageId: 'secretIdent' }],
+      },
+      // secret reached via string concatenation.
+      {
+        code: R + 'reportError("prefix " + apiKey, err, { area: "api" }, "api.lost")',
+        errors: [{ messageId: 'secretIdent' }],
+      },
+      // secret as an object VALUE (tag).
+      {
+        code: R + 'reportError("connection lost mid-stream", err, { session: authToken }, "api.lost")',
+        errors: [{ messageId: 'secretIdent' }],
+      },
+      // secret as a member expression (cfg.secret).
+      {
+        code: R + 'reportError("connection lost mid-stream", cfg.secret, { area: "api" }, "api.lost")',
+        errors: [{ messageId: 'secretIdent' }],
+      },
+      // secret as an object KEY identifier.
       {
         code: R + 'reportError("connection lost mid-stream", err, { sessionToken: x }, "api.lost")',
         errors: [{ messageId: 'secretIdent' }],
       },
+      // secret nested inside a tag object value.
       {
-        code: R + 'reportSynth("password token leaked from cookie", null, "auth.password")',
-        errors: [
-          { messageId: 'secretString' },
-          { messageId: 'secretString' },
-        ],
+        code: R + 'reportError("connection lost mid-stream", err, { meta: { secret: y } }, "api.lost")',
+        errors: [{ messageId: 'secretIdent' }],
       },
+      // namespace form: origin resolution works on a qualified call, so the deep
+      // scan still fires on report.reportError(secretToken, ...).
       {
-        code: R + 'reportLayerError("processing request failed at gateway", err, { auth: "bearer token here" }, "api.auth")',
-        errors: [{ messageId: 'secretString' }],
+        code: NS + 'report.reportError(secretToken, err, { area: "api" }, "api.lost")',
+        errors: [{ messageId: 'secretIdent' }],
       },
     ],
   })
