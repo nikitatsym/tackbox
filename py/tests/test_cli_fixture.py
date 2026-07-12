@@ -38,15 +38,17 @@ func Fail() error {
 }
 """
 
-GO_ERC006_OPENGREP = """package pkg
+# ERC006 fingerprint via a tier-2 `.tackbox-reporters` sink: the secret-named
+# arg reaches a declared reporter, so native erclint (not opengrep) must flag it.
+GO_ERC006 = """package pkg
 
 import "context"
 
-func sentryErr(ctx context.Context, msg string, err error, tags any, key string) {}
+func myReport(ctx context.Context, msg string, err error, tags map[string]string, key string) {}
 
 func Trigger() {
-\tvar tokenErr error
-\tsentryErr(context.Background(), "msg", tokenErr, nil, "dedup")
+\tvar authToken string
+\tmyReport(context.Background(), authToken, nil, nil, "area.suffix")
 }
 """
 
@@ -147,7 +149,8 @@ def fixture_repo(tmp_path_factory) -> Path:
     (root / "go.mod").write_text(GO_MOD)
     (root / "pkg").mkdir()
     (root / "pkg" / "swallow.go").write_text(GO_ERC001)
-    (root / "pkg" / "secret.go").write_text(GO_ERC006_OPENGREP)
+    (root / "pkg" / "secret.go").write_text(GO_ERC006)
+    (root / ".tackbox-reporters").write_text("pkg/secret.go#myReport: fixture go sink\n")
     (root / "src").mkdir()
     (root / "src" / "swallow.js").write_text(JS_SWALLOW)
     (root / "docs").mkdir()
@@ -262,10 +265,10 @@ def test_erclint_reports_err_swallow_finding(fixture_repo):
     assert "swallow.go" in section
 
 
-def test_opengrep_reports_secret_arg(fixture_repo):
+def test_erclint_reports_secret_arg(fixture_repo):
     result = _run_tackbox(fixture_repo)
-    section = _split_engine_sections(result.stdout)["erclint-opengrep"]
-    assert "erc006" in section
+    section = _split_engine_sections(result.stdout)["erclint"]
+    assert "ERC006" in section
     assert "secret.go" in section
 
 

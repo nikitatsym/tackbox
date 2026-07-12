@@ -141,11 +141,11 @@ absent and verifies the payload against it.
 
 ## What the rules enforce
 
-Covers ERC001-008 (Go, via `erclint`), JV001-007 (Java, via the native
-`javalint` engine), ERC006 fingerprint rules (Go, Python, JS, TS, via
-the `opengrep` wrapper), Python exception and test-skip rules (via the
-`pyrules` flake8 plugin), frontend swallow and test-skip rules (JS,
-TS, Svelte, via ESLint), and Markdown (MD001-059 + ASCII).
+Covers ERC001-008 (Go, via `erclint` - including ERC006 fingerprint,
+resolved by capture origin), JV001-007 (Java, via the native `javalint`
+engine), Python exception, test-skip, and fingerprint rules (via the
+`pyrules` flake8 plugin), frontend swallow, test-skip, and fingerprint
+rules (JS, TS, Svelte, via ESLint), and Markdown (MD001-059 + ASCII).
 
 See `go/README.md` for the Go ruleset. The specs these rules implement
 (`error-reporting-and-coverage`, `error-handling-frontend`) live
@@ -270,9 +270,9 @@ eslint.config.preset.js                # default config used by tackbox-eslint b
 bin/tackbox-eslint.js                  # ESLint CLI wrapper with bundled preset
 bin/tackbox-mdlint.js                  # markdownlint wrapper with bundled preset
 go/
-  cmd/erclint/                         # native Go analyzers (ERC001-005, 007)
+  cmd/erclint/                         # native Go analyzers (ERC001-008)
   cmd/erclint-opengrep/                # opengrep wrapper, embedded rule yamls
-    rules/                             # multi-language ERC006 yamls
+    rules/                             # exceptions-go (go-exit-in-recover)
   analyzers/                           # per-rule go/analysis packages
   internal/                            # markers + AST helpers
   report/                              # Go capture helper (Sentry/glitchtip)

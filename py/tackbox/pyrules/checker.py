@@ -5,11 +5,17 @@ a py-native engine so the two things opengrep could not express become
 expressible: the sound supervised-shutdown carve-out and tier-2 reporter symbol
 validation. Findings carry the pre-migration rule id in the message so parity
 stays id-for-id. TBX008 (python-test-skip) is py-native from the start.
+
+TBX009 (erc006-fingerprint-secret-arg) is the py-native fingerprint check: the
+opengrep arm matched capture calls by bare name only, so qualified reporter
+calls (`report.sentry_err(...)`) slipped past it. This engine resolves the sink
+by origin (a `.tackbox-reporters` declaration) and rejects secret-named args.
 """
 
 from __future__ import annotations
 
 import ast
+import re
 import sys
 
 from tackbox import __version__ as _version
@@ -25,6 +31,12 @@ _SHUTDOWN_TYPES = frozenset(
 )
 _SHUTDOWN_CALLS = frozenset({"kill", "terminate"})
 _EXIT_CALLS = frozenset({"sys.exit", "os._exit"})
+
+# Case-insensitive substring match on an identifier segment, mirroring the
+# opengrep metavariable-regex `(?i)...(token|password|key|secret|cookie)...`:
+# `session_token`/`tokens`/`cfg.secret` all match, string-literal prose never
+# reaches this (only Name/Attribute nodes are tested).
+_SECRET_RE = re.compile(r"(?i)(token|password|key|secret|cookie)")
 
 
 def _dotted_name(expr: ast.expr) -> str:
@@ -98,6 +110,34 @@ def _tier2_captures(handler: ast.ExceptHandler, reporter_names: frozenset[str]) 
             and _reporters.arg_flows(n, handler.name)
         ):
             return True
+    return False
+
+
+def _callee_name(call: ast.Call) -> str | None:
+    """The reporter-name segment of a callee: `f(...)` -> `f`, `x.f(...)` -> `f`.
+    A qualified call resolves to the last attribute so a declared sink invoked
+    as `report.sentry_err(...)` matches the same name as a bare `sentry_err`."""
+    f = call.func
+    if isinstance(f, ast.Name):
+        return f.id
+    if isinstance(f, ast.Attribute):
+        return f.attr
+    return None
+
+
+def _names_secret(call: ast.Call) -> bool:
+    """Deep-scan every argument VALUE for an identifier/attribute whose name
+    contains a stop-word. Covers plain names, attribute chains, f-strings,
+    concatenation, `.format(...)` args, and dict/collection values - anything
+    ast.walk reaches. A stop-word inside a string literal (an ast.Constant) is
+    never tested, so free prose in a message does not count."""
+    subtrees = list(call.args) + [kw.value for kw in call.keywords]
+    for arg in subtrees:
+        for node in ast.walk(arg):
+            if isinstance(node, ast.Name) and _SECRET_RE.search(node.id):
+                return True
+            if isinstance(node, ast.Attribute) and _SECRET_RE.search(node.attr):
+                return True
     return False
 
 
@@ -270,7 +310,16 @@ class _Visitor(ast.NodeVisitor):
         if _is_pytest_skip_call(node) and not _reason_present(node, positional=True, kw=True):
             if not self.skip_markers.suppresses(node.lineno):
                 self._add(node, "TBX008")
+        if self._is_reporter_call(node) and _names_secret(node):
+            self._add(node, "TBX009")
         self.generic_visit(node)
+
+    def _is_reporter_call(self, call: ast.Call) -> bool:
+        # Origin gate: the callee's name segment must be a declared reporter,
+        # bare or qualified. A same-named method on an unrelated object stays
+        # clean only when its name is not a declared sink.
+        name = _callee_name(call)
+        return name is not None and name in self.reporter_names
 
     def visit_Try(self, node: ast.Try) -> None:
         for handler in node.handlers:

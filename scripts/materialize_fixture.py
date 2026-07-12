@@ -32,14 +32,19 @@ func Do() {
 }
 """
 
-GO_ERC006 = """package pkgb
+# opengrep engine violation: exceptions-go (go-exit-in-recover). ERC006
+# fingerprint moved to native erclint, so opengrep no longer fires on a bare
+# capture call; this recover-then-exit is the surviving opengrep-owned rule.
+GO_EXIT_IN_RECOVER = """package pkgb
 
-import "context"
+import "os"
 
-func sentryErr(ctx context.Context, msg string, err error, tags map[string]string, key string) {}
-
-func Report(ctx context.Context, msg string, err error, tags map[string]string) {
-\tsentryErr(ctx, msg, err, tags, "user.token")
+func Guard() {
+\tdefer func() {
+\t\tif v := recover(); v != nil {
+\t\t\tos.Exit(2)
+\t\t}
+\t}()
 }
 """
 
@@ -86,7 +91,7 @@ def materialize(root: Path) -> None:
     (root / "pkga").mkdir()
     (root / "pkga" / "violate.go").write_text(GO_ERC001)
     (root / "pkgb").mkdir()
-    (root / "pkgb" / "secret.go").write_text(GO_ERC006)
+    (root / "pkgb" / "recover.go").write_text(GO_EXIT_IN_RECOVER)
     (root / "swallow.js").write_text(JS_SWALLOW)
     (root / "Handler.java").write_text(JAVA_SWALLOW)
     (root / "javasub").mkdir()

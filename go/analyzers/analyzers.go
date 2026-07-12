@@ -8,6 +8,7 @@ import (
 
 	"github.com/nikitatsym/tackbox/go/analyzers/doublecapture"
 	"github.com/nikitatsym/tackbox/go/analyzers/errcheck"
+	"github.com/nikitatsym/tackbox/go/analyzers/fingerprint"
 	"github.com/nikitatsym/tackbox/go/analyzers/parsenil"
 	"github.com/nikitatsym/tackbox/go/analyzers/recoverswallow"
 	"github.com/nikitatsym/tackbox/go/analyzers/returnnil"
@@ -16,8 +17,7 @@ import (
 )
 
 // All returns every native Go analyzer in the erclint ruleset. The order is
-// stable and matches rule codes ERC001..ERC005, ERC007 and ERC008. ERC006
-// (fingerprint) is enforced by opengrep, see cmd/erclint-opengrep.
+// stable and matches rule codes ERC001..ERC008.
 func All() []*analysis.Analyzer {
 	return []*analysis.Analyzer{
 		errcheck.Analyzer,
@@ -25,6 +25,7 @@ func All() []*analysis.Analyzer {
 		terminal.Analyzer,
 		returnnil.Analyzer,
 		doublecapture.Analyzer,
+		fingerprint.Analyzer,
 		recoverswallow.Analyzer,
 		skiptest.Analyzer,
 	}

@@ -42,7 +42,7 @@ func Main(name, version string, run Run) {
 	}
 	code, err := run(os.Args[1:], os.Stdout, os.Stderr)
 	if err != nil {
-		report.SentryErr(context.Background(), name+" wrapper failed", err, nil, name+".run")
+		report.SentryErr(context.Background(), name+" wrapper failed", err, map[string]string{"area": "wrapcli.run", "bin": name}, "wrapcli.run")
 		fmt.Fprintln(os.Stderr, name+":", err)
 		os.Exit(2)
 	}
