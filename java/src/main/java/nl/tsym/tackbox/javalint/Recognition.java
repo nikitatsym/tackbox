@@ -93,11 +93,25 @@ public final class Recognition {
                 || declaredCaptures(cu, call, caught);
     }
 
+    /** A call javalint recognizes as a capture SINK by origin - tier-1 logger
+     *  error/warn (slf4j, java.lang.System.Logger at ERROR/WARNING) or a tier-2
+     *  declared reporter - without the arg-flow gate {@link #captures} adds. The
+     *  set the fingerprint rule (JV008) scans: not catch-scoped, so every
+     *  recognized sink counts regardless of what reaches it. A printing terminal
+     *  is not a backend sink and is excluded. */
+    public boolean isCaptureSink(CompilationUnit cu, MethodCallExpr call) {
+        return slf4jSink(cu, call) || systemLoggerSink(cu, call) || declaredSink(cu, call);
+    }
+
     // --- tier-1: slf4j ------------------------------------------------------
 
     private boolean slf4jCaptures(CompilationUnit cu, MethodCallExpr call, String caught) {
+        return argFlows(call, caught) && slf4jSink(cu, call);
+    }
+
+    private boolean slf4jSink(CompilationUnit cu, MethodCallExpr call) {
         String m = call.getNameAsString();
-        if ((!m.equals("error") && !m.equals("warn")) || !argFlows(call, caught)) {
+        if (!m.equals("error") && !m.equals("warn")) {
             return false;
         }
         Origin o = callOrigin(cu, call).orElse(null);
@@ -112,7 +126,11 @@ public final class Recognition {
      *  error/warn-only gate is a resolved Level constant: ERROR/WARNING report,
      *  anything else (or a level the source can't prove constant) fails closed. */
     private boolean systemLoggerCaptures(CompilationUnit cu, MethodCallExpr call, String caught) {
-        if (!call.getNameAsString().equals("log") || !argFlows(call, caught)
+        return argFlows(call, caught) && systemLoggerSink(cu, call);
+    }
+
+    private boolean systemLoggerSink(CompilationUnit cu, MethodCallExpr call) {
+        if (!call.getNameAsString().equals("log")
                 || call.getArguments().isEmpty() || !isErrorOrWarning(cu, call.getArgument(0))) {
             return false;
         }
@@ -182,7 +200,11 @@ public final class Recognition {
     // --- tier-2: declared reporters -----------------------------------------
 
     private boolean declaredCaptures(CompilationUnit cu, MethodCallExpr call, String caught) {
-        if (reporters.isEmpty() || !argFlows(call, caught)) {
+        return argFlows(call, caught) && declaredSink(cu, call);
+    }
+
+    private boolean declaredSink(CompilationUnit cu, MethodCallExpr call) {
+        if (reporters.isEmpty()) {
             return false;
         }
         Origin o = callOrigin(cu, call).orElse(null);

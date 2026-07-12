@@ -142,8 +142,9 @@ absent and verifies the payload against it.
 ## What the rules enforce
 
 Covers ERC001-008 (Go, via `erclint` - including ERC006 fingerprint,
-resolved by capture origin), JV001-007 (Java, via the native `javalint`
-engine), Python exception, test-skip, and fingerprint rules (via the
+resolved by capture origin), JV001-008 (Java, via the native `javalint`
+engine, including JV008 fingerprint), Python exception, test-skip, and
+fingerprint rules (via the
 `pyrules` flake8 plugin), frontend swallow, test-skip, and fingerprint
 rules (JS, TS, Svelte, via ESLint), and Markdown (MD001-059 + ASCII).
 
@@ -171,7 +172,7 @@ outside this repo (private notes); the public summary:
 
 The same model is enforced beyond Go:
 
-- **Java** (`javalint`, JV001-006) on a typed javaparser AST: JV001
+- **Java** (`javalint`, JV001-008) on a typed javaparser AST: JV001
   swallow (every catch path must propagate, report, print, or carry
   `// no-report`), JV002 chain (a thrown exception must carry the
   caught as its cause), JV003 throwable (a catch of `Throwable` /
@@ -179,8 +180,10 @@ The same model is enforced beyond Go:
   rethrows the caught unchanged - deleted, not annotated), JV005 exit
   (`System.exit` in a catch needs a preceding capture; port of ERC003),
   JV006 double-capture (no path may both report and rethrow; port of
-  ERC005), and JV007 skip (`@Disabled` / `@Ignore` must carry a
-  non-empty reason string).
+  ERC005), JV007 skip (`@Disabled` / `@Ignore` must carry a
+  non-empty reason string), and JV008 fingerprint (a secret-named
+  argument reaching a capture sink - slf4j/System.Logger at
+  ERROR/WARNING or a declared reporter - is flagged; port of ERC006).
 - **Python** exception and test-skip rules ship as the `pyrules`
   flake8 plugin (`TBX` codes). A skip reason is accepted in any of
   the natural forms: `@pytest.mark.skip(reason=...)`,
@@ -278,7 +281,7 @@ go/
   report/                              # Go capture helper (Sentry/glitchtip)
 java/
   pom.xml                              # Maven module -> shaded javalint.jar
-  src/main/.../javalint/               # typed-AST analyzer (JV001-006)
+  src/main/.../javalint/               # typed-AST analyzer (JV001-008)
     rules/                             # per-rule checkers
 js/
   eslint-plugin.js                     # ESLint plugin entry

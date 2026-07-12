@@ -404,6 +404,20 @@ test('no-secret-in-report', () => {
       // tags whose string KEY and string VALUES contain domain nouns
       // (tokens.persist / userkey / session cookie) are literals -> clean.
       R + 'reportError("connection lost mid-stream", err, { "tokens.persist": count, area: "session cookie store" }, "api.lost")',
+      // tier-2: a .tackbox-reporters declared reporter with only clean args and
+      // domain-prose string literals stays clean (stop-words in the LITERAL only).
+      {
+        code: 'function myReport(m, e, t) {}\nmyReport("password reset cookie token expired mid-request", err, { area: "auth" })',
+        filename: 'svc.js',
+        settings: { tackbox: { reporters: ['svc.js#myReport'] } },
+      },
+      // origin gating holds under tier-2 settings: a NON-declared, non-tier-1
+      // function is not a reporter, so its secret-named arg is not scanned.
+      {
+        code: 'function notAReporter(m, e, t) {}\nnotAReporter(secretToken, err, { area: "api" })',
+        filename: 'svc.js',
+        settings: { tackbox: { reporters: ['svc.js#myReport'] } },
+      },
     ],
     invalid: [
       // secret-named identifier as the message (first) arg.
@@ -445,6 +459,30 @@ test('no-secret-in-report', () => {
       // scan still fires on report.reportError(secretToken, ...).
       {
         code: NS + 'report.reportError(secretToken, err, { area: "api" }, "api.lost")',
+        errors: [{ messageId: 'secretIdent' }],
+      },
+      // tier-2: a declared reporter called with a secret-named identifier in the
+      // message position is scrubbed (unknown signature -> all args scanned).
+      {
+        code: 'function myReport(m, e, t) {}\nmyReport(secretToken, err, { area: "api" })',
+        filename: 'svc.js',
+        settings: { tackbox: { reporters: ['svc.js#myReport'] } },
+        errors: [{ messageId: 'secretIdent' }],
+      },
+      // tier-2: secret nested inside a tag object value of a declared reporter.
+      {
+        code: 'function myReport(m, e, t) {}\nmyReport("connection lost mid-stream", err, { meta: { secret: y } })',
+        filename: 'svc.js',
+        settings: { tackbox: { reporters: ['svc.js#myReport'] } },
+        errors: [{ messageId: 'secretIdent' }],
+      },
+      // tier-2 import origin: a declared reporter reached through a single-hop
+      // relative import (svc.js#myReport) still resolves and gets scanned. tier-2
+      // resolves by import/local identity, not a namespace member like tier-1.
+      {
+        code: "import { myReport } from './svc'\nmyReport(secretToken, err, { area: 'api' })",
+        filename: 'app.js',
+        settings: { tackbox: { reporters: ['svc.js#myReport'] } },
         errors: [{ messageId: 'secretIdent' }],
       },
     ],
