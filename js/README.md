@@ -53,7 +53,6 @@ npx tackbox-eslint src/**/*.{ts,svelte}
 | `tackbox/no-console-error`         | banned; use `reportError`            |
 | `tackbox/valid-error-report`       | static msg + cause + tags + dedupKey |
 | `tackbox/valid-dedup-key`          | static `area.suffix[:identifier]`    |
-| `tackbox/no-secret-in-report`      | no secret-named args in reporter     |
 | `tackbox/no-throw-and-report`      | catch may not both throw and report  |
 | `tackbox/no-parse-fallback`        | JSON.parse catch must propagate err  |
 | `tackbox/ts-rethrow-without-cause` | `throw new` in catch needs `{cause}` |
@@ -84,8 +83,6 @@ Full constraints per rule:
   tags non-empty, dedupKey required.
 - `valid-dedup-key` - dedupKey must be a static literal in
   `area.suffix[:identifier]` form.
-- `no-secret-in-report` - reporter args must not reference
-  `token` / `password` / `key` / `secret` / `cookie`.
 - `no-throw-and-report` - `catch` may not both throw and report.
 - `no-parse-fallback` - a `try` containing `JSON.parse` must propagate
   the parse error on every `catch` path: `throw` the caught error
@@ -124,7 +121,7 @@ Names: `reportError`, `reportWarn`, `reportApiError`, `reportLayerError`
 
 Tier-1 covers named, renamed, default- or namespace-member, and CJS
 `require('tackbox/report')` forms. The strict argument contracts
-(`valid-error-report`, `valid-dedup-key`, `no-secret-in-report`) apply
+(`valid-error-report`, `valid-dedup-key`) apply
 to tier-1 calls; declared sinks carry only the argument-flow contract
 (the caught error must flow into the call).
 

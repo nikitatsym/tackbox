@@ -29,9 +29,6 @@ const REPORTER_SYNTH = new Set(['reportSynth', 'reportSynthError'])
 // Modules whose imports are trusted as reporter origins (tier-1).
 const TACKBOX_MODULES = new Set(['tackbox', 'tackbox/report'])
 
-// Stop-words for secret-named identifiers (case-insensitive substring).
-const SECRET_WORDS = ['token', 'password', 'key', 'secret', 'cookie']
-
 const DEDUP_KEY_RE = /^[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*(:[a-zA-Z0-9_.-]+)?$/
 
 function calleeName(node) {
@@ -252,8 +249,7 @@ function argFlows(call, errName) {
 // resolvesToDeclaredReporter: `call`'s callee resolves to a function declared in
 // `.tackbox-reporters` for its origin file. Pure origin recognition - the single
 // declared-reporter resolver. no-swallow layers an argument-flow gate on top
-// (the caught err must reach the call); no-secret-in-report scans all args of
-// every such call (a declared reporter is a capture sink at every call site).
+// (the caught err must reach the call).
 function resolvesToDeclaredReporter(context, call) {
   const decls = declaredReporters(context)
   if (decls.length === 0) return false
@@ -373,15 +369,6 @@ function hasMarkerAbove(context, node, prefix) {
     if (reason.length > 0) return true
   }
   return false
-}
-
-function matchesSecret(name) {
-  if (!name) return null
-  const lower = String(name).toLowerCase()
-  for (const w of SECRET_WORDS) {
-    if (lower.includes(w)) return w
-  }
-  return null
 }
 
 // --- F2b: path-sensitive no-swallow analysis -----------------------------
@@ -654,7 +641,6 @@ module.exports = {
   REPORTER_FULL,
   REPORTER_SYNTH,
   TACKBOX_MODULES,
-  SECRET_WORDS,
   DEDUP_KEY_RE,
   TEST_ROOTS,
   calleeName,
@@ -671,7 +657,6 @@ module.exports = {
   blockHasThrow,
   blockHasReport,
   hasMarkerAbove,
-  matchesSecret,
   enclosingFn,
   fnReturnsResultLike,
   someNode,

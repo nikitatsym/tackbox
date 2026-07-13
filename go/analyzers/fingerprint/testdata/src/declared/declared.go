@@ -6,14 +6,9 @@ import (
 )
 
 // myReport is declared in .tackbox-reporters (installed by the test). Its
-// signature is unknown to ERC006, so dedupkey never applies to it; secret-arg
-// and user-input still scrub its arguments.
+// signature is unknown to ERC006, so dedupkey never applies to it; user-input
+// still scrubs its arguments.
 func myReport(ctx context.Context, msg string, err error, key string) {}
-
-// secret-arg fires on a declared sink.
-func secretOnDeclared(ctx context.Context, err error, authToken string) {
-	myReport(ctx, authToken, err, "note") // want `ERC006: capture arg names a secret \(authToken\)`
-}
 
 // user-input fires on a declared sink.
 func userInputOnDeclared(ctx context.Context, err error, req *http.Request) {

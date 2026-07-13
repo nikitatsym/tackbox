@@ -21,7 +21,7 @@ uvx tackbox@latest lint .
 | ERC003 | terminal      | Fatal/Exit/die must capture or report|
 | ERC004 | returnnil     | bare nil return needs marker or pair |
 | ERC005 | doublecapture | no capture and `return err` together |
-| ERC006 | fingerprint   | capture args may not name secrets    |
+| ERC006 | fingerprint   | no raw user input; valid dedupKey    |
 | ERC007 | recoverswallow| recover must report or re-panic      |
 | ERC008 | skiptest      | skipped test must state a reason     |
 
@@ -53,7 +53,8 @@ Details per rule:
 - ERC005 `doublecapture` - a single err-branch may not both capture
   and `return err`.
 - ERC006 `fingerprint` - capture-call arguments (message, tags,
-  dedupKey) may not name secrets or carry raw user input.
+  dedupKey) may not carry raw user input; the dedupKey must be a
+  well-formed literal.
 - ERC007 `recoverswallow` - a `recover()` must report the recovered
   value (to `go/report` or a declared sink that receives it) or
   re-panic; a bare recover-and-continue needs `// no-report: <reason>`.
@@ -107,9 +108,6 @@ run - a dead file or symbol is a hard error.
 
 Propagation means `return ..., err`, `return err`, or `panic(err)`
 referencing the err identifier.
-
-Fingerprint stop-words (case-insensitive substring match on
-identifier names): `token`, `password`, `key`, `secret`, `cookie`.
 
 User-input expressions banned in capture arguments: `r.URL.Path`,
 `r.Header.Get(...)`, `req.Body` (and equivalent `*http.Request`

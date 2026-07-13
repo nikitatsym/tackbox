@@ -27,8 +27,8 @@ if err != nil {
 ```
 
 ```text
-client.go:42: ERC001: err-branch must propagate, capture, carry the
-error into a terminal exit, or carry `// no-report: <reason>` (err=err)
+client.go:42: ERC001: err-branch must propagate, capture, or carry
+the error into a terminal exit (err=err)
 ```
 
 One command brings the whole stack across Go, Python, Java, JS, TS,
@@ -59,8 +59,6 @@ its next run.
 - **Broken cause chains** - a new exception thrown from a `catch` that
   drops the original (only its message survives), erasing the stack
   you'd actually debug from.
-- **Leaked secrets** - a fingerprint or report argument that names a
-  secret or raw user input, quietly shipping tokens/PII into telemetry.
 - **Silently killed tests** - the `it.skip` with no explanation, the
   failing test reborn as `test.todo`, the `it.only` that quietly turns
   off the rest of the suite. Every skip must state a reason; focused
@@ -141,12 +139,10 @@ absent and verifies the payload against it.
 
 ## What the rules enforce
 
-Covers ERC001-008 (Go, via `erclint` - including ERC006 fingerprint,
-resolved by capture origin), JV001-008 (Java, via the native `javalint`
-engine, including JV008 fingerprint), Python exception, test-skip, and
-fingerprint rules (via the
-`pyrules` flake8 plugin), frontend swallow, test-skip, and fingerprint
-rules (JS, TS, Svelte, via ESLint), and Markdown (MD001-059 + ASCII).
+Covers ERC001-008 (Go, via `erclint`), JV001-007 (Java, via the native
+`javalint` engine), Python exception and test-skip rules (via the
+`pyrules` flake8 plugin), frontend swallow and test-skip rules (JS, TS,
+Svelte, via ESLint), and Markdown (MD001-060 + ASCII).
 
 See `go/README.md` for the Go ruleset. The specs these rules implement
 (`error-reporting-and-coverage`, `error-handling-frontend`) live
@@ -162,8 +158,8 @@ outside this repo (private notes); the public summary:
 - Bare `return nil` from a single-result function must carry
   `// nil-return: <reason>` or use `(val, ok)` / `(val, err)`.
 - A single err-branch may not both capture and `return err`.
-- Capture-call arguments (message, tags, dedupKey) must not reference
-  secret-named identifiers or raw user input.
+- Capture-call arguments must not carry raw user input, and the
+  dedupKey must be a well-formed literal.
 - A skipped test must state a reason: `t.Skip("why")` / `t.Skipf`, or
   `// test-skip: <reason>` above a bare `t.SkipNow()`. The same
   contract holds in every language (skip / todo / xfail /
@@ -172,7 +168,7 @@ outside this repo (private notes); the public summary:
 
 The same model is enforced beyond Go:
 
-- **Java** (`javalint`, JV001-008) on a typed javaparser AST: JV001
+- **Java** (`javalint`, JV001-007) on a typed javaparser AST: JV001
   swallow (every catch path must propagate, report, print, or carry
   `// no-report`), JV002 chain (a thrown exception must carry the
   caught as its cause), JV003 throwable (a catch of `Throwable` /
@@ -180,10 +176,8 @@ The same model is enforced beyond Go:
   rethrows the caught unchanged - deleted, not annotated), JV005 exit
   (`System.exit` in a catch needs a preceding capture; port of ERC003),
   JV006 double-capture (no path may both report and rethrow; port of
-  ERC005), JV007 skip (`@Disabled` / `@Ignore` must carry a
-  non-empty reason string), and JV008 fingerprint (a secret-named
-  argument reaching a capture sink - slf4j/System.Logger at
-  ERROR/WARNING or a declared reporter - is flagged; port of ERC006).
+  ERC005), and JV007 skip (`@Disabled` / `@Ignore` must carry a
+  non-empty reason string).
 - **Python** exception and test-skip rules ship as the `pyrules`
   flake8 plugin (`TBX` codes). A skip reason is accepted in any of
   the natural forms: `@pytest.mark.skip(reason=...)`,
@@ -285,7 +279,7 @@ java/
     rules/                             # per-rule checkers
 js/
   eslint-plugin.js                     # ESLint plugin entry
-  rules/                               # 12 frontend rules
+  rules/                               # 13 frontend rules
   markdownlint-rules/                  # custom markdownlint rules
   report.js                            # browser capture helper (@sentry/browser)
   tests/                               # RuleTester + node:test
