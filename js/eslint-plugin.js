@@ -10,7 +10,6 @@ const validErrorReport = require('./rules/valid-error-report')
 const noThrowAndReport = require('./rules/no-throw-and-report')
 const noParseFallback = require('./rules/no-parse-fallback')
 const validDedupKey = require('./rules/valid-dedup-key')
-const noSecretInReport = require('./rules/no-secret-in-report')
 const tsRethrowWithoutCause = require('./rules/ts-rethrow-without-cause')
 const tsUselessCatch = require('./rules/ts-useless-catch')
 const tsExitInCatch = require('./rules/ts-exit-in-catch')
@@ -26,7 +25,6 @@ const rules = {
   'no-throw-and-report': noThrowAndReport,
   'no-parse-fallback': noParseFallback,
   'valid-dedup-key': validDedupKey,
-  'no-secret-in-report': noSecretInReport,
   'ts-rethrow-without-cause': tsRethrowWithoutCause,
   'ts-useless-catch': tsUselessCatch,
   'ts-exit-in-catch': tsExitInCatch,

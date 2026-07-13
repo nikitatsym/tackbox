@@ -2,7 +2,6 @@ package fingerprint
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
 	"github.com/nikitatsym/tackbox/go/report"
@@ -19,12 +18,6 @@ func cleanBasic(ctx context.Context, err error) {
 	report.SentryErr(ctx, "auth failed", err, nil, "auth.creds")
 }
 
-// domain prose that merely contains "token" as free text in a string literal
-// is not an identifier - stays clean.
-func cleanProse(ctx context.Context, err error) {
-	report.SentryErr(ctx, "install: revoke after stash failed -- live token leak", err, nil, "install.revoke_after_fail")
-}
-
 // tags map with domain nouns as string-literal keys/values, plus a dedupKey
 // carrying the optional single :id - all literals, all clean.
 func cleanTags(ctx context.Context, err error) {
@@ -36,26 +29,10 @@ func cleanPanic(recovered any) {
 	report.Panic("worker", recovered)
 }
 
-// bare local SentryErr with a secret-named arg: does not resolve to the report
-// package, so it is never scanned.
-func cleanBareLocal(ctx context.Context, err error, authToken string) {
-	SentryErr(ctx, authToken, err, nil, "auth.creds")
-}
-
-// composite-literal TYPE name deep-contains a stop-word: a type carries no
-// secret value, so the type name must not fire.
-type KeyStore struct{}
-
-func cleanTypeNameCompositeLit(ctx context.Context, err error) {
-	report.SentryErr(ctx, "m", err, KeyStore{}, "a.b")
-}
-
-// type-conversion callee whose TYPE name deep-contains a stop-word: still a
-// type name, not a value expression - must not fire.
-type SecretText string
-
-func cleanTypeConversion(ctx context.Context, err error) {
-	report.SentryErr(ctx, SecretText("x"), err, nil, "a.b")
+// bare local SentryErr that does not resolve to the report package: it is
+// never a capture, so it is never scanned.
+func cleanBareLocal(ctx context.Context, err error, msg string) {
+	SentryErr(ctx, msg, err, nil, "auth.creds")
 }
 
 // ---- dedupkey (tier-1 report.SentryErr/Warn only) ----
@@ -78,43 +55,6 @@ func dedupBadFormat(ctx context.Context, err error) {
 // Warn is the other tier-1 helper: same dedupKey contract, no area.suffix here.
 func warnBadFormat(ctx context.Context, err error) {
 	report.Warn(ctx, "msg", err, nil, "auth") // want `ERC006: dedupKey must match area.suffix`
-}
-
-// ---- secret-arg (any recognized reporter) ----
-
-func secretMessage(ctx context.Context, err error, authToken string) {
-	report.SentryErr(ctx, authToken, err, nil, "auth.fail") // want `ERC006: capture arg names a secret \(authToken\)`
-}
-
-func secretInterpolated(ctx context.Context, err error, apiKey string) {
-	report.SentryErr(ctx, fmt.Sprintf("refresh failed for %s", apiKey), err, nil, "auth.refresh") // want `ERC006: capture arg names a secret \(apiKey\)`
-}
-
-func secretInTags(ctx context.Context, err error, sessionToken string) {
-	report.SentryErr(ctx, "auth failed", err, map[string]string{"tok": sessionToken}, "auth.fail") // want `ERC006: capture arg names a secret \(sessionToken\)`
-}
-
-func secretConcat(ctx context.Context, err error, authToken string) {
-	report.SentryErr(ctx, "bad credential: "+authToken, err, nil, "auth.concat") // want `ERC006: capture arg names a secret \(authToken\)`
-}
-
-// secret-named selector as dedupKey: secret-arg and not-a-literal both fire.
-func secretSelectorDedup(ctx context.Context, err error) {
-	var cfg struct{ Secret string }
-	report.SentryErr(ctx, "x", err, nil, cfg.Secret) // want `ERC006: capture arg names a secret \(Secret\)` `ERC006: dedupKey must be a string literal`
-}
-
-// secret-arg fires on a Panic reporter too.
-func secretOnPanic(apiKey string) {
-	report.Panic("worker", apiKey) // want `ERC006: capture arg names a secret \(apiKey\)`
-}
-
-// secret-named function call as an arg: the callee is a value (func), so it
-// still fires - the retired opengrep rule matched call callees, keep that.
-func getSecret() string { return "" }
-
-func secretFuncCall(ctx context.Context, err error) {
-	report.SentryErr(ctx, getSecret(), err, nil, "auth.fn") // want `ERC006: capture arg names a secret \(getSecret\)`
 }
 
 // ---- user-input (any recognized reporter) ----

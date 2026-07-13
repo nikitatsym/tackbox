@@ -93,16 +93,6 @@ public final class Recognition {
                 || declaredCaptures(cu, call, caught);
     }
 
-    /** A call javalint recognizes as a capture SINK by origin - tier-1 logger
-     *  error/warn (slf4j, java.lang.System.Logger at ERROR/WARNING) or a tier-2
-     *  declared reporter - without the arg-flow gate {@link #captures} adds. The
-     *  set the fingerprint rule (JV008) scans: not catch-scoped, so every
-     *  recognized sink counts regardless of what reaches it. A printing terminal
-     *  is not a backend sink and is excluded. */
-    public boolean isCaptureSink(CompilationUnit cu, MethodCallExpr call) {
-        return slf4jSink(cu, call) || systemLoggerSink(cu, call) || declaredSink(cu, call);
-    }
-
     // --- tier-1: slf4j ------------------------------------------------------
 
     private boolean slf4jCaptures(CompilationUnit cu, MethodCallExpr call, String caught) {

@@ -1,15 +1,13 @@
 // Package fingerprint implements ERC006: a capture call's arguments must not
-// leak secrets or raw user input into telemetry, and a tier-1 go/report
-// SentryErr/Warn call must carry a well-formed dedupKey.
+// leak raw user input into telemetry, and a tier-1 go/report SentryErr/Warn
+// call must carry a well-formed dedupKey.
 //
 // A capture is recognized by ORIGIN, not by name: the callee must resolve
 // (type info) to the go/report package (SentryErr/Warn/Panic) or to a
 // `.tackbox-reporters`-declared sink. A bare local `SentryErr` that shares
 // the name but not the origin is not a capture and is never scanned.
 //
-// Three checks, mirroring the retired opengrep rules:
-//   - secret-arg (any recognized reporter): no argument may deep-contain an
-//     identifier or selector whose name matches a stop-word.
+// Two checks, mirroring the retired opengrep rules:
 //   - user-input (any recognized reporter): no argument may carry raw
 //     *http.Request input (`r.URL.Path`, `r.Header.Get(...)`, `r.Body`).
 //   - dedupkey (tier-1 SentryErr/Warn only - the known 5-arg signature): the
@@ -23,7 +21,6 @@ import (
 	"go/types"
 	"regexp"
 	"strconv"
-	"strings"
 
 	"golang.org/x/tools/go/analysis"
 
@@ -32,13 +29,9 @@ import (
 
 var Analyzer = &analysis.Analyzer{
 	Name: "fingerprint",
-	Doc:  "ERC006: capture args must not leak secrets or raw user input; dedupKey must be a well-formed literal",
+	Doc:  "ERC006: capture args must not leak raw user input; dedupKey must be a well-formed literal",
 	Run:  run,
 }
-
-// stopWords are matched case-insensitively as a substring of an identifier
-// name (README: token/password/key/secret/cookie).
-var stopWords = []string{"token", "password", "key", "secret", "cookie"}
 
 // dedupKeyRE is area.suffix[:id], lowercase, single optional `:identifier`.
 var dedupKeyRE = regexp.MustCompile(`^[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*(:[a-zA-Z0-9_.-]+)?$`)
@@ -62,51 +55,12 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	return nil, nil
 }
 
-// checkArg reports a secret-named identifier and raw *http.Request input found
-// anywhere in one argument's subtree. Both are independent findings.
+// checkArg reports raw *http.Request input found anywhere in one argument's
+// subtree.
 func checkArg(pass *analysis.Pass, arg ast.Expr) {
-	if name, ok := secretIdent(pass.TypesInfo, arg); ok {
-		pass.Reportf(arg.Pos(), "ERC006: capture arg names a secret (%s)", name)
-	}
 	if desc, ok := userInput(pass.TypesInfo, arg); ok {
 		pass.Reportf(arg.Pos(), "ERC006: capture arg carries raw *http.Request input (%s)", desc)
 	}
-}
-
-// secretIdent returns the first value identifier in arg whose name deep-contains
-// a stop-word. Type and package names denote no value, so they cannot leak a
-// secret; string literals are not identifiers - domain prose stays clean.
-func secretIdent(info *types.Info, arg ast.Expr) (string, bool) {
-	var name string
-	found := false
-	ast.Inspect(arg, func(n ast.Node) bool {
-		if found {
-			return false
-		}
-		id, ok := n.(*ast.Ident)
-		if !ok || !matchesStopWord(id.Name) {
-			return true
-		}
-		// A composite-literal type name or type-conversion/package callee is
-		// not a value expression - skip it, keep var/field/func callees.
-		switch info.ObjectOf(id).(type) {
-		case *types.TypeName, *types.PkgName:
-			return true
-		}
-		name, found = id.Name, true
-		return false
-	})
-	return name, found
-}
-
-func matchesStopWord(name string) bool {
-	lower := strings.ToLower(name)
-	for _, w := range stopWords {
-		if strings.Contains(lower, w) {
-			return true
-		}
-	}
-	return false
 }
 
 // userInput returns a description of the first raw *http.Request expression in
