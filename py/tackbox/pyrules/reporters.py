@@ -1,9 +1,11 @@
 """Tier-2 `.tackbox-reporters` resolution for the python engine.
 
-Ports the Go/JS contract the opengrep tier could not: resolve each declared
-`file#func` to a module-level `def` in that file, treat a dead symbol as a
-hard error (exit 2, scope-independent), and count a call to the declared name
-as a capture only when the caught error flows into the call's arguments.
+Unlike Go/JS/Java, which resolve a call's callee back to the declaring file,
+the flake8/ast layer has no cross-module type info: a declared `file#func` is
+validated to have a module-level `def` in that file (a dead symbol is a hard
+error, exit 2, scope-independent), but recognition at call sites is by the
+declared NAME - any same-named call, from any module, counts, and only when
+the caught error flows into its arguments.
 """
 
 from __future__ import annotations

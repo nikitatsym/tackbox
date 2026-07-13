@@ -662,8 +662,9 @@ _PY_EXTS = frozenset([".py"])
 _JAVA_EXTS = frozenset([".java"])
 # Extensions matched by any bundled opengrep rule. Go-only now: the sole
 # surviving rule is exceptions-go (go-exit-in-recover). Every other language's
-# rules resolve reporters by origin in their own engine - erclint (Go ERC006),
-# pyrules (Python), eslint (JS/TS) - so opengrep no longer scans py/js/ts.
+# rules handle reporter recognition in their own engine - erclint (Go ERC006,
+# by origin), eslint (JS/TS, by origin), pyrules (Python, by declared name) -
+# so opengrep no longer scans py/js/ts.
 _OPENGREP_EXTS = _GO_EXTS
 # jscpd tokenizes go/py/java and the JS family (svelte included); markdown is
 # excluded as noise (prose duplication is not a defect).
