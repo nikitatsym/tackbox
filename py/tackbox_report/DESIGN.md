@@ -24,7 +24,8 @@ report_error(msg, cause=None, tags=None, dedup_key="") -> None  # error
 report_warn(msg, cause=None, tags=None, dedup_key="") -> None   # warning
 report_panic(name, recovered) -> None       # fatal, fingerprint panic:<name>
 crumb(category, message, data=None) -> None
-run_task(name, fn, *, daemon=False, join=False) -> Thread   # GoSafe analog
+run_task(name, fn, *, daemon=False, join=False) -> Thread   # GoSafe, threads
+run_task_async(name, coro) -> asyncio.Task                  # GoSafe, asyncio
 ```
 
 Invariants carried over verbatim from `go/report`:
@@ -41,9 +42,11 @@ Invariants carried over verbatim from `go/report`:
   via a `Lock`, `time.monotonic`); the same key is the Sentry fingerprint. Empty
   key is never limited.
 - **Per-name fingerprints (D002):** `panic:<name>` for `report_panic`,
-  `task:<name>` for `run_task`, built directly from the name.
+  `task:<name>` for `run_task` and `run_task_async`, built directly from the
+  name.
 - **Concurrency-isolated capture (D003):** every capture site runs inside
   `sentry_sdk.new_scope()`; `run_task` additionally forks a per-thread
+  `sentry_sdk.isolation_scope()`, and `run_task_async` forks a per-asyncio-task
   `sentry_sdk.isolation_scope()`.
 
 ## sentry-sdk version + isolation API
@@ -65,6 +68,22 @@ Invariants carried over verbatim from `go/report`:
   contextvars, so without an explicit fork a spawned thread would capture
   against the process-global scopes; the isolation fork makes the thread's
   breadcrumbs/tags its own.
+- **asyncio isolation (`run_task_async`).** In 2.x the scopes live in
+  contextvars. `asyncio.create_task` snapshots the current context
+  (`contextvars.copy_context()`) at creation, but that copy *shares the same
+  Scope objects* with the parent -- so bare tasks that mutate the current /
+  isolation scope bleed into siblings. `run_task_async` runs its coroutine
+  inside `with sentry_sdk.isolation_scope():`; because each task executes in its
+  own copied context, the fork rebinds the isolation-scope contextvar within
+  that task only, giving per-task isolation -- the asyncio analog of the
+  per-thread fork. This matches what sentry-sdk 2.x documents (its optional
+  `AsyncioIntegration` installs a task factory to fork per task); we fork
+  explicitly inside the wrapper instead, so a consumer needs no integration
+  wiring. Verified empirically on **2.64.0** and by
+  `test_concurrent_run_tasks_async_no_scope_bleed`: 16 tasks that each set a tag
+  on their isolation scope, yield, then fail -- 16 distinct `task:<name>`
+  fingerprints, zero tag bleed. Without the fork the same 16 collapse to one
+  fingerprint (the shared scope's last writer).
 - `Scope.fingerprint` is a settable **property** in 2.x (`scope.fingerprint =
   [key]`); there is no `set_fingerprint` method. Level/tags/context use
   `set_level` / `set_tag` / `set_context`.
@@ -99,33 +118,71 @@ Two sub-forks inside this:
     returned errors only. Rejected for the first cut because it contradicts the
     brief and because a raised exception is Python's *normal* failure mode (not
     an exceptional "panic"), so grouping it as fatal would over-signal.
-- **Concurrency model.** Only the threading model is implemented. **Deferred:**
-  an `asyncio` analog (`run_task_async` / a `create_task` wrapper that captures
-  under `task:<name>` and isolates via `isolation_scope()` inside the coroutine).
-  Python has both models and a real consumer may be async-first; this is the
-  most likely follow-up. Also deferred: whether `run_task` should default to
-  `daemon=True` (goroutines die with the process) vs `daemon=False` (current
-  default -- the task and its capture/flush complete). Current default is
-  `daemon=False` to avoid losing an in-flight capture.
+- **Concurrency model.** Both models are implemented: `run_task` (threads) and
+  `run_task_async` (asyncio). Python has both worlds and a consumer may be
+  async-first, so the wrapper is offered for each; failure routing, `task:<name>`
+  fingerprint, rate limit, and log-before-drop are identical across the two.
+  - **Schedule vs await (asyncio).** `run_task_async` schedules
+    **fire-and-forget** via `asyncio.create_task` and returns the
+    `asyncio.Task` -- the same shape as `run_task` returning its `Thread`.
+    `await`-ing the returned task is the join analog (mirror of
+    `run_task(..., join=True)`); a failure is captured, never re-raised, so the
+    await completes rather than propagating. A separate await-inline entry point
+    was rejected as redundant: `await report.run_task_async(...)` already is the
+    inline path, so one function covers both. An `asyncio.CancelledError`
+    (a `BaseException`, not caught by the wrapper's `except Exception`)
+    propagates and is not reported -- cancellation is not a task failure, and it
+    must reach the awaiter. Must be called from within a running event loop;
+    outside one `create_task` raises `RuntimeError` (fail loud, no fallback).
+  - **daemon default (threads).** Deferred: whether `run_task` should default to
+    `daemon=True` (goroutines die with the process) vs `daemon=False` (current
+    default -- the task and its capture/flush complete). Current default is
+    `daemon=False` to avoid losing an in-flight capture.
 
 ### 2. Packaging + name
 
-**Chosen default:** distribution name **`tackbox-report`** (the deferred idea),
+**Finalized as a PyPI-ready distribution.** Distribution **`tackbox-report`**,
 import package `tackbox_report`, living at `py/tackbox_report/` with its own
-standalone `pyproject.toml`. It is **not** added to any publish config, CI, or
-the `py/pyproject.toml` linter dependencies -- nothing ships from this cut.
+standalone `pyproject.toml`:
 
-Intended shape when/if promoted (for the user to decide):
-
-- A separate PyPI distribution `tackbox-report` (runtime dep: `sentry-sdk>=2`),
-  parallel to how `go/report` is a sub-package of the Go module and
-  `js/report.js` a JS file. The linter (`tackbox`) and the runtime helper stay
-  separate distributions so a repo can depend on the helper without pulling
-  flake8, and vice versa.
+- Build backend `setuptools.build_meta` (`setuptools>=68`, `wheel`).
+- Complete metadata: `name`, `version = "0.0.0"`, `description`, `readme`
+  (`README.md`, the PyPI long description), `license = MIT`, `authors`,
+  `requires-python = ">=3.11"`, `keywords`, `project.urls`, and trove
+  `classifiers` (Alpha, MIT, OS-independent, Python 3.11-3.13, Typing :: Typed).
+- Runtime dependency **`sentry-sdk>=2.0,<3.0`**. The floor is 2.0 (the forking
+  scope API `new_scope` / `isolation_scope` this helper is built on landed in
+  2.0); the `<3.0` cap is deliberate, because that exact API is what changed
+  across the 1.x -> 2.x major, so D003 isolation is a 2.x contract.
+- Ships a PEP 561 `py.typed` marker (the module is fully type-hinted), included
+  in the wheel via `tool.setuptools.package-data`.
+- **Separate from the `tackbox` linter wheel** and does not depend on it: a repo
+  depends on the helper without pulling flake8, and on the linter without
+  pulling sentry-sdk. Parallel to how `go/report` is a sub-package of the Go
+  module and `js/report.js` a JS file.
   - *Alternative:* fold it into the existing `tackbox` wheel as
     `tackbox.report`. Rejected: it would put `sentry-sdk` on the linter's
     dependency closure (every `uvx tackbox` lint run would resolve sentry), and
     couple runtime-capture releases to linter releases.
+
+Verified locally: `python -m build` produces the sdist + wheel and `twine check`
+passes both; the wheel contains `tackbox_report/__init__.py` and
+`tackbox_report/py.typed`.
+
+#### Publishing -- still to do (NOT done here)
+
+Nothing is published and nothing is wired into CI. The publish step still needs:
+
+- Build the artifacts with `python -m build` (produces `dist/*.whl` +
+  `dist/*.tar.gz`).
+- PyPI credentials -- prefer a **Trusted Publisher** (OIDC) for the
+  `tackbox-report` project over a long-lived API token.
+- A **CI job** (separate from the linter's release job, since these are
+  independent distributions) that builds and uploads on a tag, e.g.
+  `twine upload` / `pypa/gh-action-pypi-publish`.
+- Bump `version` off `0.0.0` for the first real release; each helper release is
+  pinned in consumer manifests, so signatures must not break without a consumer
+  pass (see the plan).
 
 ### 3. Linter recognition (pyrules is NAME-based)
 
@@ -147,9 +204,16 @@ Consequences for recognizing `tackbox_report` as a reporter:
   resolution.
 - This cut does **not** change pyrules and does **not** add a
   `.tackbox-reporters` entry (out of scope: "do not touch the linter"). The
-  helper is written so its own internal capture core passes the linter today
-  (the `run_task` background boundary uses the project's `# no-report:` marker,
-  exactly as `go/report`'s `GoSafe`/`maskDSN` use `// no-report:`).
+  helper is written so its own internal capture core passes the linter today.
+  Both background-task wrappers route a caught exception through
+  `_report_task_failure` (which calls the capture core, not one of the
+  recognized `report_*` names), so each carries a `# no-report:` marker on its
+  `except` -- `run_task` in `__init__.py` and now `run_task_async` -- exactly as
+  `go/report`'s `GoSafe`/`maskDSN` use `// no-report:`. **Both markers are
+  removed once pyrules recognizes the helper's capture API** (plan step 1,
+  name-based tier-1 recognition of the `tackbox_report` capture functions): the
+  background boundary then stops being a TBX001 false positive. Until then the
+  markers are load-bearing for the scoped self-lint.
 - *Alternative to raise later:* a first-party tier-1 recognition of
   `tackbox_report`'s reporter names baked into pyrules (like the built-in Go
   origin check), so consumers need no `.tackbox-reporters` line. Still

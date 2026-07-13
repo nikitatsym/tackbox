@@ -28,11 +28,12 @@ for the load-bearing forks.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import threading
 import time
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Coroutine, Mapping, Optional
 from urllib.parse import urlparse
 
 import sentry_sdk
@@ -49,6 +50,7 @@ __all__ = [
     "report_panic",
     "crumb",
     "run_task",
+    "run_task_async",
 ]
 
 # ---------------------------------------------------------------------------
@@ -291,7 +293,7 @@ def crumb(
 
 
 # ---------------------------------------------------------------------------
-# Background-task wrapper (GoSafe analog) -- threading model (see DESIGN.md #1)
+# Background-task wrapper (GoSafe analog): threading + asyncio (see DESIGN.md #1)
 # ---------------------------------------------------------------------------
 def run_task(
     name: str,
@@ -326,6 +328,43 @@ def run_task(
     if join:
         t.join()
     return t
+
+
+def run_task_async(
+    name: str,
+    coro: Coroutine[Any, Any, Optional[BaseException]],
+) -> asyncio.Task[None]:
+    """Run ``coro`` as a background asyncio task under capture (asyncio analog of
+    run_task; the async arm of Go's GoSafe intent).
+
+    A raised exception OR a returned exception (mirroring Go's ``func() error``)
+    is captured under the per-name fingerprint ``task:<name>``, rate-limited per
+    name, log-before-drop preserved -- identical routing to run_task. The
+    coroutine runs inside a per-task ``sentry_sdk.isolation_scope()`` fork: each
+    asyncio task runs in its own copied context, so this fork isolates the task's
+    scope (D003) the way the per-thread fork does for run_task -- concurrent
+    tasks cannot bleed scope/fingerprint into one another.
+
+    Scheduled fire-and-forget via ``asyncio.create_task``; the returned
+    ``asyncio.Task`` is the join analog (``await`` it to wait). A failure is
+    captured, never re-raised, so awaiting mirrors ``run_task(..., join=True)``.
+    An ``asyncio.CancelledError`` propagates (it is not a task failure). Must be
+    called from within a running event loop.
+    """
+
+    async def _run() -> None:
+        with sentry_sdk.isolation_scope():
+            try:
+                result = await coro
+            except Exception as exc:
+                # no-report: background boundary; the failure is captured under
+                # task:<name> by _report_task_failure, not swallowed
+                _report_task_failure(name, exc)
+                return
+            if isinstance(result, BaseException):
+                _report_task_failure(name, result)
+
+    return asyncio.create_task(_run(), name=f"tackbox-task:{name}")
 
 
 def _report_task_failure(name: str, exc: BaseException) -> None:

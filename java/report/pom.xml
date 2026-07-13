@@ -4,19 +4,51 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <!-- FIRST-CUT runtime capture helper. Standalone module: NOT part of any
-       reactor, NOT shaded into javalint.jar, NOT published. Build/test it on
-       its own with `mvn -f java/report/pom.xml test`. Kept fully separate from
-       the javalint linter so its build is undisturbed. -->
+  <!-- Runtime capture helper. Standalone module: NOT part of any reactor, NOT
+       shaded into javalint.jar. Build/test it on its own with
+       `mvn -f java/report/pom.xml test`; `package` emits an OSGi bundle jar.
+       Kept fully separate from the javalint linter so its build is undisturbed.
+       packaging=bundle is driven by maven-bundle-plugin (extensions=true). -->
   <groupId>nl.tsym.tackbox</groupId>
   <artifactId>report</artifactId>
-  <version>0.0.0</version>
-  <packaging>jar</packaging>
+  <version>0.1.0</version>
+  <packaging>bundle</packaging>
+
+  <name>tackbox report (Java)</name>
+  <description>Runtime error-capture helper wrapping sentry-java with the
+    tackbox error-reporting API (error/warn/panic/crumb, per-name fingerprints,
+    log-before-drop, concurrency-isolated capture). Empty DSN = log-only no-op.
+    Java mirror of go/report and js/report.js.</description>
+  <url>https://github.com/nikitatsym/tackbox</url>
+
+  <licenses>
+    <license>
+      <name>MIT License</name>
+      <url>https://opensource.org/licenses/MIT</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <developers>
+    <developer>
+      <id>nikitatsym</id>
+      <name>Nikita Tsymbal</name>
+      <email>nikita.tsym@gmail.com</email>
+    </developer>
+  </developers>
+
+  <scm>
+    <connection>scm:git:https://github.com/nikitatsym/tackbox.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/nikitatsym/tackbox.git</developerConnection>
+    <url>https://github.com/nikitatsym/tackbox</url>
+  </scm>
 
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <sentry.version>7.22.6</sentry.version>
+    <!-- Reproducible bundle: pin all archive entry timestamps. -->
+    <project.build.outputTimestamp>2020-01-01T00:00:00Z</project.build.outputTimestamp>
+    <sentry.version>8.47.0</sentry.version>
     <junit.version>5.11.4</junit.version>
   </properties>
 
@@ -45,6 +77,58 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.5.2</version>
+      </plugin>
+
+      <!-- OSGi bundle: emit MANIFEST.MF with Bundle-SymbolicName /
+           Export-Package / Import-Package for the Eclipse/Equinox (sts-wand)
+           stack. sentry-java 8.x ships NO OSGi manifest, so it is imported here
+           and the consumer supplies it as a bundle (see DESIGN.md "OSGi + the
+           sentry-java dependency"); the Embed-Dependency alternative is
+           documented there. java.* (System.Logger) is boot-delegated and never
+           an OSGi import, so it needs no Import-Package entry. -->
+      <plugin>
+        <groupId>org.apache.felix</groupId>
+        <artifactId>maven-bundle-plugin</artifactId>
+        <version>5.1.9</version>
+        <extensions>true</extensions>
+        <configuration>
+          <instructions>
+            <Bundle-SymbolicName>nl.tsym.tackbox.report</Bundle-SymbolicName>
+            <Bundle-Name>tackbox report (Java)</Bundle-Name>
+            <Export-Package>nl.tsym.tackbox.report;version="${project.version}"</Export-Package>
+            <Import-Package>io.sentry.*;version="[8,9)",*</Import-Package>
+          </instructions>
+        </configuration>
+      </plugin>
+
+      <!-- Maven Central requires source + javadoc jars alongside the main
+           artifact. GPG signing and the Central publish step are NOT wired
+           here (see DESIGN.md "Maven Central publish"). -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-source-plugin</artifactId>
+        <version>3.3.1</version>
+        <executions>
+          <execution>
+            <id>attach-sources</id>
+            <goals>
+              <goal>jar-no-fork</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-javadoc-plugin</artifactId>
+        <version>3.11.2</version>
+        <executions>
+          <execution>
+            <id>attach-javadocs</id>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+          </execution>
+        </executions>
       </plugin>
     </plugins>
   </build>

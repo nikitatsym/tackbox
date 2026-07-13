@@ -1,18 +1,23 @@
 package nl.tsym.tackbox.report;
 
 import io.sentry.Breadcrumb;
-import io.sentry.IHub;
 import io.sentry.Sentry;
 import io.sentry.SentryLevel;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.net.URI;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Runtime capture helper: a thin wrapper over sentry-java with the API the
@@ -20,10 +25,15 @@ import java.util.concurrent.ConcurrentHashMap;
  * the API before any Glitchtip endpoint exists. Java mirror of go/report and
  * js/report.js.
  *
- * <p>Concurrency isolation (DECISIONS D003): every capture clones the current
- * hub before setting scope and shipping, so concurrent captures from background
- * threads never bleed scope/fingerprint into each other. This is the sentry-java
- * analog of go/report's {@code sentry.CurrentHub().Clone()}.
+ * <p>Concurrency isolation (DECISIONS D003): every capture ships through
+ * sentry-java 8.x's scope-callback overload ({@code Sentry.captureException(t,
+ * scope -> ...)} / {@code Sentry.captureMessage(msg, scope -> ...)}), which
+ * applies the fingerprint/tags to a per-event local scope forked from the
+ * current one - never mutating shared scope - so concurrent captures from
+ * background threads cannot bleed into each other. This is the 8.x Scopes-API
+ * analog of go/report's {@code sentry.CurrentHub().Clone()}; the 7.x
+ * {@code IHub.clone()} + {@code hub.withScope} idiom it replaces was removed
+ * when 8.x retired the Hub model.
  */
 public final class Report {
 
@@ -59,6 +69,13 @@ public final class Report {
             sentry.setRelease(opts.release);
             sentry.setEnvironment(opts.environment);
             sentry.setDebug(opts.debug);
+            // sentry-java 8.x installs its own default uncaught handler on init
+            // (fatal, default grouping, no rate limit). This helper owns the
+            // uncaught story via installUncaughtHandler() - opt-in, per-name
+            // panic:<name> fingerprint, log-before-drop, rate-limited - and
+            // mirrors go/report, which installs no global handler on init.
+            // Leaving sentry's on would also double-capture when ours wraps it.
+            sentry.setEnableUncaughtExceptionHandler(false);
             if (opts.beforeSend != null) {
                 sentry.setBeforeSend(opts.beforeSend);
             }
@@ -99,12 +116,10 @@ public final class Report {
         if (!ready) {
             throw new ReportInitException("report.verify: not initialized");
         }
-        IHub hub = Sentry.getCurrentHub().clone();
-        hub.withScope(scope -> {
+        Sentry.captureMessage("report.verify", scope -> {
             scope.setLevel(SentryLevel.INFO);
             scope.setFingerprint(List.of("report.startup"));
             scope.setTag("healthcheck", "true");
-            hub.captureMessage("report.verify");
         });
         Sentry.flush(timeoutMillis);
     }
@@ -155,12 +170,10 @@ public final class Report {
         if (shouldDrop(key)) {
             return;
         }
-        IHub hub = Sentry.getCurrentHub().clone();
-        hub.withScope(scope -> {
+        Sentry.captureException(t, scope -> {
             scope.setLevel(SentryLevel.FATAL);
             scope.setTag("source", name);
             scope.setFingerprint(List.of(key));
-            hub.captureException(t);
         });
     }
 
@@ -224,10 +237,167 @@ public final class Report {
         capture("background task failed", t, Map.of("task", name), "task:" + name, SentryLevel.ERROR);
     }
 
+    // --- installers: uncaught handler + executor wrapper --------------------
+    // The deferred goSafe surface for the executor/thread world. The wrappers
+    // reuse the same report-and-swallow core (task:<name>) and per-name panic
+    // fingerprints (panic:<name>) as safeRunnable/panic, so nothing new about
+    // grouping or rate-limiting is introduced here.
+
+    private static final Object installLock = new Object();
+    private static volatile Thread.UncaughtExceptionHandler ourUncaughtHandler;
+    private static volatile Thread.UncaughtExceptionHandler priorUncaughtHandler;
+
+    /** Route every thread's uncaught throwable through panic(threadName, t),
+     *  fingerprint panic:&lt;threadName&gt; (D002). Idempotent: a second call
+     *  while installed is a no-op, never a double-wrap. Restorable: the handler
+     *  present at install time is chained after our capture and restored by
+     *  uninstallUncaughtHandler(), so a pre-existing handler is never lost. */
+    public static void installUncaughtHandler() {
+        synchronized (installLock) {
+            Thread.UncaughtExceptionHandler current = Thread.getDefaultUncaughtExceptionHandler();
+            if (ourUncaughtHandler != null && current == ourUncaughtHandler) {
+                return;
+            }
+            Thread.UncaughtExceptionHandler prior = current;
+            priorUncaughtHandler = prior;
+            Thread.UncaughtExceptionHandler handler = (thread, throwable) -> {
+                panic(thread.getName(), throwable);
+                if (prior != null) {
+                    prior.uncaughtException(thread, throwable);
+                }
+            };
+            ourUncaughtHandler = handler;
+            Thread.setDefaultUncaughtExceptionHandler(handler);
+        }
+    }
+
+    /** Restore the default uncaught handler present before installUncaughtHandler().
+     *  No-op when ours is not the current default. */
+    public static void uninstallUncaughtHandler() {
+        synchronized (installLock) {
+            if (ourUncaughtHandler == null) {
+                return;
+            }
+            if (Thread.getDefaultUncaughtExceptionHandler() == ourUncaughtHandler) {
+                Thread.setDefaultUncaughtExceptionHandler(priorUncaughtHandler);
+            }
+            ourUncaughtHandler = null;
+            priorUncaughtHandler = null;
+        }
+    }
+
+    /** Wrap an ExecutorService so every task it runs is captured under
+     *  task:&lt;name&gt; (report-and-swallow, like safeRunnable) instead of
+     *  vanishing into an unobserved Future. execute + submit are wrapped;
+     *  invokeAll / invokeAny delegate unwrapped - they hand results (and
+     *  exceptions) straight back to the caller, who captures at their own single
+     *  site, so wrapping them would double-capture (JV006). Double-wrapping a
+     *  safeRunnable is safe: the inner catch fires first, so the outer never
+     *  re-captures. */
+    public static ExecutorService wrap(String name, ExecutorService delegate) {
+        return new CapturingExecutorService(name, delegate);
+    }
+
+    // The Callable path for the executor wrapper: unlike public safeCallable
+    // (Callable<Optional<T>>), it must keep the ExecutorService contract's
+    // Future<T>, so a captured failure yields null rather than Optional.empty().
+    // Same report-and-swallow core; the local log stays at the catch site.
+    private static <T> Callable<T> guardedCallable(String name, Callable<T> body) {
+        return () -> {
+            try {
+                return body.call();
+            } catch (Exception e) {
+                log.log(Level.ERROR, "background task '" + name + "' failed", e);
+                shipTaskError(name, e);
+                return null;
+            }
+        };
+    }
+
+    private static final class CapturingExecutorService implements ExecutorService {
+        private final String name;
+        private final ExecutorService delegate;
+
+        CapturingExecutorService(String name, ExecutorService delegate) {
+            this.name = name;
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void execute(Runnable command) {
+            delegate.execute(safeRunnable(name, command));
+        }
+
+        @Override
+        public Future<?> submit(Runnable task) {
+            return delegate.submit(safeRunnable(name, task));
+        }
+
+        @Override
+        public <T> Future<T> submit(Runnable task, T result) {
+            return delegate.submit(safeRunnable(name, task), result);
+        }
+
+        @Override
+        public <T> Future<T> submit(Callable<T> task) {
+            return delegate.submit(guardedCallable(name, task));
+        }
+
+        @Override
+        public void shutdown() {
+            delegate.shutdown();
+        }
+
+        @Override
+        public List<Runnable> shutdownNow() {
+            return delegate.shutdownNow();
+        }
+
+        @Override
+        public boolean isShutdown() {
+            return delegate.isShutdown();
+        }
+
+        @Override
+        public boolean isTerminated() {
+            return delegate.isTerminated();
+        }
+
+        @Override
+        public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
+            return delegate.awaitTermination(timeout, unit);
+        }
+
+        @Override
+        public <T> List<Future<T>> invokeAll(Collection<? extends Callable<T>> tasks)
+                throws InterruptedException {
+            return delegate.invokeAll(tasks);
+        }
+
+        @Override
+        public <T> List<Future<T>> invokeAll(Collection<? extends Callable<T>> tasks,
+                long timeout, TimeUnit unit) throws InterruptedException {
+            return delegate.invokeAll(tasks, timeout, unit);
+        }
+
+        @Override
+        public <T> T invokeAny(Collection<? extends Callable<T>> tasks)
+                throws InterruptedException, ExecutionException {
+            return delegate.invokeAny(tasks);
+        }
+
+        @Override
+        public <T> T invokeAny(Collection<? extends Callable<T>> tasks, long timeout, TimeUnit unit)
+                throws InterruptedException, ExecutionException, TimeoutException {
+            return delegate.invokeAny(tasks, timeout, unit);
+        }
+    }
+
     private static void capture(String msg, Throwable cause, Map<String, String> tags,
             String dedupKey, SentryLevel level) {
-        IHub hub = Sentry.getCurrentHub().clone();
-        hub.withScope(scope -> {
+        // Preserve the original throwable's type/stack; synthesize when null.
+        Throwable t = (cause != null) ? cause : new RuntimeException(msg);
+        Sentry.captureException(t, scope -> {
             scope.setLevel(level);
             if (dedupKey != null && !dedupKey.isEmpty()) {
                 scope.setFingerprint(List.of(dedupKey));
@@ -236,9 +406,6 @@ public final class Report {
                 tags.forEach(scope::setTag);
             }
             scope.setContexts("tackbox", Map.of("msg", msg != null ? msg : ""));
-            // Preserve the original throwable's type/stack; synthesize when null.
-            Throwable t = (cause != null) ? cause : new RuntimeException(msg);
-            hub.captureException(t);
         });
     }
 
@@ -294,6 +461,7 @@ public final class Report {
 
     /** Test-only: reset process-wide capture state between tests. */
     static void resetForTest() {
+        uninstallUncaughtHandler();
         Sentry.close();
         ready = false;
         rateWindow = 60_000;
