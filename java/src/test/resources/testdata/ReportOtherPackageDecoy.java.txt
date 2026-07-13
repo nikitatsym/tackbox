@@ -1,0 +1,17 @@
+package com.other;
+
+// Negative: a Report.error call with no import - the bare qualifier resolves to
+// this file's own package (com.other), not nl.tsym.tackbox.report. Origin is the
+// identity, not the name: a same-named Report from another package is not the
+// helper, so the catch still swallows.
+class ReportOtherPackageDecoy {
+    void m() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            Report.error("boom", e, null, "area.key");
+        }
+    }
+
+    void risky() throws Exception {}
+}

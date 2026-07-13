@@ -193,6 +193,62 @@ def test_bare_except_is_bare_not_swallowed(tmp_path):
     assert "TBX003" in r.stdout and "TBX001" not in r.stdout, r.stdout
 
 
+# --- built-in tier-1 reporters: the tackbox_report public capture API (D004) ---
+
+
+def test_builtin_tier1_report_error_credits_without_declaration(tmp_path):
+    # No --reporters flag and no marker: report_error is a built-in tier-1 sink,
+    # and the caught flows into it, so the handler is credited.
+    src = (
+        "def h():\n    try:\n        work()\n"
+        "    except ValueError as e:\n"
+        "        report_error('db down', cause=e, dedup_key='area.k')\n"
+    )
+    _write(tmp_path, "r.py", src)
+    r = _flake8(tmp_path, "r.py")
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+
+
+def test_builtin_tier1_report_warn_and_panic_credit(tmp_path):
+    # report_warn (cause keyword) and report_panic (caught as positional arg) are
+    # both built-in tier-1 sinks.
+    src = (
+        "def h():\n    try:\n        work()\n"
+        "    except ValueError as e:\n        report_warn('transient', cause=e)\n\n\n"
+        "def g():\n    try:\n        work()\n"
+        "    except ValueError as e:\n        report_panic('loop', e)\n"
+    )
+    _write(tmp_path, "r.py", src)
+    r = _flake8(tmp_path, "r.py")
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+
+
+def test_builtin_tier1_without_argflow_still_swallows(tmp_path):
+    # The caught must flow into the call; a report_error that does not carry it is
+    # not a capture of THIS error, so the handler still swallows.
+    src = (
+        "def h():\n    try:\n        work()\n"
+        "    except ValueError as e:\n        report_error('unrelated')\n"
+    )
+    _write(tmp_path, "r.py", src)
+    r = _flake8(tmp_path, "r.py")
+    assert r.returncode == 1 and "TBX001" in r.stdout, r.stdout
+
+
+def test_builtin_tier1_name_model_credits_same_named_local(tmp_path):
+    # Documented D004 limitation: pyrules has no import origin, so a same-named
+    # report_error from ANY module is credited - even this unrelated local def.
+    # This is the Python name model's inherent false-positive-credit.
+    src = (
+        "def report_error(x):\n    print(x)\n\n\n"
+        "def h():\n    try:\n        work()\n"
+        "    except ValueError as e:\n        report_error(e)\n"
+    )
+    _write(tmp_path, "r.py", src)
+    r = _flake8(tmp_path, "r.py")
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+
+
 # --- TBX008 python-test-skip ---
 
 

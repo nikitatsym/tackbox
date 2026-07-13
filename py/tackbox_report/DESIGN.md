@@ -193,32 +193,24 @@ callee resolves to the `go/report` **import path** (origin). The Python engine
 name**, declared in `.tackbox-reporters` as `<file>#<func>`, and *any* same-named
 call from any module counts (subject to argument-flow of the caught error).
 
-Consequences for recognizing `tackbox_report` as a reporter:
+Recognition of `tackbox_report` as a reporter:
 
-- Recognition would be by the **names** `report_error` / `report_warn` /
-  `report_panic`, not by import origin. A repo adopting the helper would declare
-  those functions in its `.tackbox-reporters`, and pyrules would then treat any
-  call to a same-named function as a capture -- including an unrelated local
-  `report_error` that is not this helper. That false-positive-credit risk is
-  inherent to the name-based engine and cannot be closed without type
-  resolution.
-- This cut does **not** change pyrules and does **not** add a
-  `.tackbox-reporters` entry (out of scope: "do not touch the linter"). The
-  helper is written so its own internal capture core passes the linter today.
-  Both background-task wrappers route a caught exception through
-  `_report_task_failure` (which calls the capture core, not one of the
-  recognized `report_*` names), so each carries a `# no-report:` marker on its
-  `except` -- `run_task` in `__init__.py` and now `run_task_async` -- exactly as
-  `go/report`'s `GoSafe`/`maskDSN` use `// no-report:`. **Both markers are
-  removed once pyrules recognizes the helper's capture API** (plan step 1,
-  name-based tier-1 recognition of the `tackbox_report` capture functions): the
-  background boundary then stops being a TBX001 false positive. Until then the
-  markers are load-bearing for the scoped self-lint.
-- *Alternative to raise later:* a first-party tier-1 recognition of
-  `tackbox_report`'s reporter names baked into pyrules (like the built-in Go
-  origin check), so consumers need no `.tackbox-reporters` line. Still
-  name-based, so still origin-blind; documented here as the ceiling of what the
-  Python engine can do.
+- Recognition is by the **names** `report_error` / `report_warn` /
+  `report_panic`, not by import origin. pyrules now carries these as a **built-in
+  tier-1 set** (DECISIONS D004), so a consumer needs no `.tackbox-reporters`
+  entry -- the Python analog of the built-in Go origin check. Because the engine
+  is name-based, *any* same-named call from any module counts (subject to
+  argument-flow of the caught error), including an unrelated local `report_error`
+  that is not this helper. That false-positive-credit risk is inherent to the
+  name-based engine and cannot be closed without type resolution.
+- With that recognition in place, the two background-task wrappers carry **no**
+  `# no-report:` marker. Each internal `except` calls `report_error` directly --
+  identical routing to the old private `_report_task_failure` (per-name
+  `task:<name>` fingerprint, log-before-drop, rate-limit) -- so the background
+  boundary is a recognized tier-1 capture, not a TBX001 false positive. The
+  returned-exception path (`func() error` analog) shares that call through the
+  thin `_report_task_failure` wrapper, which keeps the two wrappers under the
+  clone threshold.
 
 ### 4. Handler / middleware analog (WrapHandler) -- DEFERRED
 

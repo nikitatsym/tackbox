@@ -26,6 +26,15 @@ _SHUTDOWN_TYPES = frozenset(
 _SHUTDOWN_CALLS = frozenset({"kill", "terminate"})
 _EXIT_CALLS = frozenset({"sys.exit", "os._exit"})
 
+# Built-in tier-1 reporters: the tackbox_report public capture API, recognized by
+# NAME (pyrules has no import origin). So a consumer's
+# `except X as e: report_error(..., e)` is credited without a `# no-report:`
+# marker or a `.tackbox-reporters` entry - the Python analog of how Go credits
+# go/report by origin and JS credits tackbox/report (DECISIONS D004). Name-model
+# limitation: a same-named function from any module is credited too; origin is
+# not provable source-only.
+_BUILTIN_REPORTERS = frozenset({"report_error", "report_warn", "report_panic"})
+
 
 def _dotted_name(expr: ast.expr) -> str:
     """`Name`/`Attribute` chain as a dotted string, else ""."""
@@ -87,7 +96,9 @@ def _is_shutdown_carveout(handler: ast.ExceptHandler) -> bool:
     return False
 
 
-def _tier2_captures(handler: ast.ExceptHandler, reporter_names: frozenset[str]) -> bool:
+def _reporter_captures(handler: ast.ExceptHandler, reporter_names: frozenset[str]) -> bool:
+    """A recognized reporter (built-in tier-1 or declared tier-2) is called in the
+    handler with the caught error flowing into it - the name-based capture path."""
     if not reporter_names or not handler.name:
         return False
     for n in _iter_body(handler):
@@ -224,7 +235,8 @@ class _Visitor(ast.NodeVisitor):
     ):
         self.markers = markers
         self.skip_markers = skip_markers
-        self.reporter_names = reporter_names
+        # Built-in tier-1 names are always recognized; declared tier-2 names extend them.
+        self.reporter_names = _BUILTIN_REPORTERS | reporter_names
         self.unittest_skip = unittest_skip
         self.findings: list[tuple[int, int, str]] = []
         self._func_depth = 0
@@ -301,7 +313,7 @@ class _Visitor(ast.NodeVisitor):
             return False
         if self.markers.suppresses(handler.body[0].lineno):
             return False
-        if _tier2_captures(handler, self.reporter_names):
+        if _reporter_captures(handler, self.reporter_names):
             return False
         return True
 

@@ -123,3 +123,51 @@ on the string via sync.Map before capture, and stays as-is.
 Known limitation: breadcrumbs (Crumb / AddBreadcrumb) still write to the
 global hub. The package is not request-scoped, so breadcrumb isolation
 is a separate, deeper design concern and is left out of scope here.
+
+## D004 - runtime helper capture APIs are tier-1 reporters (2026-07-13)
+
+Rules affected: TBX001 (python-swallowed-exception), JV001 (java
+swallow), and the java rules that share the same capture recognition -
+JV005 (exit) and JV006 (double capture).
+
+Decision: the runtime capture helpers' PUBLIC capture APIs are
+recognized as tier-1 reporters, per language, so a consumer's catch
+that hands the caught error to one is credited with no `# no-report:` /
+`// no-report:` marker and no `.tackbox-reporters` entry. The helpers
+are the blessed reporting path, so adopting them costs zero linter
+ceremony.
+
+- Go: `go/report` by import origin (already shipped).
+- JS: `tackbox/report` by import origin (already shipped).
+- Python: `tackbox_report`'s `report_error` / `report_warn` /
+  `report_panic` by function NAME - a built-in set in pyrules.
+  pyrules has no cross-module type info, so recognition is name-based,
+  not origin-based. Inherent limitation: a same-named function from
+  ANY module is credited too - the engine cannot prove the origin
+  source-only. Argument-flow is still required (the caught must reach
+  the call), the same gate as the tier-2 declared-reporter path.
+- Java: the `nl.tsym.tackbox.report.Report` methods `error` / `warn` /
+  `panic` by origin (package + class), through the same source-only
+  origin machinery javalint already uses for slf4j, System.Logger, and
+  tier-2 declared reporters. A same-named Report from another package,
+  or one declared in the consumer's own file, resolves to a different
+  origin and is not credited. Report's methods are static, so unlike
+  slf4j's instance-only error/warn a fully-qualified static call is a
+  real capture too; tier1-eligibility is not required.
+
+Recognition only LOOSENS - it credits more capture sites - so it
+cannot introduce a swallow finding on existing code. JV006 does count
+a recognized Report capture as a capture (report + rethrow is a double
+capture), matching how it already counts slf4j and declared reporters.
+
+This also retires the two `# no-report:` markers the Python helper's
+background-task wrappers (`run_task` / `run_task_async`) carried: each
+internal `except` now calls `report_error` directly - identical
+routing (per-name `task:<name>` fingerprint, log-before-drop,
+rate-limit) - so the background boundary is a recognized capture, not
+a false-positive swallow.
+
+Scope unchanged (D001): this is capture-shape recognition, decidable
+from the AST and imports, not value or content analysis. See the
+tackbox runtime-helpers plan (Python + Java capture helpers) for the
+full helper design.
