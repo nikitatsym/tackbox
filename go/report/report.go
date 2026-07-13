@@ -125,11 +125,12 @@ func Verify(timeout time.Duration) error {
 	if !ready {
 		return errors.New("report.Verify: not initialized")
 	}
-	sentry.WithScope(func(scope *sentry.Scope) {
+	hub := sentry.CurrentHub().Clone()
+	hub.WithScope(func(scope *sentry.Scope) {
 		scope.SetLevel(sentry.LevelInfo)
 		scope.SetFingerprint([]string{"report.startup"})
 		scope.SetTag("healthcheck", "true")
-		sentry.CaptureMessage("report.Verify")
+		hub.CaptureMessage("report.Verify")
 	})
 	if !sentry.Flush(timeout) {
 		return errors.New("report.Verify: flush timeout, endpoint unreachable or rejecting")
@@ -149,11 +150,20 @@ func Flush(timeout ...time.Duration) {
 }
 
 func SentryErr(ctx context.Context, msg string, err error, tags map[string]string, dedupKey string) {
+	sentryErr(ctx, msg, err, tags, dedupKey)
+}
+
+// sentryErr is the shared error-level capture core. The local log runs before
+// the rate-limit drop, so a rate-limited event still leaves a local record.
+// key is both the rate-limit bucket and the Sentry fingerprint: the public
+// SentryErr passes a literal dedupKey, a library primitive (GoSafe) passes a
+// per-name key it builds directly.
+func sentryErr(ctx context.Context, msg string, err error, tags map[string]string, key string) {
 	logAt(ctx, slog.LevelError, msg, err, tags)
-	if !ready || shouldDrop(dedupKey) {
+	if !ready || shouldDrop(key) {
 		return
 	}
-	capture(ctx, msg, err, tags, dedupKey, sentry.LevelError)
+	capture(ctx, msg, err, tags, key, sentry.LevelError)
 }
 
 func Warn(ctx context.Context, msg string, err error, tags map[string]string, dedupKey string) {
@@ -175,11 +185,12 @@ func Panic(name string, recovered any) {
 	if shouldDrop(key) {
 		return
 	}
-	sentry.WithScope(func(scope *sentry.Scope) {
+	hub := sentry.CurrentHub().Clone()
+	hub.WithScope(func(scope *sentry.Scope) {
 		scope.SetTag("source", name)
 		scope.SetFingerprint([]string{key})
 		scope.SetLevel(sentry.LevelFatal)
-		sentry.CaptureException(fmt.Errorf("panic in %s: %v", name, recovered))
+		hub.CaptureException(fmt.Errorf("panic in %s: %v", name, recovered))
 	})
 }
 
@@ -196,8 +207,9 @@ func Crumb(category, message string, data map[string]any) {
 	})
 }
 
-// GoSafe runs fn in a goroutine wrapped by recover; panics and
-// returned errors are captured.
+// GoSafe runs fn in a goroutine wrapped by recover; panics and returned
+// errors are captured, each under a per-name fingerprint (panic:<name>,
+// go.task:<name>) so goroutines group and rate-limit independently.
 func GoSafe(name string, fn func() error) {
 	go func() {
 		defer func() {
@@ -205,11 +217,20 @@ func GoSafe(name string, fn func() error) {
 				Panic(name, rec)
 			}
 		}()
-		if err := fn(); err != nil {
-			SentryErr(context.Background(), "background task failed", err,
-				map[string]string{"task": name}, "go.task")
-		}
+		reportTaskErr(name, fn())
 	}()
+}
+
+// reportTaskErr captures a background task's returned error under a per-name
+// fingerprint (go.task:<name>), mirroring Panic's per-name grouping. A library
+// primitive builds this key directly; the literal-dedupKey rule governs app
+// call sites, not the wrapper. No-op on nil.
+func reportTaskErr(name string, err error) {
+	if err == nil {
+		return
+	}
+	sentryErr(context.Background(), "background task failed", err,
+		map[string]string{"task": name}, "go.task:"+name)
 }
 
 // WrapHandler returns h with recover+capture; falls back to a
@@ -267,7 +288,8 @@ func capture(_ context.Context, msg string, err error, tags map[string]string, d
 	if err == nil {
 		err = errors.New(msg)
 	}
-	sentry.WithScope(func(scope *sentry.Scope) {
+	hub := sentry.CurrentHub().Clone()
+	hub.WithScope(func(scope *sentry.Scope) {
 		scope.SetLevel(level)
 		if dedupKey != "" {
 			scope.SetFingerprint([]string{dedupKey})
@@ -275,7 +297,7 @@ func capture(_ context.Context, msg string, err error, tags map[string]string, d
 		for k, v := range tags {
 			scope.SetTag(k, v)
 		}
-		sentry.CaptureException(fmt.Errorf("%s: %w", msg, err))
+		hub.CaptureException(fmt.Errorf("%s: %w", msg, err))
 	})
 }
 
