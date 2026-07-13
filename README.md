@@ -209,7 +209,10 @@ logger sink (e.g. slf4j, `java.lang.System.Logger`) at `ERROR` /
 a repo-root `.tackbox-reporters` file (`file#function: reason`) -
 tier-2. A declaration names a report sink - it is not an exclude: it
 disables no rule, and a declared call is honored only when the caught
-error flows into its arguments.
+error flows into its arguments. Python is the exception: its flake8/ast
+engine has no tier-1 origin recognition and matches a tier-2 declaration
+by function name (any same-named call), not by resolving the callee to
+its file.
 
 A `[usage]` declaration (`file#function [usage]: reason`) names the
 opposite lane: a deliberate user-facing diagnostic exit, e.g. a CLI
