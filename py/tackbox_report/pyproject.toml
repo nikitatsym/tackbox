@@ -1,18 +1,43 @@
-# STANDALONE, REVIEW-ONLY packaging for the tackbox_report first cut.
-# This file is intentionally separate from py/pyproject.toml (the tackbox
-# linter/CLI). It is NOT referenced by any publish config, CI, or the linter's
-# dependencies. Nothing here ships.
+# STANDALONE packaging for the tackbox_report runtime capture helper.
+# Deliberately separate from py/pyproject.toml (the tackbox linter/CLI): a repo
+# depends on the runtime helper without pulling flake8, and on the linter
+# without pulling sentry-sdk. This file is NOT wired into any publish config or
+# CI yet (see DESIGN.md "Publishing" for what the publish step still needs).
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tackbox-report"          # deferred PyPI distribution name (see DESIGN.md #2)
+name = "tackbox-report"
 version = "0.0.0"
-description = "Python runtime capture helper mirroring go/report and js/report.js (FIRST CUT, review only)."
+description = "Runtime error-capture helper mirroring go/report and js/report.js: log-before-drop, per-name fingerprints, rate-limited Sentry/Glitchtip capture."
+readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-dependencies = ["sentry-sdk>=2.0"]
+authors = [{ name = "Nikita Tsymbal", email = "nikita.tsym@gmail.com" }]
+keywords = ["sentry", "glitchtip", "error-reporting", "capture", "observability"]
+# sentry-sdk 2.x forking scope API (new_scope / isolation_scope) is load-bearing
+# for D003 isolation and changed across the 1.x->2.x major, so the range is
+# capped below 3.x rather than an open-ended floor.
+dependencies = ["sentry-sdk>=2.0,<3.0"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Monitoring",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/nikitatsym/tackbox"
+Repository = "https://github.com/nikitatsym/tackbox"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
@@ -20,6 +45,9 @@ dev = ["pytest>=8"]
 [tool.setuptools.packages.find]
 include = ["tackbox_report*"]
 exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+"tackbox_report" = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

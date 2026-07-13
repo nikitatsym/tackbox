@@ -2,6 +2,8 @@ package nl.tsym.tackbox.report;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.sentry.SentryEvent;
@@ -9,10 +11,12 @@ import io.sentry.SentryLevel;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -72,11 +76,17 @@ class ReportTest {
         Report.safeRunnable("ingest", () -> {
             throw new IllegalStateException("boom");
         }).run();
-        assertEquals(1, events.size());
+        assertOneTaskEvent("ingest");
+    }
+
+    // Exactly one captured task event: fingerprint task:<name>, level ERROR,
+    // tag task=<name>. The shared shape of every report-and-swallow path.
+    private void assertOneTaskEvent(String name) {
+        assertEquals(1, events.size(), "one captured event (report-and-swallow, no double-capture)");
         SentryEvent e = events.get(0);
-        assertEquals(List.of("task:ingest"), e.getFingerprints());
+        assertEquals(List.of("task:" + name), e.getFingerprints());
         assertEquals(SentryLevel.ERROR, e.getLevel());
-        assertEquals("ingest", e.getTag("task"));
+        assertEquals(name, e.getTag("task"));
     }
 
     @Test
@@ -108,6 +118,62 @@ class ReportTest {
                 .mapToObj(i -> "area.k" + i)
                 .collect(Collectors.toSet());
         assertEquals(expected, seen, "fingerprints must not bleed across threads");
+    }
+
+    @Test
+    void wrappedExecutorCapturesThrowingTask() throws InterruptedException {
+        Report.init(recordingOptions());
+        ExecutorService pool = Report.wrap("ingest", Executors.newSingleThreadExecutor());
+        pool.execute(() -> {
+            throw new IllegalStateException("boom");
+        });
+        pool.shutdown();
+        assertTrue(pool.awaitTermination(5, TimeUnit.SECONDS), "task must finish");
+        assertOneTaskEvent("ingest");
+    }
+
+    @Test
+    void wrappedExecutorCallableSwallowsToNull() throws Exception {
+        Report.init(recordingOptions());
+        ExecutorService pool = Report.wrap("compute", Executors.newSingleThreadExecutor());
+        Callable<String> task = () -> {
+            throw new IllegalStateException("boom");
+        };
+        Future<String> f = pool.submit(task);
+        assertNull(f.get(5, TimeUnit.SECONDS), "a captured Callable failure yields null, not a thrown ExecutionException");
+        pool.shutdown();
+        assertEquals(1, events.size());
+        assertEquals(List.of("task:compute"), events.get(0).getFingerprints());
+    }
+
+    @Test
+    void uncaughtHandlerCapturesUnderPanicFingerprint() throws InterruptedException {
+        Report.init(recordingOptions());
+        Report.installUncaughtHandler();
+        Thread t = new Thread(() -> {
+            throw new IllegalStateException("boom");
+        }, "worker-7");
+        t.start();
+        t.join(); // the JVM runs the handler before the thread terminates
+        assertEquals(1, events.size());
+        SentryEvent e = events.get(0);
+        assertEquals(List.of("panic:worker-7"), e.getFingerprints());
+        assertEquals(SentryLevel.FATAL, e.getLevel());
+        assertEquals("worker-7", e.getTag("source"));
+    }
+
+    @Test
+    void uncaughtHandlerInstallIsIdempotentAndRestorable() {
+        Report.init(recordingOptions());
+        Thread.UncaughtExceptionHandler beforeInstall = Thread.getDefaultUncaughtExceptionHandler();
+        Report.installUncaughtHandler();
+        Thread.UncaughtExceptionHandler installed = Thread.getDefaultUncaughtExceptionHandler();
+        Report.installUncaughtHandler(); // second install must not double-wrap
+        assertSame(installed, Thread.getDefaultUncaughtExceptionHandler(),
+                "a second install while installed must be a no-op");
+        Report.uninstallUncaughtHandler();
+        assertSame(beforeInstall, Thread.getDefaultUncaughtExceptionHandler(),
+                "uninstall must restore the handler present before install");
     }
 
     // Blocks until the test releases the latch; rethrows on interrupt so the

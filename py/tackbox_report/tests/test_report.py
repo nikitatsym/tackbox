@@ -6,10 +6,12 @@ Covers the spec-required behaviours: empty-DSN no-op, log-before-drop invariant,
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 
 import pytest
+import sentry_sdk
 
 import tackbox_report as report
 from conftest import records
@@ -196,6 +198,98 @@ def test_concurrent_run_tasks_per_name_fingerprints(events):
         t.join()
     fps = sorted(e["fingerprint"][0] for e in events)
     assert fps == sorted(f"task:task{i}" for i in range(n))
+
+
+# --------------------------------------------------------------------------
+# asyncio background-task wrapper (run_task_async) - GoSafe analog for asyncio
+# --------------------------------------------------------------------------
+def test_run_task_async_raised_exception_task_fingerprint(events):
+    async def boom():
+        raise ValueError("in task")
+
+    async def main():
+        await report.run_task_async("importer", boom())
+
+    asyncio.run(main())
+    assert len(events) == 1
+    assert events[0]["fingerprint"] == ["task:importer"]
+    assert events[0]["tags"]["task"] == "importer"
+
+
+def test_run_task_async_returned_exception_task_fingerprint(events):
+    # mirrors Go func() error: a returned error is captured, not raised.
+    async def syncer():
+        return RuntimeError("returned")
+
+    async def main():
+        await report.run_task_async("syncer", syncer())
+
+    asyncio.run(main())
+    assert len(events) == 1
+    assert events[0]["fingerprint"] == ["task:syncer"]
+
+
+def test_run_task_async_success_captures_nothing(events):
+    async def ok():
+        return None
+
+    async def main():
+        await report.run_task_async("ok-task", ok())
+
+    asyncio.run(main())
+    assert events == []
+
+
+def test_run_task_async_per_name_independent_fingerprints(events):
+    async def fail(msg):
+        raise RuntimeError(msg)
+
+    async def main():
+        await report.run_task_async("alpha", fail("a"))
+        await report.run_task_async("beta", fail("b"))
+
+    asyncio.run(main())
+    fps = sorted(e["fingerprint"][0] for e in events)
+    assert fps == ["task:alpha", "task:beta"]
+
+
+def test_run_task_async_awaited_failure_does_not_reraise(events):
+    # await mirrors run_task(join=True): the failure is captured, not propagated.
+    async def boom():
+        raise ValueError("swallowed")
+
+    async def main():
+        await report.run_task_async("t", boom())  # must not raise
+
+    asyncio.run(main())
+    assert len(events) == 1
+
+
+# --------------------------------------------------------------------------
+# asyncio concurrency: no scope/fingerprint bleed across tasks (D003 analog).
+# Each task forks its own isolation_scope(); a tag set inside a task and its
+# task:<name> fingerprint must land only on that task's event.
+# --------------------------------------------------------------------------
+def test_concurrent_run_tasks_async_no_scope_bleed(events):
+    n = 16
+
+    async def failing(i):
+        sentry_sdk.set_tag("iso", f"i{i}")  # on this task's isolation scope
+        await asyncio.sleep(0)  # yield so siblings interleave before capture
+        raise RuntimeError(str(i))
+
+    async def main():
+        tasks = [report.run_task_async(f"task{i}", failing(i)) for i in range(n)]
+        await asyncio.gather(*tasks)
+
+    asyncio.run(main())
+    assert len(events) == n
+    fps = sorted(e["fingerprint"][0] for e in events)
+    assert fps == sorted(f"task:task{i}" for i in range(n))  # distinct, no bleed
+    for e in events:
+        name = e["tags"]["task"]  # "task<i>"
+        assert e["fingerprint"] == [f"task:{name}"]
+        assert e["tags"]["iso"] == f"i{name[4:]}"  # isolation tag did not bleed
 
 
 if __name__ == "__main__":
