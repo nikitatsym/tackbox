@@ -1,0 +1,17 @@
+import nl.tsym.tackbox.report.Report;
+
+// JV006: Report.error is a backend capture, so reporting the caught AND
+// rethrowing it double-reports (the upstream handler captures it again). Proves
+// the Report origin is wired into captures(), not only capturesOrPrints().
+class ReportDoubleCapture {
+    void m() throws Exception {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV006"
+            Report.error("boom", e, null, "area.key");
+            throw e;
+        }
+    }
+
+    void risky() throws Exception {}
+}

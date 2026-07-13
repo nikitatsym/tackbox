@@ -1,0 +1,19 @@
+// Negative: a top-level class Report declared in this file shadows the helper
+// name. packageOfSimple sees the local declaration and fails closed, so
+// Report.error here is a local call, not the nl.tsym.tackbox.report capture -
+// the gate is origin, not the class or method name.
+class ReportLocalShadowDecoy {
+    void m() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001"
+            Report.error("boom", e, null, "area.key");
+        }
+    }
+
+    void risky() throws Exception {}
+}
+
+class Report {
+    static void error(String msg, Throwable cause, Object tags, String key) {}
+}

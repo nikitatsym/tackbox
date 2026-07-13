@@ -316,9 +316,8 @@ def run_task(
             try:
                 result = fn()
             except Exception as exc:
-                # no-report: background boundary; the failure is captured under
-                # task:<name> by _report_task_failure, not swallowed
-                _report_task_failure(name, exc)
+                report_error("background task failed", cause=exc,
+                             tags={"task": name}, dedup_key=f"task:{name}")
                 return
             if isinstance(result, BaseException):
                 _report_task_failure(name, result)
@@ -357,9 +356,8 @@ def run_task_async(
             try:
                 result = await coro
             except Exception as exc:
-                # no-report: background boundary; the failure is captured under
-                # task:<name> by _report_task_failure, not swallowed
-                _report_task_failure(name, exc)
+                report_error("background task failed", cause=exc,
+                             tags={"task": name}, dedup_key=f"task:{name}")
                 return
             if isinstance(result, BaseException):
                 _report_task_failure(name, result)
@@ -368,11 +366,12 @@ def run_task_async(
 
 
 def _report_task_failure(name: str, exc: BaseException) -> None:
-    key = f"task:{name}"
-    _log_at(logging.ERROR, "background task failed", exc, {"task": name})
-    if not _ready or _should_drop(key):
-        return
-    _capture(_SENTRY_ERROR, "background task failed", exc, {"task": name}, key)
+    """Capture a background-task failure under the per-name fingerprint
+    ``task:<name>``. The ``except`` handlers call ``report_error`` inline (so
+    pyrules credits the background boundary by name, no marker); this shares that
+    exact routing for the returned-exception path."""
+    report_error("background task failed", cause=exc,
+                 tags={"task": name}, dedup_key=f"task:{name}")
 
 
 # ---------------------------------------------------------------------------

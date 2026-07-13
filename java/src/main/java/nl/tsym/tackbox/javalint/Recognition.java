@@ -32,9 +32,10 @@ import java.util.Optional;
  *
  *  - tier-1: error/warn on a receiver whose declared type resolves to
  *    org.slf4j.Logger, or log at ERROR/WARNING on one resolving to
- *    java.lang.System.Logger (JEP 264). The gate is the declared type's origin
- *    (explicit import or fully-qualified name), never the receiver name or the
- *    method-owner name.
+ *    java.lang.System.Logger (JEP 264), or error/warn/panic on the
+ *    nl.tsym.tackbox.report.Report runtime capture helper (recognized by origin,
+ *    DECISIONS D004). The gate is the declared type's origin (explicit import or
+ *    fully-qualified name), never the receiver name or the method-owner name.
  *  - tier-2: a call whose (package, Class, method) matches a `.tackbox-reporters`
  *    declaration. The declaration's package comes from parsing the declared file;
  *    the call-site's comes from resolving the qualifier through this file's
@@ -50,6 +51,13 @@ public final class Recognition {
 
     private static final String SLF4J_PACKAGE = "org.slf4j";
     private static final String SLF4J_LOGGER = "Logger";
+    // The tackbox runtime capture helper: error/warn/panic on
+    // nl.tsym.tackbox.report.Report are backend captures (DECISIONS D004). Its
+    // methods are static, so - unlike slf4j's instance-only error/warn - a
+    // fully-qualified static call is a real capture too; tier1Eligible is not
+    // required (same as the tier-2 declared-reporter path).
+    private static final String REPORT_PACKAGE = "nl.tsym.tackbox.report";
+    private static final String REPORT_CLASS = "Report";
     // Origins of the nested JDK types: for a nested type the "package" slot of
     // an Origin carries the canonical prefix (the enclosing class chain), the
     // way import parsing naturally splits `java.lang.System.Logger`.
@@ -80,6 +88,7 @@ public final class Recognition {
         return isPrintingTerminal(call, caught)
                 || slf4jCaptures(cu, call, caught)
                 || systemLoggerCaptures(cu, call, caught)
+                || reportCaptures(cu, call, caught)
                 || declaredCaptures(cu, call, caught);
     }
 
@@ -90,6 +99,7 @@ public final class Recognition {
     public boolean captures(CompilationUnit cu, MethodCallExpr call, String caught) {
         return slf4jCaptures(cu, call, caught)
                 || systemLoggerCaptures(cu, call, caught)
+                || reportCaptures(cu, call, caught)
                 || declaredCaptures(cu, call, caught);
     }
 
@@ -185,6 +195,29 @@ public final class Recognition {
             case 4 -> owner.equals(List.of("java", "lang", "System", SYSTEM_LOGGER));
             default -> false;
         };
+    }
+
+    // --- tier-1: tackbox runtime helper (nl.tsym.tackbox.report.Report) ------
+
+    /** error/warn/panic on the Report helper, resolved by origin the same way as
+     *  slf4j and the tier-2 declared reporters (package + class), so a consumer's
+     *  {@code catch (X e) { Report.error(..., e); }} is credited without a marker
+     *  or a `.tackbox-reporters` entry. A same-named Report from another package,
+     *  or one declared in this file, resolves to a different origin and fails
+     *  closed - the name alone never matches. */
+    private boolean reportCaptures(CompilationUnit cu, MethodCallExpr call, String caught) {
+        return argFlows(call, caught) && reportSink(cu, call);
+    }
+
+    private boolean reportSink(CompilationUnit cu, MethodCallExpr call) {
+        String m = call.getNameAsString();
+        if (!m.equals("error") && !m.equals("warn") && !m.equals("panic")) {
+            return false;
+        }
+        Origin o = callOrigin(cu, call).orElse(null);
+        return o != null
+                && o.className().equals(REPORT_CLASS)
+                && o.packageName().equals(REPORT_PACKAGE);
     }
 
     // --- tier-2: declared reporters -----------------------------------------
