@@ -1,0 +1,50 @@
+name: publish-report-py
+
+# Publishes the Python runtime helper `tackbox-report` (py/tackbox_report) to
+# PyPI via Trusted Publishing (OIDC, no stored token). Decoupled from the
+# linter's publish.yml: fires only on its own `report-py-v*` tag, never on push
+# to main.
+on:
+  push:
+    tags: ['report-py-v*']
+  workflow_dispatch:
+
+permissions: {}
+
+# One publish at a time: PyPI OIDC issuance is per-run and a second upload of an
+# existing version 409s.
+concurrency:
+  group: publish-report-py
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: build + publish tackbox-report to PyPI
+    runs-on: ubuntu-latest
+    # PyPI Trusted Publisher tuple is (owner, repo, workflow, environment); the
+    # pending publisher on pypi.org must name this environment.
+    environment: pypi
+    permissions:
+      id-token: write   # OIDC token for Trusted Publishing
+      contents: read    # checkout
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Version is taken from pyproject.toml (0.1.0). The tag is only the
+      # trigger; it is not injected into the build.
+      - name: Build sdist + wheel
+        working-directory: py/tackbox_report
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade build
+          python -m build --outdir dist
+          ls -lh dist/
+
+      - name: Publish to PyPI via Trusted Publisher (OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: py/tackbox_report/dist

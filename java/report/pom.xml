@@ -9,7 +9,10 @@
        `mvn -f java/report/pom.xml test`; `package` emits an OSGi bundle jar.
        Kept fully separate from the javalint linter so its build is undisturbed.
        packaging=bundle is driven by maven-bundle-plugin (extensions=true). -->
-  <groupId>nl.tsym.tackbox</groupId>
+  <!-- Maven Central coordinate. groupId is the GitHub-verified namespace
+       io.github.nikitatsym; the Java package stays nl.tsym.tackbox.report (a
+       coordinate need not match the package). -->
+  <groupId>io.github.nikitatsym</groupId>
   <artifactId>report</artifactId>
   <version>0.1.0</version>
   <packaging>bundle</packaging>
@@ -101,35 +104,90 @@
         </configuration>
       </plugin>
 
-      <!-- Maven Central requires source + javadoc jars alongside the main
-           artifact. GPG signing and the Central publish step are NOT wired
-           here (see DESIGN.md "Maven Central publish"). -->
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-source-plugin</artifactId>
-        <version>3.3.1</version>
-        <executions>
-          <execution>
-            <id>attach-sources</id>
-            <goals>
-              <goal>jar-no-fork</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-javadoc-plugin</artifactId>
-        <version>3.11.2</version>
-        <executions>
-          <execution>
-            <id>attach-javadocs</id>
-            <goals>
-              <goal>jar</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!-- Release-only: GPG signing, the sources/javadoc jars Central requires,
+         and the Central Portal deploy. Kept OUT of the default build so the
+         dev/CI flow (`mvn -f java/report/pom.xml package`/`test`) needs no GPG
+         key and no Central credentials. Activate with `-Prelease`. -->
+    <profile>
+      <id>release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <version>3.3.1</version>
+            <executions>
+              <execution>
+                <id>attach-sources</id>
+                <goals>
+                  <goal>jar-no-fork</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <version>3.11.2</version>
+            <executions>
+              <execution>
+                <id>attach-javadocs</id>
+                <goals>
+                  <goal>jar</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+
+          <!-- Sign the main bundle jar + sources + javadoc + pom. Binds to
+               `verify`, after `package`, before `deploy`. -->
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>3.2.7</version>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals>
+                  <goal>sign</goal>
+                </goals>
+              </execution>
+            </executions>
+            <configuration>
+              <!-- Non-interactive CI signing: passphrase comes from the
+                   gpg.passphrase server in settings.xml (written by setup-java);
+                   loopback keeps gpg from prompting a pinentry. -->
+              <gpgArguments>
+                <arg>--pinentry-mode</arg>
+                <arg>loopback</arg>
+              </gpgArguments>
+            </configuration>
+          </plugin>
+
+          <!-- Sonatype Central Portal publisher. extensions=true rebinds the
+               `deploy` goal to upload the signed bundle to the portal.
+               publishingServerId must match the <server><id> in settings.xml
+               that carries the Central Portal user token. -->
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>0.7.0</version>
+            <extensions>true</extensions>
+            <configuration>
+              <publishingServerId>central</publishingServerId>
+              <!-- Upload to the portal but wait for a manual "Publish" click in
+                   the Central UI (safer for a first release). Flip to true to
+                   release automatically once validation passes. -->
+              <autoPublish>false</autoPublish>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>

@@ -1,15 +1,16 @@
 # STANDALONE packaging for the tackbox_report runtime capture helper.
 # Deliberately separate from py/pyproject.toml (the tackbox linter/CLI): a repo
 # depends on the runtime helper without pulling flake8, and on the linter
-# without pulling sentry-sdk. This file is NOT wired into any publish config or
-# CI yet (see DESIGN.md "Publishing" for what the publish step still needs).
+# without pulling sentry-sdk. Published to PyPI via Trusted Publishing by
+# .github/workflows/publish-report-py.yml on a `report-py-v*` tag (owner setup:
+# docs/publishing-helpers.md), decoupled from the linter's release.
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "tackbox-report"
-version = "0.0.0"
+version = "0.1.0"
 description = "Runtime error-capture helper mirroring go/report and js/report.js: log-before-drop, per-name fingerprints, rate-limited Sentry/Glitchtip capture."
 readme = "README.md"
 requires-python = ">=3.11"
