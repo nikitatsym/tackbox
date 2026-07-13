@@ -1,0 +1,26 @@
+# STANDALONE, REVIEW-ONLY packaging for the tackbox_report first cut.
+# This file is intentionally separate from py/pyproject.toml (the tackbox
+# linter/CLI). It is NOT referenced by any publish config, CI, or the linter's
+# dependencies. Nothing here ships.
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tackbox-report"          # deferred PyPI distribution name (see DESIGN.md #2)
+version = "0.0.0"
+description = "Python runtime capture helper mirroring go/report and js/report.js (FIRST CUT, review only)."
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = ["sentry-sdk>=2.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["tackbox_report*"]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
