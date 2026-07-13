@@ -1,0 +1,48 @@
+name: publish-report-java
+
+# Publishes the Java runtime helper `io.github.nikitatsym:report` (java/report)
+# to Maven Central via the Sonatype Central Portal, GPG-signed. Decoupled from
+# the linter's publish.yml: fires only on its own `report-java-v*` tag.
+on:
+  push:
+    tags: ['report-java-v*']
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: publish-report-java
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: build + deploy report to Maven Central
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      # setup-java writes ~/.m2/settings.xml with:
+      #   - server id `central`  -> Central Portal token (env CENTRAL_TOKEN_*)
+      #   - server id `gpg.passphrase` -> env GPG_PASSPHRASE (read by maven-gpg-plugin)
+      # and imports the ascii-armored signing key from the GPG_PRIVATE_KEY secret.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          server-id: central
+          server-username: CENTRAL_TOKEN_USERNAME
+          server-password: CENTRAL_TOKEN_PASSWORD
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: GPG_PASSPHRASE
+
+      # Version comes from the pom (0.1.0); the tag is only the trigger. The
+      # `release` profile adds sources+javadoc jars, GPG signing, and the
+      # Central Portal deploy (default `package`/`test` needs none of these).
+      - name: Deploy signed artifacts to Central Portal
+        run: mvn -B -Prelease -f java/report/pom.xml deploy
+        env:
+          CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
