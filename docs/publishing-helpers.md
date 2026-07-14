@@ -20,10 +20,12 @@ Java `report`:
 - Workflow: `.github/workflows/publish-report-java.yml`
 - Release tag: `report-java-v*`
 
-Coordinates (locked): Python distribution `tackbox-report` `0.1.0`;
-Java `io.github.nikitatsym:report:0.1.0`.
+Coordinates (locked): Python distribution `tackbox-report`; Java
+`io.github.nikitatsym:report`. Versions come from `pyproject.toml` /
+`pom.xml`, never from this doc.
 
-Do the one-time setup in sections 1-3, then release with section 4.
+The one-time setup in sections 1-3 is done for this repo (namespace
+verified, secrets loaded); cut releases with section 4.
 
 ---
 
@@ -134,20 +136,20 @@ Both workflows accept a manual run (Actions tab -> select the workflow
 Python (`tackbox-report`):
 
 ```sh
-git tag report-py-v0.1.0
-git push origin report-py-v0.1.0
+git tag report-py-vX.Y.Z     # X.Y.Z = version in py/tackbox_report/pyproject.toml
+git push origin report-py-vX.Y.Z
 ```
 
 Java (`report`):
 
 ```sh
-git tag report-java-v0.1.0
-git push origin report-java-v0.1.0
+git tag report-java-vX.Y.Z   # X.Y.Z = version in java/report/pom.xml
+git push origin report-java-vX.Y.Z
 ```
 
 The tag only triggers the workflow; the published version comes from
-`pyproject.toml` / `pom.xml` (both pinned to `0.1.0`). Bump those and
-use a matching tag for later releases.
+`pyproject.toml` / `pom.xml`. Bump those and use a matching tag for
+each release.
 
 ### Java: finish the publish in the Central UI
 

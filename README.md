@@ -203,14 +203,17 @@ the explicit per-site marker (`// no-report`, `// parse-skip`,
 Capture helpers are recognized by origin, not by name: a Go call
 counts only when its callee resolves (type info / import) to the
 `github.com/nikitatsym/tackbox/go/report` package, a JS/TS call to
-`tackbox/report`, and a Java capture when the caught reaches a known
-logger sink (e.g. slf4j, `java.lang.System.Logger`) at `ERROR` /
-`WARNING` - tier-1. Every language also honors a function declared in
-a repo-root `.tackbox-reporters` file (`file#function: reason`) -
-tier-2. A declaration names a report sink - it is not an exclude: it
-disables no rule, and a declared call is honored only when the caught
-error flows into its arguments. Python is the exception: its flake8/ast
-engine has no tier-1 origin recognition and matches a tier-2 declaration
+`tackbox/report`, and a Java capture when the caught reaches a
+`nl.tsym.tackbox.report.Report` call or a known logger sink (e.g.
+slf4j, `java.lang.System.Logger`) at `ERROR` / `WARNING` - tier-1.
+Every language also honors a function declared in a repo-root
+`.tackbox-reporters` file (`file#function: reason`) - tier-2. A
+declaration names a report sink - it is not an exclude: it disables no
+rule, and a declared call is honored only when the caught error flows
+into its arguments. Python is the exception: its flake8/ast engine
+resolves no origins - the `tackbox_report` capture functions
+(`report_error` / `report_warn` / `report_panic`) are a built-in
+tier-1 set matched by name, and a tier-2 declaration likewise matches
 by function name (any same-named call), not by resolving the callee to
 its file.
 
@@ -278,8 +281,9 @@ go/
   report/                              # Go capture helper (Sentry/glitchtip)
 java/
   pom.xml                              # Maven module -> shaded javalint.jar
-  src/main/.../javalint/               # typed-AST analyzer (JV001-008)
+  src/main/.../javalint/               # typed-AST analyzer (JV001-007)
     rules/                             # per-rule checkers
+  report/                              # Java capture helper -> Maven Central io.github.nikitatsym:report
 js/
   eslint-plugin.js                     # ESLint plugin entry
   rules/                               # 13 frontend rules
@@ -289,7 +293,10 @@ js/
 py/
   tackbox/                             # lint / hook / doctor CLI, cache, engines
     pyrules/                           # flake8 TBX plugin (python exception rules)
+  tackbox_report/                      # Python capture helper -> PyPI tackbox-report
   tests/                               # pytest suite
+docs/
+  publishing-helpers.md                # helper release runbook (PyPI + Maven Central)
 ```
 
 ## Repo conventions
