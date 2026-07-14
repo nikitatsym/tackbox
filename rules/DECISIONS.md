@@ -171,3 +171,40 @@ Scope unchanged (D001): this is capture-shape recognition, decidable
 from the AST and imports, not value or content analysis. See the
 tackbox runtime-helpers plan (Python + Java capture helpers) for the
 full helper design.
+
+## D005 - dedup rate-limits telemetry, never the user lane (2026-07-14)
+
+Rules affected: none. This records a cross-language runtime-helper
+library contract (like D002/D003); no lint rule changes.
+
+Decision: deduplication lives at two levels with different owners.
+
+- Telemetry: the helper rate-limits captures per dedupKey (default 60s
+  window) before they ship. Suppressing here is lossless - the server
+  already groups by fingerprint and counts repeats, so a dropped
+  duplicate changes nothing about visibility.
+- The user lane is never suppressed by the helper. Every user-facing
+  event is delivered, each carrying its dedupKey; collapsing a storm
+  (twelve identical "offline" toasts from a 5s poll loop) into one
+  live banner, a counter, or a per-click toast is presentation policy
+  and belongs to the app's listener, keyed on the dedupKey the helper
+  provides.
+
+Rationale: a notification silently dropped inside the helper is a
+swallowed error at the UI level - the user clicks retry, nothing
+happens, no toast - the exact failure mode tackbox exists to prevent.
+How to collapse is UX policy that differs per app (banner vs counter
+vs toast-per-action), so a library-imposed policy would just get
+worked around. And a connectivity loss is a STATE, not an event
+stream: the right UX is one keyed, live banner - the stable key is
+precisely what the helper contributes.
+
+The asymmetry, named: suppressing telemetry loses nothing (the server
+counts); suppressing the user lane loses the failure for its only
+audience. Hence rate-limit on capture, deliver-always on the user
+lane.
+
+Per-sink order at a call site: local log always; user-lane dispatch
+unconditional, before any gate; capture behind init + rate window. A
+helper without a user lane simply has no second sink; the contract
+binds it as soon as one ships.

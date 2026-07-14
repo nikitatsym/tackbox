@@ -227,6 +227,21 @@ on a non-Go file is rejected - a dead line would be silent. The format
 is language-uniform; the restriction lifts as other engines adopt the
 contract.
 
+## Deduplication: telemetry, never the user
+
+Dedup lives at two levels with different owners (`rules/DECISIONS.md`
+D005):
+
+- The capture helpers rate-limit telemetry: repeat captures with the
+  same dedupKey inside the rate window (default 60s) are not re-sent.
+  Lossless - the server groups by fingerprint and counts repeats.
+- The user lane is never suppressed by the helpers. Every user-facing
+  event is delivered carrying its dedupKey; collapsing a storm into
+  one live banner or a counter is presentation policy and belongs to
+  the app's listener, keyed on that dedupKey. A notification dropped
+  inside the helper would be a swallowed error at the UI level - the
+  exact failure mode tackbox exists to prevent.
+
 ## Agent hook (Claude Code)
 
 `tackbox hook` wires the rules into an agent's edit loop. It reads a
