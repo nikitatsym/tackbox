@@ -123,3 +123,28 @@ test('reportSynthError captures Error(msg) with no cause', () => {
   assert.equal(dispatched.length, 1)
   assert.equal(dispatched[0].cause, null, 'synth user-lane detail carries cause: null')
 })
+
+// (f) reportQuiet captures at warning with no user-lane dispatch.
+test('reportQuiet captures warning-level with no user-lane dispatch', () => {
+  const report = load()
+  report.init({ dsn: VALID_DSN })
+  report.reportQuiet('index rebuild degraded, using stale', new Error('timeout'), { area: 'idx' }, 'idx.stale')
+  assert.equal(captured.length, 1, 'quiet still captures')
+  assert.equal(captured[0].level, 'warning')
+  assert.deepEqual(captured[0].fingerprint, ['idx.stale'])
+  assert.equal(dispatched.length, 0, 'quiet must not touch the user lane')
+})
+
+// (g) notify dispatches only, captures nothing, and consumes no rate slot.
+test('notify dispatches level notice, captures nothing, leaves the rate slot', () => {
+  const report = load()
+  report.init({ dsn: VALID_DSN })
+  report.notify('you appear to be offline', new Error('net down'), { area: 'conn' }, 'conn.offline')
+  assert.equal(dispatched.length, 1)
+  assert.equal(dispatched[0].level, 'notice')
+  assert.equal(captured.length, 0, 'notify captures nothing')
+  // Same dedupKey still captures: notify consumed no rate slot.
+  report.reportError('still offline after retry', new Error('net down'), { area: 'conn' }, 'conn.offline')
+  assert.equal(captured.length, 1, 'following reportError on the notify key still captures')
+  assert.equal(dispatched.length, 2)
+})

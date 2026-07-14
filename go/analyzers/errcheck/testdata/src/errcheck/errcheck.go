@@ -9,8 +9,8 @@ import (
 	"github.com/nikitatsym/tackbox/go/report"
 )
 
-// local helper sharing a former capture name - no longer a capture.
-func sentryErr(area, msg string, err error, tags map[string]string, key string) {}
+// local helper sharing the capture name - no longer a capture (origin, not name).
+func Error(area, msg string, err error, tags map[string]string, key string) {}
 
 // die is in the hardcoded printing-terminal set alongside log.Fatal*.
 func die(v any) {}
@@ -26,7 +26,7 @@ func okPropagate() error {
 func okCaptureTier1() error {
 	err := errors.New("x")
 	if err != nil {
-		report.SentryErr("auth", "bad creds", err, nil, "auth.creds")
+		report.Error("auth", "bad creds", err, nil, "auth.creds")
 		return errors.New("noop")
 	}
 	return errors.New("noop")
@@ -72,11 +72,11 @@ func okPanic() error {
 	return errors.New("noop")
 }
 
-// bare local sentryErr does not capture: name-trust is dead.
+// bare local Error does not capture: name-trust is dead.
 func bareLocalNotCapture() error {
 	err := errors.New("x")
 	if err != nil { // want `ERC001:.*err=err`
-		sentryErr("auth", "bad creds", err, nil, "auth.creds")
+		Error("auth", "bad creds", err, nil, "auth.creds")
 	}
 	return errors.New("noop")
 }

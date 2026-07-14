@@ -16,7 +16,7 @@ func okCapture(data []byte) {
 	var v map[string]any
 	err := json.Unmarshal(data, &v)
 	if err != nil {
-		report.SentryErr("parse", "config payload", err, nil, "parse.config")
+		report.Error("parse", "config payload", err, nil, "parse.config")
 	}
 }
 
@@ -139,7 +139,7 @@ func violationSchemaDrift(data []byte) {
 
 func okShortFormCapture(s string) {
 	if _, err := strconv.Atoi(s); err != nil {
-		report.SentryErr("parse", "atoi", err, nil, "parse.atoi")
+		report.Error("parse", "atoi", err, nil, "parse.atoi")
 	}
 }
 
@@ -163,7 +163,7 @@ func okShortFormPropagate(s string) error {
 func okParseIPCapture(s string) {
 	v := net.ParseIP(s)
 	if v == nil {
-		report.SentryErr("net", "bad ip", nil, nil, "net.parseip")
+		report.Error("net", "bad ip", nil, nil, "net.parseip")
 	}
 	_ = v
 }
@@ -195,7 +195,7 @@ func violationParseIPNoCapture(s string) {
 
 func okParseIPShort(s string) {
 	if v := net.ParseIP(s); v == nil {
-		report.SentryErr("net", "bad ip", nil, nil, "net.parseip")
+		report.Error("net", "bad ip", nil, nil, "net.parseip")
 		_ = v
 	}
 }

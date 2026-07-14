@@ -199,7 +199,7 @@ public final class Recognition {
 
     // --- tier-1: tackbox runtime helper (nl.tsym.tackbox.report.Report) ------
 
-    /** error/warn/panic on the Report helper, resolved by origin the same way as
+    /** error/warn/quiet/panic on the Report helper, resolved by origin the same way as
      *  slf4j and the tier-2 declared reporters (package + class), so a consumer's
      *  {@code catch (X e) { Report.error(..., e); }} is credited without a marker
      *  or a `.tackbox-reporters` entry. A same-named Report from another package,
@@ -211,7 +211,7 @@ public final class Recognition {
 
     private boolean reportSink(CompilationUnit cu, MethodCallExpr call) {
         String m = call.getNameAsString();
-        if (!m.equals("error") && !m.equals("warn") && !m.equals("panic")) {
+        if (!m.equals("error") && !m.equals("warn") && !m.equals("quiet") && !m.equals("panic")) {
             return false;
         }
         Origin o = callOrigin(cu, call).orElse(null);

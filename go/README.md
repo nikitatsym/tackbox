@@ -96,9 +96,9 @@ t.SkipNow()
 A call counts as a capture by origin, never by name. erclint uses type
 information: the callee must resolve to
 `github.com/nikitatsym/tackbox/go/report` and be a recognized export -
-`SentryErr` / `Warn` (error-capture) or `Panic` (panic-capture). Other
+`Error` / `Warn` (error-capture) or `Panic` (panic-capture). Other
 exports of that package (`Init`, `Flush`, `Crumb`, ...) are not
-captures, and a bare local `sentryErr(...)` that merely shares the name
+captures, and a bare local `Error(...)` that merely shares the name
 is not trusted.
 
 A repo may also declare its own sinks in a root `.tackbox-reporters`

@@ -18,6 +18,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
 
 /**
  * Runtime capture helper: a thin wrapper over sentry-java with the API the
@@ -42,8 +43,22 @@ public final class Report {
     private static volatile long flushTimeout = 2_000;
     private static final ConcurrentHashMap<String, Long> lastSent = new ConcurrentHashMap<>();
     private static volatile Logger log = System.getLogger("nl.tsym.tackbox.report");
+    private static volatile Consumer<Notice> notifier;
+
+    // Notice level strings carried to the user-lane sink.
+    private static final String NOTICE_ERROR = "error";
+    private static final String NOTICE_WARNING = "warning";
+    private static final String NOTICE_NOTICE = "notice";
+    private static final String NOTICE_FATAL = "fatal";
 
     private Report() {}
+
+    /** Whether a background task's failure surfaces to the user lane (the
+     *  default) or is captured telemetry-only. */
+    public enum TaskMode {
+        USER_LANE,
+        QUIET
+    }
 
     /** Thrown when init cannot bring capture up (e.g. verify before init). */
     public static final class ReportInitException extends RuntimeException {
@@ -135,18 +150,53 @@ public final class Report {
         Sentry.flush(timeoutMillis);
     }
 
-    /** Level error: an unrecoverable failure you handle here. Local log runs
-     *  before the rate-limit drop, so a dropped event still leaves a record. */
+    /** Register the user-lane sink; null clears it. With no notifier the user
+     *  lane is a no-op (the local log and capture still run). The callback runs
+     *  on the caller's thread; the app bridges to its UI thread itself. */
+    public static void setNotifier(Consumer<Notice> fn) {
+        notifier = fn;
+    }
+
+    private static void dispatchNotice(Notice n) {
+        Consumer<Notice> fn = notifier;
+        if (fn == null) {
+            return;
+        }
+        try {
+            fn.accept(n);
+        } catch (Exception e) {
+            // A throwing notifier must not break the caller's path or recurse
+            // into the user lane: quiet-lane capture only (no notice).
+            quiet("report notifier failed", e, null, "report.notifier");
+        }
+    }
+
+    /** Level error: an unrecoverable failure you handle here. Local log + user
+     *  lane run before the rate-limit drop, so a dropped event still leaves a
+     *  record and the user lane is never suppressed (D005). */
     public static void error(String msg, Throwable cause, Map<String, String> tags, String dedupKey) {
         logAt(Level.ERROR, msg, cause, tags);
+        dispatchNotice(new Notice(msg, NOTICE_ERROR, tags, dedupKey, cause));
         if (!ready || shouldDrop(dedupKey)) {
             return;
         }
         capture(msg, cause, tags, dedupKey, SentryLevel.ERROR);
     }
 
-    /** Level warning: a transient or external fault you recovered from. */
+    /** Level warning: a transient or external fault you recovered from. Local
+     *  log + user lane + capture. */
     public static void warn(String msg, Throwable cause, Map<String, String> tags, String dedupKey) {
+        logAt(Level.WARNING, msg, cause, tags);
+        dispatchNotice(new Notice(msg, NOTICE_WARNING, tags, dedupKey, cause));
+        if (!ready || shouldDrop(dedupKey)) {
+            return;
+        }
+        capture(msg, cause, tags, dedupKey, SentryLevel.WARNING);
+    }
+
+    /** Capture without the user lane: local log + warning-level capture, no
+     *  notice. For background / self-healed / degraded-with-fallback failures. */
+    public static void quiet(String msg, Throwable cause, Map<String, String> tags, String dedupKey) {
         logAt(Level.WARNING, msg, cause, tags);
         if (!ready || shouldDrop(dedupKey)) {
             return;
@@ -154,20 +204,37 @@ public final class Report {
         capture(msg, cause, tags, dedupKey, SentryLevel.WARNING);
     }
 
+    /** Feed only the user lane: local log + a 'notice'-level notice, no capture
+     *  and no rate-limit state touched, so a following error/warn with the same
+     *  dedupKey still captures. For an expected environmental fault (the user
+     *  lost connectivity). cause is the caught error the notice is about. */
+    public static void notify(String msg, Throwable cause, Map<String, String> tags, String dedupKey) {
+        logAt(Level.WARNING, msg, cause, tags);
+        dispatchNotice(new Notice(msg, NOTICE_NOTICE, tags, dedupKey, cause));
+    }
+
+    /** Level fatal, per-name fingerprint panic:&lt;name&gt; (DECISIONS D002).
+     *  Feeds the user lane by default. */
+    public static void panic(String name, Object recovered) {
+        panic(name, recovered, TaskMode.USER_LANE);
+    }
+
     /** Level fatal, per-name fingerprint panic:&lt;name&gt; (DECISIONS D002).
      *  Pass the caught Throwable (or any recovered value) from an uncaught /
      *  last-resort handler. System.Logger has no FATAL, so the local line is
-     *  ERROR; the shipped event carries level FATAL. */
-    public static void panic(String name, Object recovered) {
+     *  ERROR; the shipped event carries level FATAL. By default the panic also
+     *  feeds the user lane; QUIET (used by a quiet background task) captures but
+     *  skips the notice. */
+    public static void panic(String name, Object recovered, TaskMode mode) {
         Throwable t = (recovered instanceof Throwable th)
                 ? th
                 : new RuntimeException("panic in " + name + ": " + recovered);
         log.log(Level.ERROR, "panic in " + name, t);
-        if (!ready) {
-            return;
-        }
         String key = "panic:" + name;
-        if (shouldDrop(key)) {
+        if (mode != TaskMode.QUIET) {
+            dispatchNotice(new Notice("panic in " + name, NOTICE_FATAL, Map.of("source", name), key, t));
+        }
+        if (!ready || shouldDrop(key)) {
             return;
         }
         Sentry.captureException(t, scope -> {
@@ -197,14 +264,19 @@ public final class Report {
      *  captured under a per-name fingerprint task:&lt;name&gt; (mirror
      *  go.task:&lt;name&gt;), then swallowed - fire-and-forget, like GoSafe. Use
      *  with {@code executor.submit(safeRunnable(name, body))}. Catches Exception,
-     *  not Throwable: an unrecoverable Error propagates uncaught. */
+     *  not Throwable: an unrecoverable Error propagates uncaught. A failure
+     *  surfaces to the user lane; pass TaskMode.QUIET for telemetry-only. */
     public static Runnable safeRunnable(String name, Runnable body) {
+        return safeRunnable(name, body, TaskMode.USER_LANE);
+    }
+
+    public static Runnable safeRunnable(String name, Runnable body, TaskMode mode) {
         return () -> {
             try {
                 body.run();
             } catch (Exception e) {
                 log.log(Level.ERROR, "background task '" + name + "' failed", e);
-                shipTaskError(name, e);
+                shipTaskFailure(name, e, mode);
             }
         };
     }
@@ -214,27 +286,39 @@ public final class Report {
      *  It does NOT rethrow - report + rethrow is a double-capture the spec forbids
      *  (JV006), since an upstream handler would report the same failure again. A
      *  caller that must observe the exception should not wrap: it should catch and
-     *  call error() at its own single capture site. Errors propagate uncaught. */
+     *  call error() at its own single capture site. Errors propagate uncaught. A
+     *  failure surfaces to the user lane; pass TaskMode.QUIET for telemetry-only. */
     public static <T> Callable<Optional<T>> safeCallable(String name, Callable<T> body) {
+        return safeCallable(name, body, TaskMode.USER_LANE);
+    }
+
+    public static <T> Callable<Optional<T>> safeCallable(String name, Callable<T> body, TaskMode mode) {
         return () -> {
             try {
                 return Optional.ofNullable(body.call());
             } catch (Exception e) {
                 log.log(Level.ERROR, "background task '" + name + "' failed", e);
-                shipTaskError(name, e);
+                shipTaskFailure(name, e, mode);
                 return Optional.empty();
             }
         };
     }
 
-    // shipTaskError mirrors go/report's reportTaskErr: a library primitive that
+    // shipTaskFailure mirrors go/report's reportTaskErr: a library primitive that
     // builds the per-name fingerprint directly (task:<name>). The local log is
     // emitted at the catch site (before this ship), preserving log-before-drop.
-    private static void shipTaskError(String name, Throwable t) {
-        if (!ready || shouldDrop("task:" + name)) {
+    // A loud task feeds the user lane and captures at error; QUIET is
+    // telemetry-only at warning (capture yes, user lane no).
+    private static void shipTaskFailure(String name, Throwable t, TaskMode mode) {
+        String key = "task:" + name;
+        if (mode != TaskMode.QUIET) {
+            dispatchNotice(new Notice("background task failed", NOTICE_ERROR, Map.of("task", name), key, t));
+        }
+        if (!ready || shouldDrop(key)) {
             return;
         }
-        capture("background task failed", t, Map.of("task", name), "task:" + name, SentryLevel.ERROR);
+        SentryLevel level = (mode == TaskMode.QUIET) ? SentryLevel.WARNING : SentryLevel.ERROR;
+        capture("background task failed", t, Map.of("task", name), key, level);
     }
 
     // --- installers: uncaught handler + executor wrapper --------------------
@@ -253,6 +337,12 @@ public final class Report {
      *  present at install time is chained after our capture and restored by
      *  uninstallUncaughtHandler(), so a pre-existing handler is never lost. */
     public static void installUncaughtHandler() {
+        installUncaughtHandler(TaskMode.USER_LANE);
+    }
+
+    /** As {@link #installUncaughtHandler()}, with TaskMode.QUIET routing every
+     *  uncaught throwable through the quiet lane (captured, no user lane). */
+    public static void installUncaughtHandler(TaskMode mode) {
         synchronized (installLock) {
             Thread.UncaughtExceptionHandler current = Thread.getDefaultUncaughtExceptionHandler();
             if (ourUncaughtHandler != null && current == ourUncaughtHandler) {
@@ -261,7 +351,7 @@ public final class Report {
             Thread.UncaughtExceptionHandler prior = current;
             priorUncaughtHandler = prior;
             Thread.UncaughtExceptionHandler handler = (thread, throwable) -> {
-                panic(thread.getName(), throwable);
+                panic(thread.getName(), throwable, mode);
                 if (prior != null) {
                     prior.uncaughtException(thread, throwable);
                 }
@@ -295,20 +385,26 @@ public final class Report {
      *  safeRunnable is safe: the inner catch fires first, so the outer never
      *  re-captures. */
     public static ExecutorService wrap(String name, ExecutorService delegate) {
-        return new CapturingExecutorService(name, delegate);
+        return wrap(name, delegate, TaskMode.USER_LANE);
+    }
+
+    /** As {@link #wrap(String, ExecutorService)}; TaskMode.QUIET routes every
+     *  wrapped task's failure through the quiet lane (captured, no user lane). */
+    public static ExecutorService wrap(String name, ExecutorService delegate, TaskMode mode) {
+        return new CapturingExecutorService(name, delegate, mode);
     }
 
     // The Callable path for the executor wrapper: unlike public safeCallable
     // (Callable<Optional<T>>), it must keep the ExecutorService contract's
     // Future<T>, so a captured failure yields null rather than Optional.empty().
     // Same report-and-swallow core; the local log stays at the catch site.
-    private static <T> Callable<T> guardedCallable(String name, Callable<T> body) {
+    private static <T> Callable<T> guardedCallable(String name, Callable<T> body, TaskMode mode) {
         return () -> {
             try {
                 return body.call();
             } catch (Exception e) {
                 log.log(Level.ERROR, "background task '" + name + "' failed", e);
-                shipTaskError(name, e);
+                shipTaskFailure(name, e, mode);
                 return null;
             }
         };
@@ -317,30 +413,32 @@ public final class Report {
     private static final class CapturingExecutorService implements ExecutorService {
         private final String name;
         private final ExecutorService delegate;
+        private final TaskMode mode;
 
-        CapturingExecutorService(String name, ExecutorService delegate) {
+        CapturingExecutorService(String name, ExecutorService delegate, TaskMode mode) {
             this.name = name;
             this.delegate = delegate;
+            this.mode = mode;
         }
 
         @Override
         public void execute(Runnable command) {
-            delegate.execute(safeRunnable(name, command));
+            delegate.execute(safeRunnable(name, command, mode));
         }
 
         @Override
         public Future<?> submit(Runnable task) {
-            return delegate.submit(safeRunnable(name, task));
+            return delegate.submit(safeRunnable(name, task, mode));
         }
 
         @Override
         public <T> Future<T> submit(Runnable task, T result) {
-            return delegate.submit(safeRunnable(name, task), result);
+            return delegate.submit(safeRunnable(name, task, mode), result);
         }
 
         @Override
         public <T> Future<T> submit(Callable<T> task) {
-            return delegate.submit(guardedCallable(name, task));
+            return delegate.submit(guardedCallable(name, task, mode));
         }
 
         @Override
@@ -467,6 +565,7 @@ public final class Report {
         rateWindow = 60_000;
         flushTimeout = 2_000;
         lastSent.clear();
+        notifier = null;
         log = System.getLogger("nl.tsym.tackbox.report");
     }
 }

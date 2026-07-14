@@ -163,13 +163,22 @@ groups all startups under one issue, no spam.
 ## Bundled API
 
 - `init(opts)`, `flush(timeout)`, `verify(timeout)`, `isReady()`
-- `reportError(msg, cause, tags, dedupKey)`
-- `reportWarn(msg, cause, tags, dedupKey)`
+- `reportError(msg, cause, tags, dedupKey)` - log + user lane + capture
+- `reportWarn(msg, cause, tags, dedupKey)` - log + user lane + capture
+- `reportQuiet(msg, cause, tags, dedupKey)` - log + warning-level capture,
+  no user lane (background / self-healed / degraded-with-fallback)
+- `notify(msg, cause, tags, dedupKey)` - log + user lane only, no capture
+  and no rate-window state touched (an expected environmental fault, e.g.
+  the user lost connectivity)
 - `reportSynthError(msg, tags, dedupKey)`
 - `reportPanic(name, recovered)`
 - `setupGlobalHandlers()` wires `window.error` and
   `window.unhandledrejection` to `reportError`
 
-The `tackbox:error` custom event is dispatched on the window after
-each `reportError`/`reportWarn`/`reportSynthError` call so a single
-top-level component can render a toast.
+The `tackbox:error` custom event is the user lane: it is dispatched on the
+window before the init + rate-window gate (and is never rate-limited) after
+each `reportError` / `reportWarn` / `notify` / `reportPanic` call, so a
+single top-level component can render a toast. `reportQuiet` does not
+dispatch it. The event `detail` carries `{ msg, cause, tags, dedupKey,
+level }`; the listener coalesces on `dedupKey`. Capture is gated behind init
+and the per-`dedupKey` rate window; the user lane is not.

@@ -1,16 +1,16 @@
 // Package fingerprint implements ERC006: a capture call's arguments must not
-// leak raw user input into telemetry, and a tier-1 go/report SentryErr/Warn
+// leak raw user input into telemetry, and a tier-1 go/report Error/Warn
 // call must carry a well-formed dedupKey.
 //
 // A capture is recognized by ORIGIN, not by name: the callee must resolve
-// (type info) to the go/report package (SentryErr/Warn/Panic) or to a
-// `.tackbox-reporters`-declared sink. A bare local `SentryErr` that shares
+// (type info) to the go/report package (Error/Warn/Panic) or to a
+// `.tackbox-reporters`-declared sink. A bare local `Error` that shares
 // the name but not the origin is not a capture and is never scanned.
 //
 // Two checks, mirroring the retired opengrep rules:
 //   - user-input (any recognized reporter): no argument may carry raw
 //     *http.Request input (`r.URL.Path`, `r.Header.Get(...)`, `r.Body`).
-//   - dedupkey (tier-1 SentryErr/Warn only - the known 5-arg signature): the
+//   - dedupkey (tier-1 Error/Warn only - the known 5-arg signature): the
 //     call must pass 5 args and the 5th must be a string literal matching
 //     area.suffix[:id].
 package fingerprint

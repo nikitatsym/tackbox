@@ -14,12 +14,12 @@
        coordinate need not match the package). -->
   <groupId>io.github.nikitatsym</groupId>
   <artifactId>report</artifactId>
-  <version>0.1.0</version>
+  <version>0.2.0</version>
   <packaging>bundle</packaging>
 
   <name>tackbox report (Java)</name>
   <description>Runtime error-capture helper wrapping sentry-java with the
-    tackbox error-reporting API (error/warn/panic/crumb, per-name fingerprints,
+    tackbox error-reporting API (error/warn/quiet/notify/panic/crumb, per-name fingerprints,
     log-before-drop, concurrency-isolated capture). Empty DSN = log-only no-op.
     Java mirror of go/report and js/report.js.</description>
   <url>https://github.com/nikitatsym/tackbox</url>

@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tackbox-report"
-version = "0.1.0"
+version = "0.2.0"
 description = "Runtime error-capture helper mirroring go/report and js/report.js: log-before-drop, per-name fingerprints, rate-limited Sentry/Glitchtip capture."
 readme = "README.md"
 requires-python = ">=3.11"
