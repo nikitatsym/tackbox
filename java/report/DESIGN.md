@@ -12,9 +12,9 @@ published to Maven Central as `io.github.nikitatsym:report` (see
 ## Status
 
 - Files: `pom.xml`,
-  `src/main/java/nl/tsym/tackbox/report/{Report,Options}.java`,
+  `src/main/java/nl/tsym/tackbox/report/{Report,Options,Notice}.java`,
   `src/test/java/nl/tsym/tackbox/report/ReportTest.java`.
-- Build/test: `mvn -f java/report/pom.xml test` -> 8 tests green.
+- Build/test: `mvn -f java/report/pom.xml test`.
   `mvn -f java/report/pom.xml package` emits the OSGi bundle jar plus the
   sources and javadoc jars.
 - sentry-java: 8.x (exact version pinned in the pom).
@@ -34,20 +34,40 @@ published to Maven Central as `io.github.nikitatsym:report` (see
     void    flush() / flush(long timeoutMillis)
 
     void error(String msg, Throwable cause,
-               Map<String,String> tags, String dedupKey)   // ERROR
+               Map<String,String> tags, String dedupKey)   // log+user+capture
     void warn(String msg, Throwable cause,
-              Map<String,String> tags, String dedupKey)    // WARNING
-    void panic(String name, Object recovered)              // FATAL
+              Map<String,String> tags, String dedupKey)    // log+user+capture
+    void quiet(String msg, Throwable cause,
+               Map<String,String> tags, String dedupKey)   // no user lane
+    void notify(String msg, Throwable cause,
+                Map<String,String> tags, String dedupKey)  // no capture
+    void panic(String name, Object recovered)              // FATAL, user lane
+    void panic(String name, Object recovered, TaskMode)    // QUIET: no notice
     void crumb(String category, String message, Map<String,Object> data)
 
-    Runnable safeRunnable(String name, Runnable body)      // GoSafe analog
-    <T> Callable<Optional<T>> safeCallable(String name, Callable<T> body)
+    void setNotifier(Consumer<Notice> fn)   // user-lane sink; null clears it
+    // record Notice(String msg, String level, Map<String,String> tags,
+    //               String dedupKey, Throwable cause)
 
-    void installUncaughtHandler()    // route uncaught -> panic(threadName)
-    void uninstallUncaughtHandler()  // restore prior default handler
-    ExecutorService wrap(String name, ExecutorService delegate)
+    Runnable safeRunnable(String name, Runnable body[, TaskMode])   // GoSafe
+    <T> Callable<Optional<T>> safeCallable(String, Callable<T>[, TaskMode])
 
-- `error` / `warn` / `panic` log locally (System.Logger) BEFORE the
+    void installUncaughtHandler([TaskMode])   // uncaught -> panic(threadName)
+    void uninstallUncaughtHandler()           // restore prior default handler
+    ExecutorService wrap(String name, ExecutorService delegate[, TaskMode])
+
+- Three lanes: local log (always), user lane (`setNotifier`), Sentry
+  capture (gated). `error`/`warn` feed all three; `quiet` skips the user
+  lane; `notify` feeds only the user lane (no capture, no rate-limit state
+  touched); `panic` feeds all three by default. The user lane is dispatched
+  before the readiness+rate gate and is never rate-limited (D005). No
+  notifier registered -> the user lane is a no-op. A notifier that throws is
+  caught and logged locally, never breaking the caller's path or recursing.
+- Background-task quiet opt-out: `TaskMode.QUIET` on `safeRunnable` /
+  `safeCallable` / `wrap` / `installUncaughtHandler` (and `panic`) routes a
+  failure telemetry-only - captured (warning for the task error path, fatal
+  for a panic), no user lane. The default `TaskMode.USER_LANE` surfaces it.
+- `error` / `warn` / `quiet` / `panic` log locally (System.Logger) BEFORE the
   readiness and rate-limit checks (log-before-drop invariant), so a
   dropped or capture-disabled event still leaves a local record.
 - `dedupKey` is both the Sentry fingerprint and the in-memory rate-limit
@@ -274,6 +294,19 @@ intercept events without shipping).
   thread that throws -> one FATAL `panic:<threadName>` event.
 - `uncaughtHandlerInstallIsIdempotentAndRestorable`: second install is a
   no-op; uninstall restores the pre-install handler.
+- `errorDispatchesUserLaneEvenWhenNotReady` /
+  `errorDispatchesUserLaneWhenRateLimited`: the notifier fires with capture
+  disabled and when the capture is rate-dropped (user lane is never gated).
+- `quietCapturesWarningNoUserLane`: `quiet` captures at WARNING, no notice.
+- `notifyUserLaneOnlyDoesNotConsumeRateSlot`: `notify` dispatches a 'notice',
+  captures nothing, and a following `error` on the same dedupKey still
+  captures (notify touched no rate-limit state).
+- `panicDefaultUserLaneAndQuietOptOut`: `panic` feeds the user lane by
+  default; `panic(..., TaskMode.QUIET)` captures but skips it.
+- `wrappedExecutorQuietTaskSkipsUserLane`: `wrap(..., TaskMode.QUIET)`
+  captures a failed task at WARNING with no notice.
+- `notifierExceptionDoesNotBreakCaller`: a throwing notifier is swallowed
+  (logged locally); the caller's original event still captures.
 
 Interception uses `Options.beforeSend` returning null (records the event,
 never ships). The SEVERE stack traces on stderr during the run are the

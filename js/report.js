@@ -66,10 +66,9 @@ function shouldDrop(key) {
   return false
 }
 
-function emit(level, msg, cause, tags, dedupKey) {
-  console[level === 'error' ? 'error' : 'warn'](`[${level.toUpperCase()}] ${msg}:`, cause)
-  // D005: user lane delivers always, before the init + rate-window gate
-  dispatchEventSafely('tackbox:error', { msg, cause, tags, dedupKey, level })
+// captureEvent is the gated Sentry sink: nothing before init or inside the
+// rate window. Shared by emit (report*) and reportQuiet.
+function captureEvent(level, msg, cause, tags, dedupKey) {
   if (!ready || shouldDrop(dedupKey)) return
   const causeErr = cause instanceof Error ? cause : (cause == null ? null : new Error(String(cause)))
   Sentry.withScope(scope => {
@@ -78,6 +77,13 @@ function emit(level, msg, cause, tags, dedupKey) {
     if (tags) for (const k of Object.keys(tags)) scope.setTag(k, String(tags[k]))
     Sentry.captureException(causeErr ? new Error(msg, { cause: causeErr }) : new Error(msg))
   })
+}
+
+function emit(level, msg, cause, tags, dedupKey) {
+  console[level === 'error' ? 'error' : 'warn'](`[${level.toUpperCase()}] ${msg}:`, cause)
+  // D005: user lane delivers always, before the init + rate-window gate
+  dispatchEventSafely('tackbox:error', { msg, cause, tags, dedupKey, level })
+  captureEvent(level, msg, cause, tags, dedupKey)
 }
 
 function reportError(msg, cause, tags, dedupKey) {
@@ -91,6 +97,22 @@ function reportWarn(msg, cause, tags, dedupKey) {
 function reportSynthError(msg, tags, dedupKey) {
   // synth has no caught error; null keeps the capture a plain Error(msg)
   emit('error', msg, null, tags, dedupKey)
+}
+
+// reportQuiet: warning-level capture with no user lane. For background /
+// self-healed / degraded-with-fallback failures.
+function reportQuiet(msg, cause, tags, dedupKey) {
+  console.warn(`[QUIET] ${msg}:`, cause)
+  captureEvent('warning', msg, cause, tags, dedupKey)
+}
+
+// notify: user lane only, no capture and no rate-window state touched, so a
+// following reportError/reportWarn with the same dedupKey still captures. For
+// an expected environmental fault (the user lost connectivity). cause is the
+// caught error the notice is about.
+function notify(msg, cause, tags, dedupKey) {
+  console.warn(`[NOTICE] ${msg}:`, cause)
+  dispatchEventSafely('tackbox:error', { msg, cause, tags, dedupKey, level: 'notice' })
 }
 
 function reportPanic(name, recovered) {
@@ -129,7 +151,7 @@ function maskDSN(dsn) {
 
 function dispatchEventSafely(name, detail) {
   if (typeof window === 'undefined' || typeof CustomEvent === 'undefined') return
-  // no-report: event dispatch only, capture already happened upstream
+  // no-report: dispatch failure loses only the notice; the verb's local log already ran
   try {
     window.dispatchEvent(new CustomEvent(name, { detail }))
   } catch (e) {
@@ -144,7 +166,9 @@ module.exports = {
   verify,
   reportError,
   reportWarn,
+  reportQuiet,
   reportSynthError,
+  notify,
   reportPanic,
   setupGlobalHandlers,
 }

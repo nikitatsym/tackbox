@@ -12,6 +12,7 @@ const REPORTER_NAMES = new Set([
   'reportSynthError',
   'reportApiError',
   'reportWarn',
+  'reportQuiet',
   'reportLayerError',
 ])
 
@@ -19,6 +20,7 @@ const REPORTER_NAMES = new Set([
 const REPORTER_FULL = new Set([
   'reportError',
   'reportWarn',
+  'reportQuiet',
   'reportApiError',
   'reportLayerError',
 ])

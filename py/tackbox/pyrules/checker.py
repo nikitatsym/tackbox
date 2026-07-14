@@ -33,7 +33,7 @@ _EXIT_CALLS = frozenset({"sys.exit", "os._exit"})
 # go/report by origin and JS credits tackbox/report (DECISIONS D004). Name-model
 # limitation: a same-named function from any module is credited too; origin is
 # not provable source-only.
-_BUILTIN_REPORTERS = frozenset({"report_error", "report_warn", "report_panic"})
+_BUILTIN_REPORTERS = frozenset({"report_error", "report_warn", "report_quiet", "report_panic"})
 
 
 def _dotted_name(expr: ast.expr) -> str:

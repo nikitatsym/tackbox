@@ -149,40 +149,133 @@ func Flush(timeout ...time.Duration) {
 	sentry.Flush(d)
 }
 
-func SentryErr(ctx context.Context, msg string, err error, tags map[string]string, dedupKey string) {
-	sentryErr(ctx, msg, err, tags, dedupKey)
+// Notice level strings, carried to the user-lane sink (SetNotifier).
+const (
+	noticeError   = "error"
+	noticeWarning = "warning"
+	noticeNotice  = "notice"
+	noticeFatal   = "fatal"
+)
+
+// Error captures an unrecoverable failure handled here: local log + user lane +
+// error-level capture.
+func Error(ctx context.Context, msg string, err error, tags map[string]string, dedupKey string) {
+	emit(ctx, slog.LevelError, sentry.LevelError, noticeError, msg, err, tags, dedupKey)
 }
 
-// sentryErr is the shared error-level capture core. The local log runs before
-// the rate-limit drop, so a rate-limited event still leaves a local record.
-// key is both the rate-limit bucket and the Sentry fingerprint: the public
-// SentryErr passes a literal dedupKey, a library primitive (GoSafe) passes a
-// per-name key it builds directly.
-func sentryErr(ctx context.Context, msg string, err error, tags map[string]string, key string) {
-	logAt(ctx, slog.LevelError, msg, err, tags)
+// Warn captures a transient or external fault you recovered from: local log +
+// user lane + warning-level capture.
+func Warn(ctx context.Context, msg string, err error, tags map[string]string, dedupKey string) {
+	emit(ctx, slog.LevelWarn, sentry.LevelWarning, noticeWarning, msg, err, tags, dedupKey)
+}
+
+// Quiet captures without the user lane: local log + warning-level capture, no
+// notice. For background / self-healed / degraded-with-fallback failures where
+// anything error-severe would deserve user visibility.
+func Quiet(ctx context.Context, msg string, err error, tags map[string]string, dedupKey string) {
+	emit(ctx, slog.LevelWarn, sentry.LevelWarning, "", msg, err, tags, dedupKey)
+}
+
+// Notify feeds only the user lane: local log + a 'notice'-level notice, no
+// capture and no rate-limit state touched, so a following Error/Warn with the
+// same dedupKey still captures. For an expected environmental fault (the user
+// lost connectivity). err is the caught error the notice is about.
+func Notify(ctx context.Context, msg string, err error, tags map[string]string, dedupKey string) {
+	logAt(ctx, slog.LevelWarn, msg, err, tags)
+	dispatchNotice(Notice{Msg: msg, Level: noticeNotice, Tags: tags, DedupKey: dedupKey, Cause: err})
+}
+
+// emit is the shared lane router for Error/Warn/Quiet and the task-failure
+// paths. The local log runs first; the user lane (D005) is dispatched
+// unconditionally before the init+rate gate when noticeLevel is non-empty;
+// capture runs last, behind that gate. key is both the rate-limit bucket and
+// the Sentry fingerprint - the public verbs pass a literal dedupKey, the
+// GoSafe wrapper passes a per-name key it builds directly.
+func emit(ctx context.Context, logLevel slog.Level, level sentry.Level, noticeLevel, msg string, err error, tags map[string]string, key string) {
+	logAt(ctx, logLevel, msg, err, tags)
+	if noticeLevel != "" {
+		dispatchNotice(Notice{Msg: msg, Level: noticeLevel, Tags: tags, DedupKey: key, Cause: err})
+	}
 	if !ready || shouldDrop(key) {
 		return
 	}
-	capture(ctx, msg, err, tags, key, sentry.LevelError)
+	capture(ctx, msg, err, tags, key, level)
 }
 
-func Warn(ctx context.Context, msg string, err error, tags map[string]string, dedupKey string) {
-	logAt(ctx, slog.LevelWarn, msg, err, tags)
-	if !ready || shouldDrop(dedupKey) {
+// Notice is one user-lane event handed to the registered notifier. The app
+// owns rendering and dedup/coalescing (keyed on DedupKey); the helper never
+// suppresses the user lane (D005).
+type Notice struct {
+	Msg      string
+	Level    string
+	Tags     map[string]string
+	DedupKey string
+	Cause    error
+}
+
+var (
+	notifierMu sync.RWMutex
+	notifier   func(Notice)
+)
+
+// SetNotifier registers the user-lane sink; a nil fn clears it. Safe for
+// concurrent registration. With no notifier the user lane is a no-op (the local
+// log and capture still run). The callback runs on the caller's goroutine.
+func SetNotifier(fn func(Notice)) {
+	notifierMu.Lock()
+	notifier = fn
+	notifierMu.Unlock()
+}
+
+func dispatchNotice(n Notice) {
+	notifierMu.RLock()
+	fn := notifier
+	notifierMu.RUnlock()
+	if fn == nil {
 		return
 	}
-	capture(ctx, msg, err, tags, dedupKey, sentry.LevelWarning)
+	defer func() {
+		if rec := recover(); rec != nil {
+			// A throwing notifier must not break the caller's path or recurse
+			// into the user lane: quiet-lane capture only (no notice).
+			Quiet(context.Background(), "report notifier failed", asError(rec), nil, "report.notifier")
+		}
+	}()
+	fn(n)
 }
 
-func Panic(name string, recovered any) {
+// Option configures a background-task wrapper (GoSafe) or Panic. Silent() opts
+// a task's failure out of the user lane (telemetry only); the default surfaces.
+type Option func(*taskOptions)
+
+type taskOptions struct{ silent bool }
+
+func Silent() Option { return func(o *taskOptions) { o.silent = true } }
+
+func asError(v any) error {
+	if err, ok := v.(error); ok {
+		return err
+	}
+	return fmt.Errorf("%v", v)
+}
+
+// Panic captures a recovered panic at fatal level under the per-name
+// fingerprint panic:<name>. By default it also feeds the user lane; Silent()
+// (used by a quiet background task) opts out of the notice.
+func Panic(name string, recovered any, opts ...Option) {
+	o := taskOptions{}
+	for _, opt := range opts {
+		opt(&o)
+	}
 	logger.LogAttrs(context.Background(), levelFatal, "panic in "+name,
 		slog.Any("recovered", recovered),
 		slog.String("stack", string(debug.Stack())))
-	if !ready {
-		return
-	}
 	key := "panic:" + name
-	if shouldDrop(key) {
+	if !o.silent {
+		dispatchNotice(Notice{Msg: "panic in " + name, Level: noticeFatal,
+			Tags: map[string]string{"source": name}, DedupKey: key, Cause: asError(recovered)})
+	}
+	if !ready || shouldDrop(key) {
 		return
 	}
 	hub := sentry.CurrentHub().Clone()
@@ -209,27 +302,37 @@ func Crumb(category, message string, data map[string]any) {
 
 // GoSafe runs fn in a goroutine wrapped by recover; panics and returned
 // errors are captured, each under a per-name fingerprint (panic:<name>,
-// go.task:<name>) so goroutines group and rate-limit independently.
-func GoSafe(name string, fn func() error) {
+// go.task:<name>) so goroutines group and rate-limit independently. By default
+// a failure also surfaces to the user lane; Silent() routes it telemetry-only.
+func GoSafe(name string, fn func() error, opts ...Option) {
+	o := taskOptions{}
+	for _, opt := range opts {
+		opt(&o)
+	}
 	go func() {
 		defer func() {
 			if rec := recover(); rec != nil {
-				Panic(name, rec)
+				Panic(name, rec, opts...)
 			}
 		}()
-		reportTaskErr(name, fn())
+		reportTaskErr(name, fn(), o.silent)
 	}()
 }
 
 // reportTaskErr captures a background task's returned error under a per-name
 // fingerprint (go.task:<name>), mirroring Panic's per-name grouping. A library
 // primitive builds this key directly; the literal-dedupKey rule governs app
-// call sites, not the wrapper. No-op on nil.
-func reportTaskErr(name string, err error) {
+// call sites, not the wrapper. A silent task captures telemetry-only at warning
+// (the quiet lane); otherwise error-level plus the user lane. No-op on nil.
+func reportTaskErr(name string, err error, silent bool) {
 	if err == nil {
 		return
 	}
-	sentryErr(context.Background(), "background task failed", err,
+	logLevel, level, notice := slog.LevelError, sentry.LevelError, noticeError
+	if silent {
+		logLevel, level, notice = slog.LevelWarn, sentry.LevelWarning, ""
+	}
+	emit(context.Background(), logLevel, level, notice, "background task failed", err,
 		map[string]string{"task": name}, "go.task:"+name)
 }
 

@@ -27,7 +27,7 @@ func TestLocalLogCarriesTagsWhenCaptureDisabled(t *testing.T) {
 		t.Fatal("empty DSN must leave capture disabled")
 	}
 
-	SentryErr(context.Background(), "unlock failed", errors.New("bad passphrase"),
+	Error(context.Background(), "unlock failed", errors.New("bad passphrase"),
 		map[string]string{"item": "work-key"}, "vault.unlock")
 
 	rec := decodeLine(t, buf.Bytes())
@@ -155,14 +155,205 @@ func resetRateLimit() {
 	})
 }
 
+func (r *recorder) levelOf(fp string) (sentry.Level, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range r.events {
+		if strings.Join(e.Fingerprint, ",") == fp {
+			return e.Level, true
+		}
+	}
+	return "", false
+}
+
+// noticeRecorder captures the user-lane notices a registered notifier receives.
+type noticeRecorder struct {
+	mu      sync.Mutex
+	notices []Notice
+}
+
+func (n *noticeRecorder) count() int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return len(n.notices)
+}
+
+func (n *noticeRecorder) at(i int) Notice {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.notices[i]
+}
+
+// useNotifier installs a recording notifier and restores the prior one on
+// cleanup, so a test's user-lane state never leaks into the next.
+func useNotifier(t *testing.T) *noticeRecorder {
+	t.Helper()
+	nr := &noticeRecorder{}
+	notifierMu.RLock()
+	prev := notifier
+	notifierMu.RUnlock()
+	SetNotifier(func(n Notice) {
+		nr.mu.Lock()
+		nr.notices = append(nr.notices, n)
+		nr.mu.Unlock()
+	})
+	t.Cleanup(func() { SetNotifier(prev) })
+	return nr
+}
+
+// Error feeds the user lane even with capture disabled (empty DSN): the notice
+// is delivered before the readiness gate, capture stays off.
+func TestReportDispatchesUserLaneEvenWhenNotReady(t *testing.T) {
+	rec := initRecorder(t)
+	prevReady := ready
+	ready = false
+	t.Cleanup(func() { ready = prevReady })
+	nr := useNotifier(t)
+
+	Error(context.Background(), "connection lost mid-stream", errors.New("boom"),
+		map[string]string{"area": "net"}, "net.conn")
+
+	if nr.count() != 1 {
+		t.Fatalf("user lane must dispatch without init: got %d notices", nr.count())
+	}
+	if got := nr.at(0); got.Level != "error" || got.DedupKey != "net.conn" {
+		t.Errorf("notice = %+v, want level=error dedupKey=net.conn", got)
+	}
+	if rec.count() != 0 {
+		t.Errorf("capture must stay gated off when not ready: got %d events", rec.count())
+	}
+}
+
+// Rate-limited: both calls reach the user lane, the second capture is dropped.
+func TestReportDispatchesUserLaneWhenRateLimited(t *testing.T) {
+	rec := initRecorder(t)
+	nr := useNotifier(t)
+
+	Error(context.Background(), "poll failed on stale token", errors.New("e1"), nil, "poll.stale")
+	Error(context.Background(), "poll failed on stale token", errors.New("e2"), nil, "poll.stale")
+
+	if nr.count() != 2 {
+		t.Errorf("every event reaches the user lane: got %d notices, want 2", nr.count())
+	}
+	if rec.count() != 1 {
+		t.Errorf("duplicate capture suppressed within the window: got %d events, want 1", rec.count())
+	}
+}
+
+// Quiet: warning-level capture, no user lane.
+func TestQuietCapturesWarningNoUserLane(t *testing.T) {
+	rec := initRecorder(t)
+	nr := useNotifier(t)
+
+	Quiet(context.Background(), "cache refresh degraded, using stale", errors.New("timeout"), nil, "cache.refresh")
+
+	if nr.count() != 0 {
+		t.Errorf("quiet must not touch the user lane: got %d notices", nr.count())
+	}
+	if rec.count() != 1 {
+		t.Fatalf("quiet must capture: got %d events, want 1", rec.count())
+	}
+	if lv, _ := rec.levelOf("cache.refresh"); lv != sentry.LevelWarning {
+		t.Errorf("quiet capture level = %v, want warning", lv)
+	}
+}
+
+// Notify feeds only the user lane, captures nothing, and touches no rate-limit
+// state - so a following Error on the same dedupKey still captures.
+func TestNotifyUserLaneOnlyDoesNotConsumeRateSlot(t *testing.T) {
+	rec := initRecorder(t)
+	nr := useNotifier(t)
+
+	Notify(context.Background(), "you appear to be offline", errors.New("net down"), nil, "conn.offline")
+	if nr.count() != 1 || nr.at(0).Level != "notice" {
+		t.Fatalf("notify must dispatch one 'notice' event: got %d notices", nr.count())
+	}
+	if rec.count() != 0 {
+		t.Fatalf("notify must not capture: got %d events", rec.count())
+	}
+
+	// Same dedupKey: proves notify did not consume the capture's rate slot.
+	Error(context.Background(), "still offline after retry", errors.New("net down"), nil, "conn.offline")
+	if rec.count() != 1 {
+		t.Errorf("following Error on the notify dedupKey must still capture: got %d events", rec.count())
+	}
+	if nr.count() != 2 {
+		t.Errorf("Error also reaches the user lane: got %d notices, want 2", nr.count())
+	}
+}
+
+// Panic feeds the user lane at fatal by default; Silent() (the quiet task
+// opt-out) captures the panic but skips the user lane.
+func TestPanicDefaultUserLaneAndSilentOptOut(t *testing.T) {
+	rec := initRecorder(t)
+	nr := useNotifier(t)
+
+	Panic("tray-loop", "boom")
+	Panic("indexer", "boom", Silent())
+
+	if nr.count() != 1 {
+		t.Fatalf("only the default panic feeds the user lane: got %d notices, want 1", nr.count())
+	}
+	if got := nr.at(0); got.Level != "fatal" || got.DedupKey != "panic:tray-loop" || got.Msg != "panic in tray-loop" {
+		t.Errorf("panic notice = %+v, want fatal panic:tray-loop 'panic in tray-loop'", got)
+	}
+	if rec.count() != 2 {
+		t.Errorf("both panics capture (per-name): got %d events, want 2", rec.count())
+	}
+}
+
+// A quiet background task captures at warning with no user lane; a loud one
+// captures at error and feeds the user lane. Asserted through reportTaskErr,
+// the synchronous core GoSafe (with/without Silent) drives.
+func TestReportTaskErrSilentRoutesQuiet(t *testing.T) {
+	rec := initRecorder(t)
+	nr := useNotifier(t)
+
+	reportTaskErr("quiet-task", errors.New("boom"), true)
+	reportTaskErr("loud-task", errors.New("boom"), false)
+
+	if nr.count() != 1 || nr.at(0).DedupKey != "go.task:loud-task" {
+		t.Errorf("only the loud task feeds the user lane: got %d notices", nr.count())
+	}
+	if lv, _ := rec.levelOf("go.task:quiet-task"); lv != sentry.LevelWarning {
+		t.Errorf("quiet task capture level = %v, want warning", lv)
+	}
+	if lv, _ := rec.levelOf("go.task:loud-task"); lv != sentry.LevelError {
+		t.Errorf("loud task capture level = %v, want error", lv)
+	}
+}
+
+// A throwing notifier must not break the caller's path or recurse: the failure
+// is captured on the quiet lane and the original event still ships.
+func TestNotifierPanicDoesNotBreakCaller(t *testing.T) {
+	rec := initRecorder(t)
+	prevNotifier := func(Notice) {}
+	notifierMu.RLock()
+	prevNotifier = notifier
+	notifierMu.RUnlock()
+	SetNotifier(func(Notice) { panic("notifier is broken") })
+	t.Cleanup(func() { SetNotifier(prevNotifier) })
+
+	// Returns normally: if the notifier panic propagated, this test would crash.
+	Error(context.Background(), "upload failed mid-flight", errors.New("hangup"), nil, "upload.fail")
+
+	fps := rec.fingerprints()
+	if !fps["upload.fail"] {
+		t.Errorf("original event must still capture after a notifier panic; got %v", fps)
+	}
+	if !fps["report.notifier"] {
+		t.Errorf("the broken notifier must be captured on the quiet lane; got %v", fps)
+	}
+}
+
 // GoSafe's error path fingerprints and rate-limits per task name: distinct
 // names never share a bucket, the same name within the window collapses to one
 // event. Asserted through the synchronous core reportTaskErr.
 func TestGoSafeErrPathPerNameFingerprint(t *testing.T) {
 	rec := initRecorder(t)
 
-	reportTaskErr("alpha", errors.New("boom"))
-	reportTaskErr("beta", errors.New("boom"))
+	reportTaskErr("alpha", errors.New("boom"), false)
+	reportTaskErr("beta", errors.New("boom"), false)
 	if rec.count() != 2 {
 		t.Fatalf("distinct names: got %d events, want 2 (neither dropped)", rec.count())
 	}
@@ -182,8 +373,8 @@ func TestGoSafeErrPathPerNameFingerprint(t *testing.T) {
 
 	resetRateLimit()
 	rec.reset()
-	reportTaskErr("gamma", errors.New("first"))
-	reportTaskErr("gamma", errors.New("second"))
+	reportTaskErr("gamma", errors.New("first"), false)
+	reportTaskErr("gamma", errors.New("second"), false)
 	if rec.count() != 1 {
 		t.Fatalf("same name within window: got %d events, want 1 (second dropped)", rec.count())
 	}

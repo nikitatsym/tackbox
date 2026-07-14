@@ -1,5 +1,5 @@
 // Package doublecapture implements ERC005: a single err-branch must
-// not both capture (a go/report SentryErr/Warn call or a declared sink)
+// not both capture (a go/report Error/Warn call or a declared sink)
 // and `return err` — the upstream handler would re-capture and inflate
 // Sentry counts. Pick one: capture and swallow, or propagate without
 // capture. Panic-capture is terminal and excluded.

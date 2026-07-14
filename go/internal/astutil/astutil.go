@@ -23,7 +23,7 @@ const reportPkgPath = "github.com/nikitatsym/tackbox/go/report"
 // Capture tables are package-gated: an export of go/report counts only by
 // this explicit list, never by signature inference. error-capture conflicts
 // with `return err` (ERC005); panic-capture is terminal and does not.
-var reportErrCapture = map[string]bool{"SentryErr": true, "Warn": true}
+var reportErrCapture = map[string]bool{"Error": true, "Warn": true, "Quiet": true}
 var reportPanicCapture = map[string]bool{"Panic": true}
 
 // DeclaredReporter is a `.tackbox-reporters` sink resolved to its package
@@ -131,7 +131,7 @@ func IsCaptureErr(info *types.Info, call *ast.CallExpr, errName string) bool {
 }
 
 // IsReportErrHelper reports whether call's callee resolves to a tier-1
-// go/report error helper (SentryErr/Warn) - the known 5-arg
+// go/report error helper (Error/Warn/Quiet) - the known 5-arg
 // (ctx, msg, err, tags, dedupKey) signature. ERC006's dedupkey rule is gated
 // on it: Panic and tier-2 declared sinks carry no dedupKey of known shape to
 // validate. Mirrors captureKind's package gate.
@@ -144,7 +144,7 @@ func IsReportErrHelper(info *types.Info, call *ast.CallExpr) bool {
 }
 
 // IsReporterCall reports whether call's callee resolves to any recognized
-// reporter: a tier-1 go/report capture (SentryErr/Warn/Panic) or a tier-2
+// reporter: a tier-1 go/report capture (Error/Warn/Quiet/Panic) or a tier-2
 // `.tackbox-reporters` capture sink. Unlike captureKind it does not require
 // the caught error to flow in - ERC006 scrubs every argument of a reporter
 // call for secrets and raw user input regardless of which arg carries the

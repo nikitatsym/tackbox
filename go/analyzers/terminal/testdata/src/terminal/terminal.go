@@ -14,7 +14,7 @@ func doThing() (int, error) { return 0, nil }
 var bootErr = error(nil)
 
 func okCapture() {
-	report.SentryErr("boot", "config broken", bootErr, nil, "boot.fatal")
+	report.Error("boot", "config broken", bootErr, nil, "boot.fatal")
 	log.Fatal("config broken")
 }
 

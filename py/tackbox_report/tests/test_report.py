@@ -292,5 +292,111 @@ def test_concurrent_run_tasks_async_no_scope_bleed(events):
         assert e["tags"]["iso"] == f"i{name[4:]}"  # isolation tag did not bleed
 
 
+# --------------------------------------------------------------------------
+# user lane: report* -> notifier (always); quiet -> none; notify -> no capture
+# --------------------------------------------------------------------------
+@pytest.fixture
+def notices():
+    """Record every Notice the registered notifier receives; clear on teardown."""
+    got: list[report.Notice] = []
+    report.set_notifier(got.append)
+    yield got
+    report.set_notifier(None)
+
+
+def test_report_error_dispatches_user_lane_when_not_ready(log, notices):
+    report._reset_for_test()  # leaves the fixture's notifier in place
+    report.init("", logger=log, silent_missing=True)
+    assert report.is_ready() is False
+    report.report_error("connection lost mid-stream", RuntimeError("boom"), {"area": "net"}, "net.conn")
+    assert len(notices) == 1  # user lane delivers even with capture disabled
+    assert notices[0].level == "error"
+    assert notices[0].dedup_key == "net.conn"
+
+
+def test_report_error_dispatches_user_lane_when_rate_limited(events, notices):
+    report.report_error("poll failed on stale token", RuntimeError("e1"), None, "poll.stale")
+    report.report_error("poll failed on stale token", RuntimeError("e2"), None, "poll.stale")
+    assert len(events) == 1  # duplicate capture dropped within the window
+    assert len(notices) == 2  # every event reaches the user lane
+
+
+def test_quiet_captures_warning_no_user_lane(events, notices):
+    report.report_quiet("cache refresh degraded, using stale", RuntimeError("timeout"), None, "cache.refresh")
+    assert len(events) == 1
+    assert events[0]["level"] == "warning"
+    assert events[0]["fingerprint"] == ["cache.refresh"]
+    assert notices == []  # quiet never touches the user lane
+
+
+def test_notify_user_lane_only_does_not_consume_rate_slot(events, notices):
+    report.notify("you appear to be offline", RuntimeError("net down"), None, "conn.offline")
+    assert len(notices) == 1
+    assert notices[0].level == "notice"
+    assert events == []  # notify captures nothing
+    # Same dedup_key: proves notify consumed no capture rate slot.
+    report.report_error("still offline after retry", RuntimeError("net down"), None, "conn.offline")
+    assert len(events) == 1
+    assert len(notices) == 2
+
+
+def test_report_panic_dispatches_fatal_notice(events, notices):
+    report.report_panic("ipc-loop", RuntimeError("kaboom"))
+    assert len(events) == 1
+    assert notices[0].level == "fatal"
+    assert notices[0].dedup_key == "panic:ipc-loop"
+    assert notices[0].msg == "panic in ipc-loop"
+
+
+def test_run_task_default_feeds_user_lane(events, notices):
+    def boom():
+        raise ValueError("in task")
+
+    report.run_task("indexer", boom, join=True)
+    assert len(events) == 1
+    assert events[0]["level"] == "error"
+    assert len(notices) == 1
+    assert notices[0].dedup_key == "task:indexer"
+
+
+def test_run_task_quiet_opt_out(events, notices):
+    def boom():
+        raise ValueError("in task")
+
+    report.run_task("indexer", boom, join=True, quiet=True)
+    assert len(events) == 1
+    assert events[0]["level"] == "warning"  # quiet lane
+    assert events[0]["fingerprint"] == ["task:indexer"]
+    assert notices == []  # quiet task: telemetry only
+
+
+def test_run_task_async_quiet_opt_out(events, notices):
+    async def boom():
+        raise ValueError("in task")
+
+    async def main():
+        await report.run_task_async("indexer", boom(), quiet=True)
+
+    asyncio.run(main())
+    assert len(events) == 1
+    assert events[0]["level"] == "warning"
+    assert notices == []
+
+
+def test_notifier_exception_does_not_break_caller(events):
+    def boom_notifier(_notice):
+        raise RuntimeError("notifier is broken")
+
+    report.set_notifier(boom_notifier)
+    try:
+        # Returns normally: a propagating notifier error would raise here.
+        report.report_error("upload failed mid-flight", RuntimeError("hangup"), None, "upload.fail")
+    finally:
+        report.set_notifier(None)
+    fps = {tuple(e["fingerprint"]) for e in events}
+    assert ("upload.fail",) in fps  # original event still captured
+    assert ("report.notifier",) in fps  # broken notifier captured telemetry-only
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

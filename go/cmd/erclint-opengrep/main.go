@@ -189,7 +189,7 @@ func emitMachine(w io.Writer, jsonOut []byte, cwd string) error {
 		} `json:"results"`
 	}
 	if err := json.Unmarshal(jsonOut, &parsed); err != nil {
-		report.SentryErr(context.Background(),
+		report.Error(context.Background(),
 			"opengrep --json output unparseable", err, nil, "erclint-opengrep.machine")
 		// Never drop a finding: a location-unknown record makes the caller
 		// over-report rather than silently see zero findings.

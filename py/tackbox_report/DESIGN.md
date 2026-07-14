@@ -20,13 +20,25 @@ is_ready() -> bool
 verify(timeout=3.0) -> None    # raises ReportError before init
 flush(timeout=None) -> None
 
-report_error(msg, cause=None, tags=None, dedup_key="") -> None  # error
-report_warn(msg, cause=None, tags=None, dedup_key="") -> None   # warning
-report_panic(name, recovered) -> None       # fatal, fingerprint panic:<name>
+report_error(msg, cause=None, tags=None, dedup_key="") -> None
+report_warn(msg, cause=None, tags=None, dedup_key="") -> None
+report_quiet(msg, cause=None, tags=None, dedup_key="") -> None
+notify(msg, cause=None, tags=None, dedup_key="") -> None
+report_panic(name, recovered) -> None       # fatal, panic:<name>
 crumb(category, message, data=None) -> None
-run_task(name, fn, *, daemon=False, join=False) -> Thread   # GoSafe, threads
-run_task_async(name, coro) -> asyncio.Task                  # GoSafe, asyncio
+set_notifier(fn | None) -> None   # sink for Notice(msg, level, dedup_key, ...)
+run_task(name, fn, *, daemon=False, join=False, quiet=False) -> Thread
+run_task_async(name, coro, *, quiet=False) -> asyncio.Task
 ```
+
+Three lanes - local log (always), user lane (`set_notifier`), Sentry capture
+(gated). `report_error`/`report_warn` feed all three; `report_quiet` skips the
+user lane; `notify` feeds only the user lane (no capture, no rate-limit state
+touched); `report_panic` feeds all three by default. A background task's failure
+surfaces to the user lane by default; `quiet=True` routes it telemetry-only at
+warning. The user lane is dispatched before the readiness+rate gate and is never
+rate-limited (D005); a notifier that raises is caught and captured
+telemetry-only, never breaking the caller's path or recursing into the lane.
 
 Invariants carried over verbatim from `go/report`:
 

@@ -140,14 +140,15 @@ ceremony.
 - Go: `go/report` by import origin (already shipped).
 - JS: `tackbox/report` by import origin (already shipped).
 - Python: `tackbox_report`'s `report_error` / `report_warn` /
-  `report_panic` by function NAME - a built-in set in pyrules.
+  `report_quiet` / `report_panic` by function NAME - a built-in set in
+  pyrules.
   pyrules has no cross-module type info, so recognition is name-based,
   not origin-based. Inherent limitation: a same-named function from
   ANY module is credited too - the engine cannot prove the origin
   source-only. Argument-flow is still required (the caught must reach
   the call), the same gate as the tier-2 declared-reporter path.
 - Java: the `nl.tsym.tackbox.report.Report` methods `error` / `warn` /
-  `panic` by origin (package + class), through the same source-only
+  `quiet` / `panic` by origin (package + class), through the same source-only
   origin machinery javalint already uses for slf4j, System.Logger, and
   tier-2 declared reporters. A same-named Report from another package,
   or one declared in the consumer's own file, resolves to a different
@@ -166,6 +167,13 @@ internal `except` now calls `report_error` directly - identical
 routing (per-name `task:<name>` fingerprint, log-before-drop,
 rate-limit) - so the background boundary is a recognized capture, not
 a false-positive swallow.
+
+Amendment (2026-07-15): the `quiet` verb (Go `Quiet`, JS `reportQuiet`,
+Python `report_quiet`, Java `quiet`) is a capture - it skips only the
+user lane - so it joins each language's capture set above, including
+the dedupKey-shape validation where the engine has it. `notify` is NOT
+a capture and is never credited by these sets; whether notify
+terminates an err-branch is a separate, gated decision.
 
 Scope unchanged (D001): this is capture-shape recognition, decidable
 from the AST and imports, not value or content analysis. See the

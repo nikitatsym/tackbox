@@ -10,7 +10,7 @@ import (
 func okCaptureOnly() error {
 	err := errors.New("x")
 	if err != nil {
-		report.SentryErr("auth", "bad creds", err, nil, "auth.creds")
+		report.Error("auth", "bad creds", err, nil, "auth.creds")
 		return errors.New("wrap")
 	}
 	return errors.New("noop")
@@ -28,7 +28,7 @@ func okPropagateOnly() error {
 func violationBoth() error {
 	err := errors.New("x")
 	if err != nil { // want `ERC005:.*err=err`
-		report.SentryErr("auth", "bad creds", err, nil, "auth.creds")
+		report.Error("auth", "bad creds", err, nil, "auth.creds")
 		return err
 	}
 	return errors.New("noop")
@@ -49,7 +49,7 @@ func okPanicCaptureAndReturn() error {
 func stringifiedReturnFires() error {
 	err := errors.New("x")
 	if err != nil { // want `ERC005:.*err=err`
-		report.SentryErr("auth", "bad creds", err, nil, "auth.creds")
+		report.Error("auth", "bad creds", err, nil, "auth.creds")
 		return fmt.Errorf("ctx: %v", err)
 	}
 	return errors.New("noop")
@@ -62,7 +62,7 @@ func wrapCode(cause error) (int, error) { return 0, cause }
 func tupleReturnFires() (int, error) {
 	err := errors.New("x")
 	if err != nil { // want `ERC005:.*err=err`
-		report.SentryErr("auth", "bad creds", err, nil, "auth.creds")
+		report.Error("auth", "bad creds", err, nil, "auth.creds")
 		return wrapCode(err)
 	}
 	return 1, nil
