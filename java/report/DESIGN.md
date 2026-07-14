@@ -6,8 +6,8 @@ expects. Empty DSN = log-only no-op. Java mirror of `go/report/report.go`
 and `js/report.js`.
 
 Standalone module, built on its own. It emits an OSGi bundle and is
-Maven-Central-ready, but nothing is published here: no GPG signing, no
-Central deploy, no reactor/CI wiring (see "Packaging").
+published to Maven Central as `io.github.nikitatsym:report` (see
+"Packaging" and `docs/publishing-helpers.md`).
 
 ## Status
 
@@ -17,8 +17,9 @@ Central deploy, no reactor/CI wiring (see "Packaging").
 - Build/test: `mvn -f java/report/pom.xml test` -> 8 tests green.
   `mvn -f java/report/pom.xml package` emits the OSGi bundle jar plus the
   sources and javadoc jars.
-- sentry-java: `io.sentry:sentry:8.47.0` (8.x, current major).
-- Coordinates: `nl.tsym.tackbox:report:0.1.0`, packaging `bundle`.
+- sentry-java: 8.x (exact version pinned in the pom).
+- Coordinates: `io.github.nikitatsym:report` (version from the pom),
+  packaging `bundle`. The Java package stays `nl.tsym.tackbox.report`.
 - Isolation API: `Sentry.captureException(t, scope -> ...)` /
   `Sentry.captureMessage(msg, scope -> ...)` per capture - the 8.x
   Scopes-API analog of go/report's `sentry.CurrentHub().Clone()`
@@ -121,11 +122,11 @@ default grouping when our handler chains to it.
 `bundle`). The emitted `MANIFEST.MF` carries:
 
     Bundle-SymbolicName: nl.tsym.tackbox.report
-    Export-Package:      nl.tsym.tackbox.report;version="0.1.0"
+    Export-Package:      nl.tsym.tackbox.report;version="${project.version}"
     Import-Package:      io.sentry;version="[8,9)",
                          io.sentry.protocol;version="[8,9)", ...
 
-for the Eclipse/Equinox (sts-wand) stack. `java.lang.System.Logger` needs
+for the Eclipse/Equinox (sts) stack. `java.lang.System.Logger` needs
 no `Import-Package`: `java.*` is boot-delegated in OSGi, never imported.
 `io.sentry` is imported (not embedded) because `Options.beforeSend` leaks
 `io.sentry.SentryOptions.BeforeSendCallback`, so bnd declares the export
@@ -154,7 +155,7 @@ self-contained (drop-in, no consumer-side wrapping) -
 
 Tradeoff: the bundle then carries a private copy of sentry and re-exports
 `io.sentry`; if the platform later gains a real sentry bundle there are two
-copies of the `io.sentry` class space, a wiring hazard. Given sts-wand is a
+copies of the `io.sentry` class space, a wiring hazard. Given sts is a
 controlled Equinox target either is workable; the lean import is the
 default because its manifest is verifiable and correct without first
 solving sentry's own (upstream-unsolved) OSGi metadata. Flip by adding the
@@ -162,15 +163,16 @@ two instructions above and dropping the `Import-Package: io.sentry` range.
 
 ### Maven Central
 
-The pom is Central-ready: `nl.tsym.tackbox:report:0.1.0` with `name`,
-`description`, `url`, MIT `licenses`, `developers`, `scm`, and attached
-sources + javadoc jars (`maven-source-plugin`, `maven-javadoc-plugin`).
+The pom carries the Central metadata for `io.github.nikitatsym:report`:
+`name`, `description`, `url`, MIT `licenses`, `developers`, `scm`, and
+attached sources + javadoc jars (`maven-source-plugin`,
+`maven-javadoc-plugin`).
 
-NOT done here - a publish still needs: GPG-sign all artifacts
-(`maven-gpg-plugin`), Central Portal credentials plus the publish plugin
-(`central-publishing-maven-plugin`, or the OSSRH staging flow), and a real
-release version. No CI or publish wiring is added; nothing is signed or
-deployed.
+The `release` profile (`-Prelease`) adds GPG signing (`maven-gpg-plugin`)
+and the Central Portal deploy (`central-publishing-maven-plugin`);
+`.github/workflows/publish-report-java.yml` runs it on a `report-java-v*`
+tag. The published version comes from the pom. Release runbook:
+`docs/publishing-helpers.md`.
 
 ## Load-bearing forks (defaults + alternatives)
 
@@ -182,9 +184,9 @@ deployed.
   invisible to the javalint build by construction - the cleanest way to
   keep javalint's shaded-jar build undisturbed.
 - Package: `nl.tsym.tackbox.report` (sibling to `nl.tsym.tackbox.javalint`).
-- Coordinates: groupId `nl.tsym.tackbox`, artifactId `report`, version
-  `0.1.0` (the first release coordinate, distinct from the linter's 0.0.0
-  dev version). Central-ready but not published (see "Packaging").
+- Coordinates: groupId `io.github.nikitatsym` (the GitHub-verified Central
+  namespace), artifactId `report`; the version comes from the pom.
+  Published to Maven Central (see "Packaging").
 - Alternative considered: a package added to the existing javalint module.
   Rejected - it would drag sentry-java into the javalint classpath and the
   shaded jar, coupling the linter to a runtime SDK it must not carry.

@@ -146,7 +146,7 @@ import package `tackbox_report`, living at `py/tackbox_report/` with its own
 standalone `pyproject.toml`:
 
 - Build backend `setuptools.build_meta` (`setuptools>=68`, `wheel`).
-- Complete metadata: `name`, `version = "0.0.0"`, `description`, `readme`
+- Complete metadata: `name`, `version`, `description`, `readme`
   (`README.md`, the PyPI long description), `license = MIT`, `authors`,
   `requires-python = ">=3.11"`, `keywords`, `project.urls`, and trove
   `classifiers` (Alpha, MIT, OS-independent, Python 3.11-3.13, Typing :: Typed).
@@ -169,20 +169,15 @@ Verified locally: `python -m build` produces the sdist + wheel and `twine check`
 passes both; the wheel contains `tackbox_report/__init__.py` and
 `tackbox_report/py.typed`.
 
-#### Publishing -- still to do (NOT done here)
+#### Publishing
 
-Nothing is published and nothing is wired into CI. The publish step still needs:
-
-- Build the artifacts with `python -m build` (produces `dist/*.whl` +
-  `dist/*.tar.gz`).
-- PyPI credentials -- prefer a **Trusted Publisher** (OIDC) for the
-  `tackbox-report` project over a long-lived API token.
-- A **CI job** (separate from the linter's release job, since these are
-  independent distributions) that builds and uploads on a tag, e.g.
-  `twine upload` / `pypa/gh-action-pypi-publish`.
-- Bump `version` off `0.0.0` for the first real release; each helper release is
-  pinned in consumer manifests, so signatures must not break without a consumer
-  pass (see the plan).
+Published to PyPI as `tackbox-report` via a **Trusted Publisher** (OIDC, no
+stored token). The CI job (`.github/workflows/publish-report-py.yml`, separate
+from the linter's release job, since these are independent distributions)
+builds with `python -m build` and uploads via `pypa/gh-action-pypi-publish` on
+a `report-py-v*` tag; the published version comes from `pyproject.toml`. Each
+helper release is pinned in consumer manifests, so signatures must not break
+without a consumer pass. Release runbook: `docs/publishing-helpers.md`.
 
 ### 3. Linter recognition (pyrules is NAME-based)
 

@@ -83,7 +83,7 @@
       </plugin>
 
       <!-- OSGi bundle: emit MANIFEST.MF with Bundle-SymbolicName /
-           Export-Package / Import-Package for the Eclipse/Equinox (sts-wand)
+           Export-Package / Import-Package for the Eclipse/Equinox (sts)
            stack. sentry-java 8.x ships NO OSGi manifest, so it is imported here
            and the consumer supplies it as a bundle (see DESIGN.md "OSGi + the
            sentry-java dependency"); the Embed-Dependency alternative is
