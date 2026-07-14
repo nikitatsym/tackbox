@@ -68,15 +68,16 @@ function shouldDrop(key) {
 
 function emit(level, msg, cause, tags, dedupKey) {
   console[level === 'error' ? 'error' : 'warn'](`[${level.toUpperCase()}] ${msg}:`, cause)
+  // D005: user lane delivers always, before the init + rate-window gate
+  dispatchEventSafely('tackbox:error', { msg, cause, tags, dedupKey, level })
   if (!ready || shouldDrop(dedupKey)) return
+  const causeErr = cause instanceof Error ? cause : (cause == null ? null : new Error(String(cause)))
   Sentry.withScope(scope => {
     scope.setLevel(level)
     if (dedupKey) scope.setFingerprint([dedupKey])
     if (tags) for (const k of Object.keys(tags)) scope.setTag(k, String(tags[k]))
-    const err = cause instanceof Error ? cause : new Error(String(cause ?? msg))
-    Sentry.captureException(err, { contexts: { tackbox: { msg } } })
+    Sentry.captureException(causeErr ? new Error(msg, { cause: causeErr }) : new Error(msg))
   })
-  dispatchEventSafely('tackbox:error', { msg, cause, tags, dedupKey, level })
 }
 
 function reportError(msg, cause, tags, dedupKey) {
@@ -88,13 +89,15 @@ function reportWarn(msg, cause, tags, dedupKey) {
 }
 
 function reportSynthError(msg, tags, dedupKey) {
-  emit('error', msg, new Error(msg), tags, dedupKey)
+  // synth has no caught error; null keeps the capture a plain Error(msg)
+  emit('error', msg, null, tags, dedupKey)
 }
 
 function reportPanic(name, recovered) {
   const key = 'panic:' + name
   // eslint-disable-next-line tackbox/no-console-error
   console.error(`[FATAL] panic in ${name}:`, recovered)
+  dispatchEventSafely('tackbox:error', { msg: 'panic in ' + name, cause: recovered, tags: { source: name }, dedupKey: key, level: 'fatal' })
   if (!ready || shouldDrop(key)) return
   Sentry.withScope(scope => {
     scope.setLevel('fatal')
