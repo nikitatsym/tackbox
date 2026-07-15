@@ -211,10 +211,11 @@ def test_builtin_tier1_report_error_credits_without_declaration(tmp_path):
 
 def test_builtin_tier1_report_warn_and_panic_credit(tmp_path):
     # report_warn (cause keyword) and report_panic (caught as positional arg) are
-    # both built-in tier-1 sinks.
+    # both built-in tier-1 sinks. report_warn carries a dedup_key (D008); panic
+    # takes no dedup_key.
     src = (
         "def h():\n    try:\n        work()\n"
-        "    except ValueError as e:\n        report_warn('transient', cause=e)\n\n\n"
+        "    except ValueError as e:\n        report_warn('transient', cause=e, dedup_key='task.transient')\n\n\n"
         "def g():\n    try:\n        work()\n"
         "    except ValueError as e:\n        report_panic('loop', e)\n"
     )
@@ -440,3 +441,158 @@ def test_no_report_marker_does_not_suppress_skip(tmp_path):
     _write(tmp_path, "t.py", src)
     r = _flake8(tmp_path, "t.py")
     assert r.returncode == 1 and "TBX008" in r.stdout, r.stdout
+
+
+# --- TBX010 notify gate + double-lane (D006) ---
+
+
+def test_notify_narrow_except_is_clean(tmp_path):
+    # A notify carrying the caught error on a narrow except routes it to the user
+    # lane (gate satisfied): credited for TBX001, no TBX010.
+    src = (
+        "def h():\n    try:\n        work()\n"
+        "    except ConnectionError as e:\n"
+        "        notify('connection lost, retrying', cause=e, dedup_key='net.offline')\n"
+    )
+    _write(tmp_path, "n.py", src)
+    r = _flake8(tmp_path, "n.py")
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+
+
+def test_notify_broad_except_fires(tmp_path):
+    # A notify in a broad `except Exception` routes every failure to the user
+    # lane and blinds telemetry - the gate finding.
+    src = (
+        "def h():\n    try:\n        work()\n"
+        "    except Exception as e:\n"
+        "        notify('connection lost, retrying', cause=e, dedup_key='net.offline')\n"
+    )
+    _write(tmp_path, "n.py", src)
+    r = _flake8(tmp_path, "n.py")
+    assert r.returncode == 1 and "TBX010" in r.stdout, r.stdout
+
+
+def test_notify_without_argflow_still_swallows(tmp_path):
+    # A notify the caught error does not reach is not credited: still a swallow,
+    # and not the notify gate (it is not terminating this failure path).
+    src = (
+        "def h():\n    try:\n        work()\n"
+        "    except ValueError as e:\n"
+        "        notify('connection lost, retrying', cause=other, dedup_key='net.offline')\n"
+    )
+    _write(tmp_path, "n.py", src)
+    r = _flake8(tmp_path, "n.py")
+    assert r.returncode == 1 and "TBX001" in r.stdout, r.stdout
+
+
+def test_notify_double_lane_fires(tmp_path):
+    # capture + notify on one path in a narrow except: error already reaches the
+    # user lane, so the notify double-shows.
+    src = (
+        "def h():\n    try:\n        work()\n"
+        "    except ConnectionError as e:\n"
+        "        report_error('server unreachable', cause=e, dedup_key='net.fail')\n"
+        "        notify('connection lost, retrying', cause=e, dedup_key='net.offline')\n"
+    )
+    _write(tmp_path, "n.py", src)
+    r = _flake8(tmp_path, "n.py")
+    assert r.returncode == 1 and "TBX010" in r.stdout, r.stdout
+
+
+# --- TBX011 msg-static (D007) + dedup_key (D008) ---
+
+
+def test_reporter_dynamic_msg_fires(tmp_path):
+    src = (
+        "def h(m):\n    try:\n        work()\n"
+        "    except ValueError as e:\n"
+        "        report_error(m, cause=e, dedup_key='area.key')\n"
+    )
+    _write(tmp_path, "m.py", src)
+    r = _flake8(tmp_path, "m.py")
+    assert r.returncode == 1 and "TBX011" in r.stdout, r.stdout
+
+
+def test_reporter_dedup_missing_fires(tmp_path):
+    src = (
+        "def h():\n    try:\n        work()\n"
+        "    except ValueError as e:\n"
+        "        report_error('db write failed', cause=e)\n"
+    )
+    _write(tmp_path, "d.py", src)
+    r = _flake8(tmp_path, "d.py")
+    assert r.returncode == 1 and "TBX011" in r.stdout, r.stdout
+
+
+def test_reporter_dedup_not_literal_fires(tmp_path):
+    src = (
+        "def h(k):\n    try:\n        work()\n"
+        "    except ValueError as e:\n"
+        "        report_error('db write failed', cause=e, dedup_key=k)\n"
+    )
+    _write(tmp_path, "d.py", src)
+    r = _flake8(tmp_path, "d.py")
+    assert r.returncode == 1 and "TBX011" in r.stdout, r.stdout
+
+
+def test_reporter_dedup_bad_format_fires(tmp_path):
+    src = (
+        "def h():\n    try:\n        work()\n"
+        "    except ValueError as e:\n"
+        "        report_error('db write failed', cause=e, dedup_key='BadKey')\n"
+    )
+    _write(tmp_path, "d.py", src)
+    r = _flake8(tmp_path, "d.py")
+    assert r.returncode == 1 and "TBX011" in r.stdout, r.stdout
+
+
+def test_quiet_dynamic_msg_clean_dedup_validated(tmp_path):
+    # quiet is telemetry-only: msg-static (D007) does not apply, but the
+    # dedup_key (D008) still does - a valid literal key keeps it clean.
+    src = (
+        "def h(m):\n    try:\n        work()\n"
+        "    except ValueError as e:\n"
+        "        report_quiet(m, cause=e, dedup_key='cache.refresh')\n"
+    )
+    _write(tmp_path, "q.py", src)
+    r = _flake8(tmp_path, "q.py")
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+
+
+def test_verb_defined_in_file_is_exempt(tmp_path):
+    # A file that DEFINES the verb is the library (owns per-name fingerprints,
+    # D002) or a local shadow (D004), not a consumer site: its own call with a
+    # computed dedup_key is not validated.
+    src = (
+        "def report_error(msg, cause=None, tags=None, dedup_key=''):\n    pass\n\n\n"
+        "def run_task(name):\n    try:\n        work()\n"
+        "    except Exception as e:\n"
+        "        report_error('background task failed', cause=e, dedup_key=f'task:{name}')\n"
+    )
+    _write(tmp_path, "lib.py", src)
+    r = _flake8(tmp_path, "lib.py")
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+
+
+# --- D009 marker reason floor ---
+
+
+def test_marker_short_reason_does_not_suppress(tmp_path):
+    # 9-char reason is too cheap: the swallow still fires.
+    src = (
+        "def cleanup():\n    try:\n        work()\n"
+        "    except ValueError as e:\n        # no-report: too short\n        pass\n"
+    )
+    _write(tmp_path, "m.py", src)
+    r = _flake8(tmp_path, "m.py")
+    assert r.returncode == 1 and "TBX001" in r.stdout, r.stdout
+
+
+def test_marker_ten_char_reason_suppresses(tmp_path):
+    src = (
+        "def cleanup():\n    try:\n        work()\n"
+        "    except ValueError as e:\n        # no-report: cleanup ok\n        pass\n"
+    )
+    _write(tmp_path, "m.py", src)
+    r = _flake8(tmp_path, "m.py")
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"

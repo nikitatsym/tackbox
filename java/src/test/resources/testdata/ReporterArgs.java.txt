@@ -1,0 +1,49 @@
+import nl.tsym.tackbox.report.Report;
+
+// JV010 (D007 msg-static + D008 dedupKey): a Report user-lane verb must carry a
+// static-literal msg and a well-formed literal dedupKey.
+class ReporterArgs {
+    void dynamicMsgFires(String detail) {
+        try {
+            risky();
+        } catch (java.io.IOException e) {
+            Report.error(detail, e, null, "net.fail"); // want "JV010.*msg must be a static"
+        }
+    }
+
+    void dedupMissingFires() {
+        try {
+            risky();
+        } catch (java.io.IOException e) {
+            Report.error("disk write failed", e, null); // want "JV010.*dedupKey is required"
+        }
+    }
+
+    void dedupNotLiteralFires(String key) {
+        try {
+            risky();
+        } catch (java.io.IOException e) {
+            Report.error("disk write failed", e, null, key); // want "JV010.*dedupKey must be a static"
+        }
+    }
+
+    void dedupBadFormatFires() {
+        try {
+            risky();
+        } catch (java.io.IOException e) {
+            Report.error("disk write failed", e, null, "BadKey"); // want "JV010.*area.suffix"
+        }
+    }
+
+    // quiet is telemetry-only: msg-static (D007) does not apply, but the
+    // dedupKey (D008) still does - a valid literal key keeps it clean.
+    void quietDynamicMsgClean(String detail) {
+        try {
+            risky();
+        } catch (java.io.IOException e) {
+            Report.quiet(detail, e, null, "cache.refresh");
+        }
+    }
+
+    void risky() throws Exception {}
+}

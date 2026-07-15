@@ -50,7 +50,8 @@ final class Markers {
                         + (d.cause() == MarkerIndex.Cause.TRAILING
                                 ? "it trails code - a marker is a standalone comment line"
                                         + " above the statement it covers"
-                                : "its reason is empty - a marker needs a non-empty reason")
+                                : "its reason is under 10 characters - a marker needs a reason"
+                                        + " of at least 10 characters")
                         + ")";
             }
         }

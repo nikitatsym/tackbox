@@ -22,6 +22,10 @@ const R =
 // member-expression callees, not only bare identifiers.
 const NS = "import * as report from 'tackbox/report'\n"
 
+// notify is origin-gated like a reporter but is NOT in REPORTER_NAMES; the
+// D006/D007/D008 rules resolve it through the same tackbox/report import.
+const N = "import { notify, reportError, reportWarn } from 'tackbox/report'\n"
+
 test('no-swallow-catch', () => {
   ruleTester.run('no-swallow-catch', require('../rules/no-swallow-catch'), {
     valid: [
@@ -399,6 +403,108 @@ test('no-throw-and-report', () => {
         code: R + 'try { f() } catch (e) { reportError("api call failed mid-flight", e, null, "api.fail"); throw e }',
         errors: [{ messageId: 'both' }],
       },
+    ],
+  })
+})
+
+// D006 double-lane: a capture and a notify on one path both reach the user.
+test('no-throw-and-report double-lane (D006)', () => {
+  ruleTester.run('no-throw-and-report', require('../rules/no-throw-and-report'), {
+    valid: [
+      // notify in one leg, capture in the exclusive leg: different paths.
+      N + 'try { f() } catch (e) { if (isOffline(e)) { notify("connection lost", e, null, "net.offline") } else { reportError("server unreachable now", e, null, "net.fail") } }',
+      // notify only, no capture: no-broad-notify governs narrowing, not this rule.
+      N + 'try { f() } catch (e) { notify("connection lost", e, null, "net.offline") }',
+    ],
+    invalid: [
+      {
+        code: N + 'try { f() } catch (e) { reportError("server unreachable now", e, null, "net.fail"); notify("connection lost", e, null, "net.offline") }',
+        errors: [{ messageId: 'doubleLane' }],
+      },
+    ],
+  })
+})
+
+// D006 notify gate: an unconditional notify handling the whole catch is a
+// finding; a notify under an additional condition is narrowed.
+test('no-broad-notify', () => {
+  ruleTester.run('no-broad-notify', require('../rules/no-broad-notify'), {
+    valid: [
+      // conditional notify (offline) with the complement reported: narrowed.
+      N + 'try { f() } catch (e) { if (isOffline(e)) { notify("connection lost", e, null, "net.offline") } else { reportError("server unreachable now", e, null, "net.fail") } }',
+      // notify under a switch case is narrowed too.
+      N + 'try { f() } catch (e) { switch (code) { case 503: notify("connection lost", e, null, "net.offline"); break; default: reportError("server error now", e, null, "net.fail") } }',
+      // the caught error does not flow into notify: not terminating this path.
+      N + 'try { f() } catch (e) { notify("connection lost", other, null, "net.offline") }',
+      // a no-report marker directly above the try suppresses.
+      N + '// no-report: bootstrap notice, telemetry wired later in the boot sequence\ntry { f() } catch (e) { notify("connection lost", e, null, "net.offline") }',
+    ],
+    invalid: [
+      {
+        code: N + 'try { f() } catch (e) { notify("connection lost", e, null, "net.offline") }',
+        errors: [{ messageId: 'broad' }],
+      },
+    ],
+  })
+})
+
+// D006: notify credits its path in the swallow rule; the complement stays checked.
+test('no-swallow-catch notify credit (D006)', () => {
+  ruleTester.run('no-swallow-catch', require('../rules/no-swallow-catch'), {
+    valid: [
+      // notify carrying the caught error routes it to the user lane: handled.
+      N + 'try { f() } catch (e) { notify("connection lost", e, null, "net.offline") }',
+      // conditional notify + reported complement: both paths handled.
+      N + 'try { f() } catch (e) { if (isOffline(e)) { notify("connection lost", e, null, "net.offline") } else { reportError("server error now", e, null, "net.fail") } }',
+    ],
+    invalid: [
+      // notify the caught error does not reach is not credited: still swallows.
+      { code: N + 'try { f() } catch (e) { notify("connection lost", other, null, "net.offline") }', errors: [{ messageId: 'swallow' }] },
+      // conditional notify with an unhandled complement: the else path swallows.
+      { code: N + 'try { f() } catch (e) { if (isOffline(e)) { notify("connection lost", e, null, "net.offline") } }', errors: [{ messageId: 'swallow' }] },
+    ],
+  })
+})
+
+// D007: notify's user-lane msg must be a static literal (valid-error-report).
+test('valid-error-report notify (D007)', () => {
+  ruleTester.run('valid-error-report', require('../rules/valid-error-report'), {
+    valid: [
+      N + 'notify("connection lost, retrying", err, null, "net.offline")',
+    ],
+    invalid: [
+      { code: N + 'notify(`offline ${x} now`, err, null, "net.offline")', errors: [{ messageId: 'msgNotStatic' }] },
+      { code: N + 'notify("short", err, null, "net.offline")', errors: [{ messageId: 'msgTooShort' }] },
+      { code: N + 'notify("connection lost, retrying", null, null, "net.offline")', errors: [{ messageId: 'causeMissing' }] },
+      { code: N + 'notify("connection lost, retrying", err)', errors: [{ messageId: 'dedupMissing' }] },
+    ],
+  })
+})
+
+// D008: notify's dedupKey is validated like a reporter's (valid-dedup-key).
+test('valid-dedup-key notify (D008)', () => {
+  ruleTester.run('valid-dedup-key', require('../rules/valid-dedup-key'), {
+    valid: [
+      N + 'notify("connection lost, retrying", err, null, "net.offline")',
+      N + 'notify("connection lost, retrying", err, null, "net.offline:user_7")',
+    ],
+    invalid: [
+      { code: N + 'notify("connection lost, retrying", err, null, key)', errors: [{ messageId: 'notLiteral' }] },
+      { code: N + 'notify("connection lost, retrying", err, null, "BadKey")', errors: [{ messageId: 'badFormat' }] },
+    ],
+  })
+})
+
+// D009: a suppression marker reason under 10 chars is too cheap to suppress.
+test('no-swallow-catch reason length (D009)', () => {
+  ruleTester.run('no-swallow-catch', require('../rules/no-swallow-catch'), {
+    valid: [
+      // 10-char reason suppresses.
+      '// no-report: shared-css\ntry { f() } catch (e) {}',
+    ],
+    invalid: [
+      // 9-char reason does not suppress: the swallow still fires.
+      { code: '// no-report: too short\ntry { f() } catch (e) {}', errors: [{ messageId: 'swallow' }] },
     ],
   })
 })

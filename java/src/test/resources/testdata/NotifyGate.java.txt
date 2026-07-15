@@ -1,0 +1,37 @@
+import nl.tsym.tackbox.report.Report;
+
+// JV009 (notify gate, D006): a Report.notify carrying the caught is a valid
+// terminal only under a narrow catch. A notify in a broad catch routes every
+// failure to the user lane and blinds telemetry.
+class NotifyGate {
+    // Narrow catch: the notify is credited (no JV001) and the type is the gate,
+    // so JV009 stays silent.
+    void narrowIsClean() {
+        try {
+            risky();
+        } catch (java.io.IOException e) {
+            Report.notify("connection lost, retrying", e, null, "net.offline");
+        }
+    }
+
+    // Broad catch: the notify routes every failure to the user lane.
+    void broadFires() {
+        try {
+            risky();
+        } catch (Exception e) {
+            Report.notify("connection lost, retrying", e, null, "net.offline"); // want "JV009"
+        }
+    }
+
+    // A no-report marker above the catch body suppresses the gate.
+    void markerSuppresses() {
+        try {
+            risky();
+        } catch (Exception e) {
+            // no-report: bootstrap notice, telemetry wired later in the boot sequence
+            Report.notify("connection lost, retrying", e, null, "net.offline");
+        }
+    }
+
+    void risky() throws Exception {}
+}

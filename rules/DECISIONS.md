@@ -216,3 +216,72 @@ Per-sink order at a call site: local log always; user-lane dispatch
 unconditional, before any gate; capture behind init + rate window. A
 helper without a user lane simply has no second sink; the contract
 binds it as soon as one ships.
+
+## D006 - notify is a gated err-branch terminal (2026-07-15)
+
+Rules affected: the swallow rules of every engine (ERC001, JV001,
+TBX001, no-swallow-catch) gain a notify arm; new per-engine gate
+rules; the double-capture family gains a double-lane arm.
+
+Decision: a `notify` call (user lane only, no capture) is a valid
+terminal for a failure path under three structural gates:
+
+- argument-flow: the caught error must reach notify's arguments (the
+  same machinery that credits a capture);
+- narrowing: the notify path must be provably narrower than the
+  failure branch itself. Java/Python: a narrow catch type - not
+  Exception / RuntimeException / Throwable / Error / BaseException /
+  bare. Go/JS (no typed catch): notify must sit under an additional
+  condition inside the err-branch/catch; the complement path is still
+  checked by the existing swallow rules.
+- exclusivity (double-lane): notify plus any capture verb on the same
+  path is a finding - error/warn already reach the user lane, so the
+  pair double-shows the user.
+
+An unconditional notify-only in a broad catch is a finding: it would
+let everything route to toasts and blind the telemetry. Rationale:
+gate strength is proportional to observability loss - notify drops
+the only channel the operator sees, hence the hard gate; quiet keeps
+telemetry and needs none (D004 amendment).
+
+notify is never credited as a capture. It IS validated like one:
+static literal msg (D007) and well-formed literal dedupKey (D008).
+
+## D007 - user-lane msg must be a static literal (2026-07-15)
+
+Rules affected: valid-error-report (JS, already enforced); new arms
+in erclint, javalint, pyrules.
+
+Decision: the msg argument of the user-lane verbs - error / warn /
+notify - must be a static string literal in every language. msg is
+what the user sees and what titles the issue; dynamic data belongs in
+cause and tags. The length bounds (15-200) stay JS-only, where the
+toast UX defined them. quiet and panic are exempt: quiet is
+telemetry-only, panic takes a name, not a msg.
+
+## D008 - literal dedupKey validation goes cross-language (2026-07-15)
+
+Rules affected: ERC006 arm 3 (Go, already enforced), valid-dedup-key
+(JS, already enforced); new rules in javalint and pyrules.
+
+Decision: every tier-1 verb call - error / warn / quiet / notify -
+must carry a static string-literal dedupKey of the form
+`area.suffix[:identifier]`, in all four engines. The key is the
+Sentry fingerprint, the rate-limit bucket, and the user-lane
+coalescing key (D005) - dedup stands on it in every lane, so its
+validation cannot stay a Go/JS privilege. Python validates on the
+recognized names (the D004 name-model caveat applies).
+
+## D009 - suppression-marker reasons have a minimum length (2026-07-15)
+
+Rules affected: the marker parsers of every engine (no-report /
+parse-skip / nil-return / test-skip / dup-ok markers).
+
+Decision: a suppression marker's reason must be at least 10
+characters after trimming. Non-empty was too cheap: `ok` / `todo`
+passed as reasons. No keyword bans - a stop-word list is a content
+heuristic with false positives (a todo-list app: the D001 lesson);
+length is a structural nudge, and the substance is judged by review
+and the approval gate. In-call skip reasons (`t.Skip("...")`,
+`{ skip: '...' }`) keep the existing non-empty rule: they are visible
+strings in the test body, not lint escapes.

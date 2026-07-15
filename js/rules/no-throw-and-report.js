@@ -1,11 +1,12 @@
-const { blockHasThrow, blockHasReport } = require('./_shared')
+const { blockHasThrow, blockHasReport, notifyCaptureConflict } = require('./_shared')
 
 module.exports = {
   meta: {
     type: 'problem',
-    docs: { description: 'catch block must not both throw and call a reporter' },
+    docs: { description: 'catch block must not both throw and call a reporter; nor both capture and notify on one path (D006 double-lane)' },
     messages: {
       both: 'catch block both throws and calls a reporter: pick one - upstream handler would re-capture',
+      doubleLane: 'catch path both captures and notifies: error/warn already reach the user lane, so the notify double-shows - drop the notify, or use only notify with no capture',
     },
     schema: [],
   },
@@ -17,6 +18,9 @@ module.exports = {
         const errName = node.param && node.param.type === 'Identifier' ? node.param.name : null
         if (blockHasThrow(body) && blockHasReport(context, body, errName)) {
           context.report({ node, messageId: 'both' })
+        }
+        if (notifyCaptureConflict(context, body, errName)) {
+          context.report({ node, messageId: 'doubleLane' })
         }
       },
     }

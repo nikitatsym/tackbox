@@ -7,12 +7,14 @@
 // `.tackbox-reporters`-declared sink. A bare local `Error` that shares
 // the name but not the origin is not a capture and is never scanned.
 //
-// Two checks, mirroring the retired opengrep rules:
+// Three checks, mirroring the retired opengrep rules:
 //   - user-input (any recognized reporter): no argument may carry raw
 //     *http.Request input (`r.URL.Path`, `r.Header.Get(...)`, `r.Body`).
-//   - dedupkey (tier-1 Error/Warn only - the known 5-arg signature): the
-//     call must pass 5 args and the 5th must be a string literal matching
-//     area.suffix[:id].
+//   - msg-static (user-lane verbs Error/Warn/Notify - D007): the 2nd arg
+//     (msg) must be a static string literal.
+//   - dedupkey (Error/Warn/Quiet/Notify - D008, the known 5-arg signature):
+//     the call must pass 5 args and the 5th must be a string literal matching
+//     area.suffix[:id]. Notify is validated here but is never a capture.
 package fingerprint
 
 import (
@@ -40,13 +42,18 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	astutil.InspectNonDeclared(pass, func(_ *ast.File) func(ast.Node) bool {
 		return func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
-			if !ok || !astutil.IsReporterCall(pass.TypesInfo, call) {
+			if !ok {
 				return true
 			}
-			for _, arg := range call.Args {
-				checkArg(pass, arg)
+			if astutil.IsReporterCall(pass.TypesInfo, call) {
+				for _, arg := range call.Args {
+					checkArg(pass, arg)
+				}
 			}
-			if astutil.IsReportErrHelper(pass.TypesInfo, call) {
+			if astutil.IsReportMsgVerb(pass.TypesInfo, call) {
+				checkMsg(pass, call)
+			}
+			if astutil.IsReportDedupVerb(pass.TypesInfo, call) {
 				checkDedupKey(pass, call)
 			}
 			return true
@@ -121,6 +128,22 @@ func isHTTPRequest(info *types.Info, expr ast.Expr) bool {
 	}
 	obj := named.Obj()
 	return obj != nil && obj.Pkg() != nil && obj.Pkg().Path() == "net/http" && obj.Name() == "Request"
+}
+
+// checkMsg enforces D007: the msg argument (2nd of ctx, msg, err, tags,
+// dedupKey) of a user-lane verb (Error/Warn/Notify) must be a static string
+// literal - it is what the user sees and what titles the issue; dynamic data
+// belongs in cause and tags.
+func checkMsg(pass *analysis.Pass, call *ast.CallExpr) {
+	if len(call.Args) < 2 {
+		return // wrong arity is checkDedupKey's finding
+	}
+	msg := call.Args[1]
+	lit, ok := msg.(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		pass.Reportf(msg.Pos(),
+			"ERC006: msg must be a static string literal (dynamic data belongs in cause and tags)")
+	}
 }
 
 // checkDedupKey enforces the tier-1 dedupKey contract: exactly 5 args and a

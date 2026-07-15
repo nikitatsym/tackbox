@@ -1,0 +1,26 @@
+// D009: a suppression-marker reason must be at least 10 chars after trimming.
+class MarkerShortReason {
+    // 9-char reason is too cheap: the marker is dead, the swallow still fires.
+    void shortReasonFires() {
+        try {
+            risky();
+        } catch (Exception e) { // want "JV001.*at least 10 characters"
+            // no-report: too short
+            log(e);
+        }
+    }
+
+    // A 10-char reason meets the floor and suppresses.
+    void tenCharSuppresses() {
+        try {
+            risky();
+        } catch (Exception e) {
+            // no-report: cleanup ok
+            log(e);
+        }
+    }
+
+    void risky() throws Exception {}
+
+    void log(Exception e) {}
+}

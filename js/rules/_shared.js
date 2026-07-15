@@ -33,6 +33,10 @@ const TACKBOX_MODULES = new Set(['tackbox', 'tackbox/report'])
 
 const DEDUP_KEY_RE = /^[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*(:[a-zA-Z0-9_.-]+)?$/
 
+// MIN_REASON is the floor on a suppression marker's reason length after
+// trimming (D009): non-empty was too cheap (`ok` / `todo` passed).
+const MIN_REASON = 10
+
 function calleeName(node) {
   if (!node) return ''
   if (node.type === 'Identifier') return node.name
@@ -101,16 +105,17 @@ function requireInfo(declarator, localName) {
   return null
 }
 
-// tier1ReporterName returns the reporter name when `call`'s callee resolves
-// to a REPORTER_NAMES import of a tackbox module, else null. Origin-gated:
-// mirrors the Go side's package-gated capture table.
-function tier1ReporterName(context, call) {
+// tier1ImportedName returns the tackbox-module imported name `call`'s callee
+// resolves to - a named import used directly, or a namespace/default member -
+// else null. Origin-gated (mirrors the Go package gate); the shared core of
+// reporter and notify recognition.
+function tier1ImportedName(context, call) {
   const callee = call.callee
   if (!callee) return null
   if (callee.type === 'Identifier') {
     const info = importInfo(resolveVar(context, callee))
     if (!info || !TACKBOX_MODULES.has(info.source) || info.kind !== 'named') return null
-    return REPORTER_NAMES.has(info.imported) ? info.imported : null
+    return info.imported
   }
   if (
     callee.type === 'MemberExpression' &&
@@ -121,9 +126,25 @@ function tier1ReporterName(context, call) {
     const info = importInfo(resolveVar(context, callee.object))
     if (!info || !TACKBOX_MODULES.has(info.source)) return null
     if (info.kind !== 'namespace' && info.kind !== 'default') return null
-    return REPORTER_NAMES.has(callee.property.name) ? callee.property.name : null
+    return callee.property.name
   }
   return null
+}
+
+// tier1ReporterName returns the reporter name when `call`'s callee resolves
+// to a REPORTER_NAMES import of a tackbox module, else null.
+function tier1ReporterName(context, call) {
+  const name = tier1ImportedName(context, call)
+  return name !== null && REPORTER_NAMES.has(name) ? name : null
+}
+
+// isTier1Notify reports whether `call` resolves to the tackbox `notify` verb.
+// Origin-gated like a reporter but deliberately NOT in REPORTER_NAMES: notify
+// never credits a swallow as a capture and never counts as a reporter for
+// no-throw-and-report. no-broad-notify gates it; valid-error-report and
+// valid-dedup-key validate its msg and dedupKey.
+function isTier1Notify(context, call) {
+  return tier1ImportedName(context, call) === 'notify'
 }
 
 function isTier1ReporterCall(context, call) {
@@ -354,9 +375,10 @@ function blockHasReport(context, block, errName) {
 }
 
 // hasMarkerAbove returns true when the comment block directly above node
-// carries `// <prefix>: <non-empty reason>` on any of its lines - not only the
-// line immediately above, so a long reason can be followed by human context.
-// A blank line breaks the block (adjacency required).
+// carries `// <prefix>: <reason>` (reason at least MIN_REASON chars, D009) on
+// any of its lines - not only the line immediately above, so a long reason can
+// be followed by human context. A blank line breaks the block (adjacency
+// required).
 function hasMarkerAbove(context, node, prefix) {
   if (!node || !node.loc) return false
   const sourceCode = context.sourceCode || context.getSourceCode()
@@ -368,7 +390,7 @@ function hasMarkerAbove(context, node, prefix) {
     const text = byEndLine.get(line).value.trim()
     if (!text.startsWith(prefix + ':')) continue
     const reason = text.slice(prefix.length + 1).trim()
-    if (reason.length > 0) return true
+    if (reason.length >= MIN_REASON) return true
   }
   return false
 }
@@ -511,15 +533,20 @@ function containsReturn(node) {
   return found
 }
 
-// isReporterExpr: a (possibly awaited / void-wrapped) recognized reporter call.
-// Unwrapping preserves tackbox's existing recognition of `await reportError(e)`;
-// F2b changes path-completeness, not which calls count as reporters.
+// isReporterExpr: a (possibly awaited / void-wrapped) recognized reporter call,
+// or a tackbox notify carrying the caught error - a notify routes the error to
+// the user lane, terminating that path for the swallow rules (D006), so a
+// notified path does not read as a swallow. no-broad-notify owns whether the
+// notify is narrow enough; notify is never a capture (isReporterCall excludes
+// it), so no-throw-and-report is unaffected. Unwrapping preserves tackbox's
+// existing recognition of `await reportError(e)`.
 function isReporterExpr(context, expr, errName) {
   let e = expr
   while (e && (e.type === 'AwaitExpression' || (e.type === 'UnaryExpression' && e.operator === 'void'))) {
     e = e.argument
   }
-  return !!e && e.type === 'CallExpression' && isReporterCall(context, e, errName)
+  if (!e || e.type !== 'CallExpression') return false
+  return isReporterCall(context, e, errName) || (isTier1Notify(context, e) && argFlows(e, errName))
 }
 
 // isExecutorRejectCall: a call to the enclosing `new Promise((resolve,
@@ -619,6 +646,89 @@ function makeHandledAnalysis(opts) {
   return { handled }
 }
 
+// notifyCaptureConflict: some execution path through `block` both captures (a
+// recognized reporter call) and notifies (a tackbox notify carrying the caught
+// error) - the D006 double-lane, where error/warn already reach the user, so
+// the paired notify double-shows. Path-sensitive: exclusive if/else legs do not
+// pair, nor does a capture after a notify+return. if/else is followed precisely;
+// loops and switch are opaque (their calls may-run). The JS analog of the Go
+// doublelane walk. Each live path carries which lanes have fired; dedup keeps at
+// most four states.
+function notifyCaptureConflict(context, block, errName) {
+  let found = false
+  const lanesIn = node => {
+    let cap = false
+    let notify = false
+    walk(node, n => {
+      if (n.type !== 'CallExpression') return
+      if (isReporterCall(context, n, errName)) cap = true
+      if (isTier1Notify(context, n) && argFlows(n, errName)) notify = true
+    })
+    return { cap, notify }
+  }
+  const dedup = states => {
+    const out = []
+    const seen = new Set()
+    for (const s of states) {
+      const key = `${s.cap ? 1 : 0},${s.notify ? 1 : 0}`
+      if (!seen.has(key)) {
+        seen.add(key)
+        out.push(s)
+      }
+    }
+    return out
+  }
+  const apply = (states, cap, notify) => {
+    if (!cap && !notify) return states
+    return dedup(
+      states.map(s => {
+        const ns = { cap: s.cap || cap, notify: s.notify || notify }
+        if (ns.cap && ns.notify) found = true
+        return ns
+      }),
+    )
+  }
+  const step = (st, states) => {
+    if (!st) return states
+    switch (st.type) {
+      case 'BlockStatement':
+        return stepList(st.body, states)
+      case 'IfStatement': {
+        const t = lanesIn(st.test)
+        const base = apply(states, t.cap, t.notify)
+        const thenExit = step(st.consequent, base)
+        const elseExit = st.alternate ? step(st.alternate, base) : base
+        return dedup(thenExit.concat(elseExit))
+      }
+      case 'ReturnStatement':
+      case 'ThrowStatement': {
+        if (st.argument) {
+          const { cap, notify } = lanesIn(st.argument)
+          apply(states, cap, notify)
+        }
+        return []
+      }
+      case 'BreakStatement':
+      case 'ContinueStatement':
+        return []
+      default: {
+        const { cap, notify } = lanesIn(st)
+        return apply(states, cap, notify)
+      }
+    }
+  }
+  const stepList = (stmts, states) => {
+    let cur = states
+    for (const st of stmts) {
+      if (found) return []
+      cur = step(st, cur)
+    }
+    return cur
+  }
+  stepList(block.body, [{ cap: false, notify: false }])
+  return found
+}
+
 const TEST_ROOTS = new Set(['it', 'test', 'describe'])
 
 // matchesTestModifier: does callee name a test-modifier form - a bare alias in
@@ -646,8 +756,11 @@ module.exports = {
   DEDUP_KEY_RE,
   TEST_ROOTS,
   calleeName,
+  argFlows,
   tier1ReporterName,
   isTier1ReporterCall,
+  isTier1Notify,
+  notifyCaptureConflict,
   resolvesToDeclaredReporter,
   isDeclaredReporterCall,
   isReporterCall,

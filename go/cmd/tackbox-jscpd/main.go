@@ -30,6 +30,7 @@ const (
 	banRuleID  = "DUP002"
 	minTokens  = "50" // pinned threshold; tuning lives in tackbox, not the binary
 	reportName = "jscpd-report.json"
+	minReason  = 10 // D009: a dup-ok reason must be at least this many chars after trimming
 )
 
 // ignoreMarker is jscpd's native suppression prefix (ignore-start/-end). Built
@@ -398,7 +399,8 @@ func emitIgnoreBans(fl *fileLines, absFiles []string, cwd string, machine bool, 
 }
 
 // suppressed reports whether the standalone comment block directly above the
-// endpoint's start line carries a `dup-ok: <non-empty reason>` marker.
+// endpoint's start line carries a `dup-ok: <reason>` marker whose reason is at
+// least minReason chars (D009).
 // Semantics mirror go/internal/markers.Above: the block's last line must be
 // startLine-1, and the marker may sit on any line of that contiguous block.
 // Only whole-line // and # comments count - a trailing comment after code is
@@ -420,7 +422,7 @@ func suppressed(fl *fileLines, e endpoint) (bool, error) {
 		if !ok {
 			return false, nil
 		}
-		if reason, ok := dupOkReason(body); ok && reason != "" {
+		if reason, ok := dupOkReason(body); ok && len(reason) >= minReason {
 			return true, nil
 		}
 	}

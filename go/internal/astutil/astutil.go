@@ -26,6 +26,22 @@ const reportPkgPath = "github.com/nikitatsym/tackbox/go/report"
 var reportErrCapture = map[string]bool{"Error": true, "Warn": true, "Quiet": true}
 var reportPanicCapture = map[string]bool{"Panic": true}
 
+// Notify is the user-lane-only verb: it never captures (absent from the tables
+// above, so it never credits a swallow as a capture and never counts for
+// double-capture) but is validated like one - static-literal msg (ERC006/D007)
+// and well-formed literal dedupKey (ERC006/D008) - and gated by ERC009.
+var reportNotify = map[string]bool{"Notify": true}
+
+// reportDedupVerb: the go/report verbs whose 5-arg shape carries a dedupKey
+// ERC006 validates - the Error/Warn/Quiet captures plus the user-lane Notify
+// (D008). Notify is deliberately absent from the capture tables above.
+var reportDedupVerb = map[string]bool{"Error": true, "Warn": true, "Quiet": true, "Notify": true}
+
+// reportMsgVerb: the user-lane verbs whose msg must be a static string literal
+// (D007) - Error/Warn/Notify. Quiet is telemetry-only and Panic takes a name,
+// so both are exempt.
+var reportMsgVerb = map[string]bool{"Error": true, "Warn": true, "Notify": true}
+
 // DeclaredReporter is a `.tackbox-reporters` sink resolved to its package
 // path and function name. A capture sink's call captures when the caught
 // error flows into the call's arguments (argument-flow). A usage sink
@@ -130,17 +146,37 @@ func IsCaptureErr(info *types.Info, call *ast.CallExpr, errName string) bool {
 	return captureKind(info, call, errName) == capErr
 }
 
-// IsReportErrHelper reports whether call's callee resolves to a tier-1
-// go/report error helper (Error/Warn/Quiet) - the known 5-arg
-// (ctx, msg, err, tags, dedupKey) signature. ERC006's dedupkey rule is gated
-// on it: Panic and tier-2 declared sinks carry no dedupKey of known shape to
-// validate. Mirrors captureKind's package gate.
-func IsReportErrHelper(info *types.Info, call *ast.CallExpr) bool {
+// IsReportNotify reports whether call's callee resolves to go/report.Notify -
+// the user-lane-only verb (ERC009 gates it, ERC006 validates its msg/dedupKey).
+// Notify is never a capture: it is absent from every capture table, so it never
+// credits a swallow as a capture nor counts for double-capture.
+func IsReportNotify(info *types.Info, call *ast.CallExpr) bool {
+	return reportVerbIn(info, call, reportNotify)
+}
+
+// IsReportDedupVerb reports whether call's callee resolves to a go/report verb
+// carrying the 5-arg (ctx, msg, err, tags, dedupKey) shape whose dedupKey
+// ERC006 validates - Error/Warn/Quiet plus Notify (D008). Panic and tier-2
+// declared sinks carry no dedupKey of known shape to validate.
+func IsReportDedupVerb(info *types.Info, call *ast.CallExpr) bool {
+	return reportVerbIn(info, call, reportDedupVerb)
+}
+
+// IsReportMsgVerb reports whether call's callee resolves to a go/report
+// user-lane verb whose msg (arg 2) must be a static string literal - Error /
+// Warn / Notify (D007). Quiet and Panic are exempt.
+func IsReportMsgVerb(info *types.Info, call *ast.CallExpr) bool {
+	return reportVerbIn(info, call, reportMsgVerb)
+}
+
+// reportVerbIn reports whether call's callee resolves into the go/report
+// package and its name is in set. Mirrors captureKind's package gate.
+func reportVerbIn(info *types.Info, call *ast.CallExpr, set map[string]bool) bool {
 	fn, ok := calleeFunc(info, call)
 	if !ok || fn.Pkg() == nil {
 		return false
 	}
-	return fn.Pkg().Path() == reportPkgPath && reportErrCapture[fn.Name()]
+	return fn.Pkg().Path() == reportPkgPath && set[fn.Name()]
 }
 
 // IsReporterCall reports whether call's callee resolves to any recognized
@@ -361,6 +397,22 @@ func ErrIdentFromIfCond(cond ast.Expr) string {
 		return id.Name
 	}
 	return ""
+}
+
+// ErrBranch reports whether n is an `if <err> != nil` err-branch guarding an
+// error-assignable identifier, returning the if-statement and that identifier.
+// The shared gate of the err-branch rules (ERC001 errcheck, ERC004 returnnil,
+// ERC009 notifygate) - a bare `int`/`*Conn` guard is not an err-branch.
+func ErrBranch(info *types.Info, n ast.Node) (*ast.IfStmt, *ast.Ident, bool) {
+	ifst, ok := n.(*ast.IfStmt)
+	if !ok {
+		return nil, nil, false
+	}
+	id, ok := ErrIdentExprFromIfCond(ifst.Cond)
+	if !ok || !IsErrorAssignableExpr(info, id) {
+		return nil, nil, false
+	}
+	return ifst, id, true
 }
 
 // ErrIdentExprFromIfCond returns the identifier node from a canonical

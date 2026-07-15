@@ -6,6 +6,10 @@ func Error(area, msg string, err error, tags map[string]string, key string) {}
 
 func Warn(area, msg string, err error, tags map[string]string, key string) {}
 
+func Quiet(area, msg string, err error, tags map[string]string, key string) {}
+
+func Notify(area, msg string, err error, tags map[string]string, key string) {}
+
 func Panic(name string, recovered any) {}
 
 func Flush() {}

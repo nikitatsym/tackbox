@@ -1,8 +1,10 @@
 // Package errcheck implements ERC001: every `err != nil` branch must
 // propagate the error, capture it (a go/report call or a `.tackbox-reporters`
-// sink), report it via a printing terminal exit (`log.Fatal*`/`die` carrying
-// the error - a reported death; `os.Exit` prints nothing and is excluded), or
-// carry a `// no-report: <reason>` marker on the line directly above the if.
+// sink), route it to the user lane via a go/report.Notify carrying it (whether
+// that notify is narrow enough is ERC009's call, not this one), report it via a
+// printing terminal exit (`log.Fatal*`/`die` carrying the error - a reported
+// death; `os.Exit` prints nothing and is excluded), or carry a
+// `// no-report: <reason>` marker on the line directly above the if.
 package errcheck
 
 import (
@@ -22,17 +24,10 @@ var Analyzer = &analysis.Analyzer{
 }
 
 func inspect(idx *markers.Index, pass *analysis.Pass, n ast.Node) bool {
-	ifst, ok := n.(*ast.IfStmt)
+	// Type-gate: only an `if <err> != nil` guard of an error-assignable
+	// identifier is an err-branch. `if conn != nil` on a *net.Conn is not one.
+	ifst, errIdent, ok := astutil.ErrBranch(pass.TypesInfo, n)
 	if !ok {
-		return true
-	}
-	errIdent, ok := astutil.ErrIdentExprFromIfCond(ifst.Cond)
-	if !ok {
-		return true
-	}
-	// Type-gate: only guards of an error-assignable identifier are
-	// err-branches. `if conn != nil` on a *net.Conn is not one.
-	if !astutil.IsErrorAssignableExpr(pass.TypesInfo, errIdent) {
 		return true
 	}
 	errName := errIdent.Name
@@ -44,6 +39,7 @@ func inspect(idx *markers.Index, pass *analysis.Pass, n ast.Node) bool {
 	for _, name := range astutil.ErrAliases(ifst.Body, errName) {
 		if propagates(pass.TypesInfo, ifst.Body, name) ||
 			captures(pass.TypesInfo, ifst.Body, name) ||
+			notifies(pass.TypesInfo, ifst.Body, name) ||
 			reportsDeath(pass.TypesInfo, ifst.Body, name) {
 			return true
 		}
@@ -77,6 +73,20 @@ func propagates(info *types.Info, body *ast.BlockStmt, errName string) bool {
 func captures(info *types.Info, body *ast.BlockStmt, errName string) bool {
 	for _, call := range astutil.BlockCalls(body) {
 		if astutil.IsCapture(info, call, errName) {
+			return true
+		}
+	}
+	return false
+}
+
+// notifies reports whether the err-branch routes the checked error to the user
+// lane via a go/report.Notify carrying it - a terminal for that path (D006), so
+// a notified branch does not read as a swallow. ERC009 decides whether the
+// notify is narrow enough; notify is never a capture, so ERC005/ERC006 are
+// unaffected.
+func notifies(info *types.Info, body *ast.BlockStmt, errName string) bool {
+	for _, call := range astutil.BlockCalls(body) {
+		if astutil.IsReportNotify(info, call) && astutil.ArgFlows(call, errName) {
 			return true
 		}
 	}

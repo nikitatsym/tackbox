@@ -159,8 +159,8 @@ func TestDupOkOneEndpointSuppressed(t *testing.T) {
 
 func TestDupOkBothEndpointsSuppressedClean(t *testing.T) {
 	dir := t.TempDir()
-	a := writeSrc(t, dir, "a.go", 5, []string{"// dup-ok: a side"})
-	b := writeSrc(t, dir, "b.go", 8, []string{"// dup-ok: b side"})
+	a := writeSrc(t, dir, "a.go", 5, []string{"// dup-ok: shared header block"})
+	b := writeSrc(t, dir, "b.go", 8, []string{"// dup-ok: shared footer block"})
 	out, n := emitTo(t, dir, mkReport(a, 5, b, 8), true)
 	if n != 0 {
 		t.Fatalf("expected clean (0 survivors), got %d\n%s", n, out)
@@ -178,6 +178,28 @@ func TestDupOkEmptyReasonDoesNotSuppress(t *testing.T) {
 	_, n := emitTo(t, dir, mkReport(a, 5, b, 8), true)
 	if n != 2 {
 		t.Fatalf("empty-reason dup-ok must not suppress; got %d survivors, want 2", n)
+	}
+}
+
+// D009: a reason under 10 chars is too cheap and does not suppress; a 10-char
+// reason does.
+func TestDupOkShortReasonDoesNotSuppress(t *testing.T) {
+	dir := t.TempDir()
+	a := writeSrc(t, dir, "a.go", 5, []string{"// dup-ok: too short"}) // 9 chars
+	b := writeSrc(t, dir, "b.go", 8, nil)
+	_, n := emitTo(t, dir, mkReport(a, 5, b, 8), true)
+	if n != 2 {
+		t.Fatalf("short-reason dup-ok must not suppress; got %d survivors, want 2", n)
+	}
+}
+
+func TestDupOkTenCharReasonSuppresses(t *testing.T) {
+	dir := t.TempDir()
+	a := writeSrc(t, dir, "a.go", 5, []string{"// dup-ok: shared-css"}) // 10 chars
+	b := writeSrc(t, dir, "b.go", 8, nil)
+	_, n := emitTo(t, dir, mkReport(a, 5, b, 8), true)
+	if n != 1 {
+		t.Fatalf("10-char dup-ok must suppress one endpoint; got %d survivors, want 1", n)
 	}
 }
 

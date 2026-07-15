@@ -21,9 +21,10 @@ uvx tackbox@latest lint .
 | ERC003 | terminal      | Fatal/Exit/die must capture or report|
 | ERC004 | returnnil     | bare nil return needs marker or pair |
 | ERC005 | doublecapture | no capture and `return err` together |
-| ERC006 | fingerprint   | no raw user input; valid dedupKey    |
+| ERC006 | fingerprint   | no raw input; static msg; dedupKey   |
 | ERC007 | recoverswallow| recover must report or re-panic      |
 | ERC008 | skiptest      | skipped test must state a reason     |
+| ERC009 | notifygate    | notify must be narrowed (condition)  |
 
 Details per rule:
 
@@ -50,11 +51,16 @@ Details per rule:
   one regardless of arguments.
 - ERC004 `returnnil` - bare `return nil` on `*T`/`[]T`/`map` needs
   `// nil-return: <reason>` or use `(val, ok)` / `(val, err)`.
-- ERC005 `doublecapture` - a single err-branch may not both capture
-  and `return err`.
-- ERC006 `fingerprint` - capture-call arguments (message, tags,
-  dedupKey) may not carry raw user input; the dedupKey must be a
-  well-formed literal.
+- ERC005 `doublecapture` - a single err-branch may not both capture and
+  `return err`; nor may one execution path both capture and `Notify`
+  (D006 double-lane - error/warn already reach the user lane, so the
+  pair double-shows). The double-lane arm is path-sensitive: exclusive
+  if/switch legs do not pair.
+- ERC006 `fingerprint` - capture-call arguments may not carry raw user
+  input; the user-lane msg of `Error`/`Warn`/`Notify` must be a static
+  string literal (D007); and the dedupKey of `Error`/`Warn`/`Quiet`/
+  `Notify` must be a well-formed literal `area.suffix[:id]` (D008).
+  `Notify` is validated here but is never credited as a capture.
 - ERC007 `recoverswallow` - a `recover()` must report the recovered
   value (to `go/report` or a declared sink that receives it) or
   re-panic; a bare recover-and-continue needs `// no-report: <reason>`.
@@ -63,6 +69,13 @@ Details per rule:
   (non-literal arguments are trusted); a bare `SkipNow()` needs
   `// test-skip: <reason>` directly above. Resolution is by origin: a
   local type's own `Skip` method is not a test skip.
+- ERC009 `notifygate` - a `go/report.Notify` carrying the caught error
+  may terminate an err-branch only when it sits under an additional
+  condition (an `if`/`switch` inside the branch); an unconditional
+  notify as the sole handling of the branch routes every failure to the
+  user lane and blinds telemetry. The complement of a narrowed notify
+  stays covered by ERC001; a `// no-report: <reason>` marker above the
+  branch suppresses.
 
 `_test.go` files are skipped by every analyzer except ERC008
 `skiptest`, whose subject is the tests themselves.
@@ -70,7 +83,8 @@ Details per rule:
 ## Markers
 
 Markers must appear on the line immediately above the branch or
-return they apply to and must carry a non-empty reason.
+return they apply to and must carry a reason of at least 10 characters
+(non-empty was too cheap - `ok` / `todo` passed).
 
 ```go
 // no-report: caller already wraps and captures
@@ -96,10 +110,11 @@ t.SkipNow()
 A call counts as a capture by origin, never by name. erclint uses type
 information: the callee must resolve to
 `github.com/nikitatsym/tackbox/go/report` and be a recognized export -
-`Error` / `Warn` (error-capture) or `Panic` (panic-capture). Other
-exports of that package (`Init`, `Flush`, `Crumb`, ...) are not
-captures, and a bare local `Error(...)` that merely shares the name
-is not trusted.
+`Error` / `Warn` / `Quiet` (error-capture) or `Panic` (panic-capture).
+`Notify` is the user-lane-only verb: never a capture, gated by ERC009
+and validated (msg/dedupKey) by ERC006. Other exports of that package
+(`Init`, `Flush`, `Crumb`, ...) are not captures, and a bare local
+`Error(...)` that merely shares the name is not trusted.
 
 A repo may also declare its own sinks in a root `.tackbox-reporters`
 file (`file#function: reason`); a declared call counts only when the

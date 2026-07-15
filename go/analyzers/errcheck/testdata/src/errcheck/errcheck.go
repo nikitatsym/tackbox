@@ -32,6 +32,26 @@ func okCaptureTier1() error {
 	return errors.New("noop")
 }
 
+// a go/report.Notify carrying the caught error routes it to the user lane -
+// a handled branch for ERC001 (ERC009 owns whether it is narrow enough).
+func okNotifyCredited() error {
+	err := errors.New("x")
+	if err != nil {
+		report.Notify("net", "connection lost", err, nil, "net.offline")
+	}
+	return errors.New("noop")
+}
+
+// notify that the caught error does not reach is not credited: nothing routes
+// this failure anywhere, so the branch still swallows.
+func notifyNoArgFlowFires() error {
+	err := errors.New("x")
+	if err != nil { // want `ERC001:.*err=err`
+		report.Notify("net", "connection lost", errors.New("other"), nil, "net.offline")
+	}
+	return errors.New("noop")
+}
+
 func okMarker() error {
 	err := errors.New("x")
 	// no-report: caller already wraps and captures
