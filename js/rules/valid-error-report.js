@@ -1,6 +1,6 @@
 const {
   REPORTER_FULL, REPORTER_SYNTH,
-  tier1ReporterName, isTier1Notify, isStaticString, staticStringValue,
+  tier1ReporterName, isTier1Notify, isStaticString, staticStringValue, isTestFile,
 } = require('./_shared')
 
 const MIN = 15
@@ -22,6 +22,7 @@ module.exports = {
     schema: [],
   },
   create(context) {
+    if (isTestFile(context)) return {}
     return {
       CallExpression(node) {
         let name = tier1ReporterName(context, node)

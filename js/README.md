@@ -126,8 +126,8 @@ reporter names imported from `tackbox` / `tackbox/report` (tier-1), or
 to a function declared in a repo-root `.tackbox-reporters` file
 (tier-2). A bare identifier that merely shares the name is not trusted.
 
-Names: `reportError`, `reportWarn`, `reportApiError`, `reportLayerError`
-(4-arg form: msg, cause, tags, dedupKey) and `reportSynth`,
+Names: `reportError`, `reportWarn`, `reportQuiet`, `reportApiError`,
+`reportLayerError` (4-arg form: msg, cause, tags, dedupKey) and `reportSynth`,
 `reportSynthError` (3-arg form: msg, tags, dedupKey).
 
 `notify` (user lane only) is resolved through the same origin gate but
@@ -198,3 +198,12 @@ single top-level component can render a toast. `reportQuiet` does not
 dispatch it. The event `detail` carries `{ msg, cause, tags, dedupKey,
 level }`; the listener coalesces on `dedupKey`. Capture is gated behind init
 and the per-`dedupKey` rate window; the user lane is not.
+
+Platform limit: a `tackbox:error` listener that throws is not observable from
+`dispatchEvent` - the browser routes a listener failure to `window.onerror` by
+design. So the JS user lane cannot capture its own listener's failure the way
+Go, Python, and Java capture a throwing `report.notifier`. A module-level
+re-entrancy guard stops the one loop this opens (a throwing listener reaching
+`window.onerror`, which `setupGlobalHandlers` turns back into
+`reportError` -> dispatch): a dispatch already in progress on the stack skips
+the nested one and logs locally instead. Sequential dispatches are unaffected.

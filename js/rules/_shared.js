@@ -202,6 +202,16 @@ function absFile(context) {
   return path.resolve(context.cwd || process.cwd(), fn)
 }
 
+// isTestFile: the linted file is a test - a `*.test.*` / `*.spec.*` basename, or
+// a `__tests__` / `tests` path segment. The new reporter-arg / notify-gate rules
+// skip tests (parity with Go _test.go and Java src/test); the swallow and
+// test-skip rules do not - they must keep running in tests.
+function isTestFile(context) {
+  const fn = ((context.filename || (context.getFilename && context.getFilename()) || '')).replace(/\\/g, '/')
+  const base = fn.slice(fn.lastIndexOf('/') + 1)
+  return /\.(test|spec)\./.test(base) || /(^|\/)(__tests__|tests)\//.test(fn)
+}
+
 const SVELTE_CONFIG_NAMES = ['svelte.config.js', 'svelte.config.ts', 'svelte.config.mjs', 'svelte.config.cjs']
 
 // resolveAlias maps a SvelteKit `$lib` specifier to a repo-relative path.
@@ -700,6 +710,22 @@ function notifyCaptureConflict(context, block, errName) {
         const elseExit = st.alternate ? step(st.alternate, base) : base
         return dedup(thenExit.concat(elseExit))
       }
+      case 'SwitchStatement': {
+        const d = lanesIn(st.discriminant)
+        const base = apply(states, d.cap, d.notify)
+        // Cases are exclusive legs, but JS falls a terminator-less case into the
+        // next: thread each case's fall-through exit into the next case's entry,
+        // so only a real fall-through pairs, not two exclusive cases.
+        let fall = []
+        let sawDefault = false
+        for (const sc of st.cases) {
+          if (sc.test === null) sawDefault = true
+          fall = stepList(sc.consequent, dedup(base.concat(fall)))
+        }
+        const exits = fall.slice()
+        if (!sawDefault) exits.push(...base) // no case matched: base falls through
+        return dedup(exits)
+      }
       case 'ReturnStatement':
       case 'ThrowStatement': {
         if (st.argument) {
@@ -757,6 +783,7 @@ module.exports = {
   TEST_ROOTS,
   calleeName,
   argFlows,
+  isTestFile,
   tier1ReporterName,
   isTier1ReporterCall,
   isTier1Notify,

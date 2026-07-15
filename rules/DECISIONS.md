@@ -272,6 +272,14 @@ coalescing key (D005) - dedup stands on it in every lane, so its
 validation cannot stay a Go/JS privilege. Python validates on the
 recognized names (the D004 name-model caveat applies).
 
+Amendment (2026-07-15): the notify gate (D006) and the argument
+contracts (D007/D008) exempt test files in every engine - Go
+`_test.go`, Java `src/test/`, JS `*.test.* / *.spec.* / __tests__ /
+tests/`, Python `test_* / *_test.py / tests/ / conftest.py` - tests
+legitimately use dynamic keys (e.g. per-worker keys in concurrency
+tests). The test-skip rules are unaffected and keep running in tests
+everywhere.
+
 ## D009 - suppression-marker reasons have a minimum length (2026-07-15)
 
 Rules affected: the marker parsers of every engine (no-report /

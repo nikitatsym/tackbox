@@ -1,4 +1,4 @@
-const { blockHasThrow, blockHasReport, notifyCaptureConflict } = require('./_shared')
+const { blockHasThrow, blockHasReport, notifyCaptureConflict, isTestFile } = require('./_shared')
 
 module.exports = {
   meta: {
@@ -19,7 +19,9 @@ module.exports = {
         if (blockHasThrow(body) && blockHasReport(context, body, errName)) {
           context.report({ node, messageId: 'both' })
         }
-        if (notifyCaptureConflict(context, body, errName)) {
+        // The double-lane arm is a new D006 rule and skips tests (parity with
+        // Go/Java); the `both` arm is pre-existing and keeps running in tests.
+        if (!isTestFile(context) && notifyCaptureConflict(context, body, errName)) {
           context.report({ node, messageId: 'doubleLane' })
         }
       },

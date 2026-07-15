@@ -171,8 +171,8 @@ def _fetch_and_install(data: dict, root: Path, fetcher: "Fetcher") -> None:
         try:
             os.rename(staged, root)
         except OSError:
-            # Lost the race to another process: its store is committed and
-            # verified identically, so use it and drop ours.
+            # no-report: lost the init race - the winner's store is committed
+            # and verified identical, so use it and drop ours
             if not root.is_dir():
                 raise
     finally:

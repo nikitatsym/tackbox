@@ -10,11 +10,12 @@ import (
 // doubleLane reports a capture call and a notify call that both run on one
 // execution path through the err-branch body (D006 double-lane): error/warn
 // already reach the user lane, so pairing a capture with a notify double-shows
-// the user. It is path-sensitive - a notify in one if/switch leg and a capture
-// in the exclusive leg do not pair, nor does a capture after a notify+return.
-// if/else is followed precisely; loops/switch/select are opaque (their calls
-// may-run), matching the leniency of the JV006 Flow walk. Returns the first
-// such (capture, notify) pairing, or (nil, nil).
+// the user. It is path-sensitive - a notify in one if/else or switch/select leg
+// and a capture in an exclusive leg do not pair, nor does a capture after a
+// notify+return. if/else and the case legs of switch/type-switch/select are
+// followed precisely (only one runs); loops stay opaque (a body may run with
+// both legs across iterations - keep pairing there). Returns the first such
+// (capture, notify) pairing, or (nil, nil).
 func doubleLane(info *types.Info, body *ast.BlockStmt, errNames []string) (*ast.CallExpr, *ast.CallExpr) {
 	ls := &laneScan{info: info, errNames: errNames}
 	ls.walk(body.List, []laneState{{}})
@@ -64,17 +65,68 @@ func (ls *laneScan) step(st ast.Stmt, in []laneState) []laneState {
 			elseExit = ls.step(s.Else, base)
 		}
 		return mergeLanes(thenExit, elseExit)
+	case *ast.SwitchStmt:
+		base := in
+		if s.Init != nil {
+			base = ls.mark(s.Init, base)
+		}
+		if s.Tag != nil {
+			base = ls.mark(s.Tag, base)
+		}
+		return ls.caseLegs(s.Body.List, base)
+	case *ast.TypeSwitchStmt:
+		base := in
+		if s.Init != nil {
+			base = ls.mark(s.Init, base)
+		}
+		if s.Assign != nil {
+			base = ls.mark(s.Assign, base)
+		}
+		return ls.caseLegs(s.Body.List, base)
+	case *ast.SelectStmt:
+		return ls.caseLegs(s.Body.List, in)
 	case *ast.ReturnStmt:
 		ls.mark(s, in)         // a capture/notify in the return expr still counts
 		return []laneState{} // the path ends here
 	case *ast.BranchStmt:
 		return []laneState{} // break/continue/goto/fallthrough leave this straight-line path
 	default:
-		// ExprStmt, AssignStmt, DeclStmt, and the opaque units (for / switch /
-		// select): flat-scan their direct calls (funclit bodies excluded) and
-		// mark. The path continues.
+		// ExprStmt, AssignStmt, DeclStmt, and the opaque loops (for / range):
+		// flat-scan their direct calls (funclit bodies excluded) and mark. The
+		// path continues.
 		return ls.mark(s, in)
 	}
+}
+
+// caseLegs walks the exclusive clauses of a switch / type-switch / select: only
+// one runs, so each clause body is an exclusive leg from base and the exits
+// union (like if/else). A missing default leaves a no-match path carrying base
+// straight through. A clause's comm/init is marked into its own leg.
+func (ls *laneScan) caseLegs(clauses []ast.Stmt, base []laneState) []laneState {
+	var exits []laneState
+	hasDefault := false
+	for _, cl := range clauses {
+		legBase, body := base, []ast.Stmt(nil)
+		switch c := cl.(type) {
+		case *ast.CaseClause:
+			hasDefault = hasDefault || c.List == nil
+			body = c.Body
+		case *ast.CommClause:
+			if c.Comm == nil {
+				hasDefault = true
+			} else {
+				legBase = ls.mark(c.Comm, base)
+			}
+			body = c.Body
+		default:
+			continue
+		}
+		exits = append(exits, ls.walk(body, legBase)...)
+	}
+	if !hasDefault {
+		exits = append(exits, base...) // no clause matched: base falls through
+	}
+	return dedupLanes(exits)
 }
 
 // mark scans node for the first capture and first notify call (funclit bodies
