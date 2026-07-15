@@ -1,11 +1,13 @@
 """Tier-2 `.tackbox-reporters` resolution for the python engine.
 
-Unlike Go/JS/Java, which resolve a call's callee back to the declaring file,
-the flake8/ast layer has no cross-module type info: a declared `file#func` is
-validated to have a module-level `def` in that file (a dead symbol is a hard
-error, exit 2, scope-independent), but recognition at call sites is by the
-declared NAME - any same-named call, from any module, counts, and only when
-the caught error flows into its arguments.
+Tier-1 verbs resolve by import origin (see origin.py); tier-2 declarations stay
+name-based. Unlike Go/JS/Java, which resolve a call's callee back to the
+declaring file, the flake8/ast layer has no cross-module type info: a declared
+`file#func` is validated to have a module-level `def` OR a top-level import
+binding of that name in the file (a facade re-exporting a helper verb, D010; a
+dead symbol is a hard error, exit 2, scope-independent), but recognition at call
+sites is by the declared NAME - any same-named call, from any module, counts,
+and only when the caught error flows into its arguments.
 """
 
 from __future__ import annotations
@@ -33,11 +35,22 @@ def resolve_declared(
 
 
 def _has_top_level_def(file: str, func: str) -> bool:
+    """A declared reporter resolves iff the file has a top-level `def`/`async def`
+    OR a top-level import binding of the name (a facade re-exporting a helper verb,
+    D010): `from x import func`, `from x import y as func`, `import x as func`.
+    Plain assignments stay invalid."""
     tree = ast.parse(Path(file).read_text(encoding="utf-8"), filename=file)
-    return any(
-        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func
-        for node in tree.body
-    )
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func:
+            return True
+        if isinstance(node, ast.ImportFrom):
+            if any((alias.asname or alias.name) == func for alias in node.names):
+                return True
+        if isinstance(node, ast.Import):
+            # `import x as func` binds func; `import x.y` binds the top name `x`.
+            if any((alias.asname or alias.name.split(".")[0]) == func for alias in node.names):
+                return True
+    return False
 
 
 def arg_flows(call: ast.Call, err_name: str | None) -> bool:

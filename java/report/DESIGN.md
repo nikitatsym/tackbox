@@ -23,7 +23,7 @@ published to Maven Central as `io.github.nikitatsym:report` (see
 - Isolation API: `Sentry.captureException(t, scope -> ...)` /
   `Sentry.captureMessage(msg, scope -> ...)` per capture - the 8.x
   Scopes-API analog of go/report's `sentry.CurrentHub().Clone()`
-  (DECISIONS D003). See "Concurrency isolation".
+  (docs/report-contracts.md D003). See "Concurrency isolation".
 
 ## API (mirrors go/report)
 
@@ -75,9 +75,9 @@ published to Maven Central as `io.github.nikitatsym:report` (see
   dropped. `ConcurrentHashMap<String,Long>` keyed on dedupKey. The
   first-hit check is a load-then-put with the same benign race go/report's
   `sync.Map` has.
-- Per-name fingerprints (DECISIONS D002): `panic:<name>`, and the task
-  wrapper `task:<name>` (mirror of go's `go.task:<name>`, minus the
-  go-only prefix).
+- Per-name fingerprints (docs/report-contracts.md D002):
+  `panic:<name>`, and the task wrapper `task:<name>` (mirror of go's
+  `go.task:<name>`, minus the go-only prefix).
 
 ## Concurrency isolation (D003) on sentry-java 8.x
 

@@ -17,13 +17,13 @@ Semantics carried over from go/report:
 * Log-before-drop invariant: every capture writes one structured local line
   *before* the readiness and rate-limit checks, so nothing is lost in log-only
   mode. The user lane is dispatched before the same gate and is never
-  rate-limited (DECISIONS.md D005).
+  rate-limited (docs/report-contracts.md D005).
 * In-memory 60s rate limit keyed by ``dedup_key`` (``_should_drop``); the same
   key is the Sentry fingerprint (grouping).
-* Per-name fingerprints (DECISIONS.md D002): ``panic:<name>`` for the panic
+* Per-name fingerprints (docs/report-contracts.md D002): ``panic:<name>`` for the panic
   analog, ``task:<name>`` for the background-task wrapper. Built directly from
   the name so differently-named failures group and rate-limit independently.
-* Concurrency-isolated capture (DECISIONS.md D003): every capture site runs
+* Concurrency-isolated capture (docs/report-contracts.md D003): every capture site runs
   inside ``sentry_sdk.new_scope()`` (forks the current scope), and the
   background-task wrapper additionally forks a per-thread
   ``sentry_sdk.isolation_scope()`` -- the sentry-sdk 2.x analog of Go's
@@ -89,7 +89,7 @@ class ReportError(Exception):
 class Notice:
     """One user-lane event handed to the registered notifier. The app owns
     rendering and any coalescing (keyed on ``dedup_key``); the helper never
-    suppresses the user lane (DECISIONS.md D005)."""
+    suppresses the user lane (docs/report-contracts.md D005)."""
 
     msg: str
     level: str

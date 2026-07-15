@@ -26,7 +26,7 @@ import java.util.function.Consumer;
  * the API before any Glitchtip endpoint exists. Java mirror of go/report and
  * js/report.js.
  *
- * <p>Concurrency isolation (DECISIONS D003): every capture ships through
+ * <p>Concurrency isolation (docs/report-contracts.md D003): every capture ships through
  * sentry-java 8.x's scope-callback overload ({@code Sentry.captureException(t,
  * scope -> ...)} / {@code Sentry.captureMessage(msg, scope -> ...)}), which
  * applies the fingerprint/tags to a per-event local scope forked from the

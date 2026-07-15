@@ -17,7 +17,7 @@ from pathlib import Path
 from conftest import init_repo, tackbox_env
 
 from tackbox.cli import _finding_line, _partition_findings, _span_lines
-from tackbox.engines import Finding
+from tackbox.engines import Finding, active_engines, lintable
 
 TACKBOX_ROOT = Path(__file__).resolve().parents[2]
 
@@ -548,3 +548,195 @@ def test_pre_write_new_md_with_lang_marker_ask(tmp_path):
         }
     )
     assert "lang=ru" in _ask(r)["permissionDecisionReason"]
+
+
+# -- PreToolUse D012: the marker gate asks only about lintable files -------
+
+
+def _pre_edit_rel(tmp_path: Path, rel: str, new: str) -> subprocess.CompletedProcess:
+    _dev_py(tmp_path)
+    _init(tmp_path)
+    return _hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Edit",
+            "cwd": str(tmp_path),
+            "tool_input": {
+                "file_path": str(tmp_path / rel),
+                "old_string": "x = 1",
+                "new_string": new,
+            },
+        }
+    )
+
+
+def test_pre_marker_in_go_testdata_allow(tmp_path):
+    # A Go testdata/ path is dropped by the Go engines' path filter -> unlintable
+    # -> the marker gate stays silent (D012).
+    r = _pre_edit_rel(
+        tmp_path,
+        "go/analyzers/x/testdata/src/x/x.go",
+        "// no-report: dead marker in go testdata\nx = 1",
+    )
+    assert r.returncode == 0 and r.stdout == "", f"testdata marker must allow:\n{r.stdout}"
+
+
+def test_pre_marker_in_java_txt_fixture_allow(tmp_path):
+    # A .java.txt fixture has no engine extension -> unlintable -> silent.
+    r = _pre_edit_rel(
+        tmp_path,
+        "java/src/test/resources/testdata/Foo.java.txt",
+        "// no-report: dead marker in java txt fixture\nx = 1",
+    )
+    assert r.returncode == 0 and r.stdout == "", f".java.txt marker must allow:\n{r.stdout}"
+
+
+def test_pre_marker_in_live_py_ask(tmp_path):
+    r = _pre_edit_rel(
+        tmp_path, "app/svc.py", "# no-report: live python needs approval\nx = 1"
+    )
+    assert "no-report" in _ask(r)["permissionDecisionReason"]
+
+
+def test_pre_marker_in_file_named_testdata_py_ask(tmp_path):
+    # A file merely NAMED testdata.py is a real .py (pyrules has no testdata
+    # filter) -> lintable -> the gate asks. Lintability, not a path name (D012).
+    r = _pre_edit_rel(
+        tmp_path, "testdata.py", "# no-report: real python module here\nx = 1"
+    )
+    assert "no-report" in _ask(r)["permissionDecisionReason"]
+
+
+# -- PostToolUse Bash arm (D011) ------------------------------------------
+
+
+def _bash(tmp_path: Path) -> subprocess.CompletedProcess:
+    return _hook(
+        {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "cwd": str(tmp_path),
+            "tool_input": {"command": "echo x >> svc.py"},
+        }
+    )
+
+
+def _block(r: subprocess.CompletedProcess) -> str:
+    assert r.returncode == 0, f"block decision still exits 0:\n{r.stdout}\n{r.stderr}"
+    payload = json.loads(r.stdout)
+    assert payload["decision"] == "block", payload
+    return payload["reason"]
+
+
+def test_bash_new_marker_in_tracked_py_blocks(tmp_path):
+    # ADVERSARIAL bypass: a marker planted into a tracked lintable .py by a shell
+    # command (not the Edit hook) is caught by the after-the-fact worktree diff.
+    _dev_py(tmp_path)
+    (tmp_path / "svc.py").write_text("def f():\n    return 1\n")
+    _init(tmp_path)
+    (tmp_path / "svc.py").write_text(
+        "def f():\n    return 1  # no-report: planted out of band via bash\n"
+    )
+    reason = _block(_bash(tmp_path))
+    assert "no-report" in reason and "svc.py" in reason and "via Bash" in reason, reason
+
+
+def test_bash_new_marker_in_untracked_py_blocks(tmp_path):
+    _dev_py(tmp_path)
+    _init(tmp_path)
+    (tmp_path / "new.py").write_text("x = 1  # no-report: fresh untracked marker here\n")
+    reason = _block(_bash(tmp_path))
+    assert "no-report" in reason and "new.py" in reason, reason
+
+
+def test_bash_marker_in_unlintable_txt_silent(tmp_path):
+    _dev_py(tmp_path)
+    _init(tmp_path)
+    (tmp_path / "fixture.py.txt").write_text(
+        "x = 1  # no-report: dead marker in unlintable file\n"
+    )
+    r = _bash(tmp_path)
+    assert r.returncode == 0 and r.stdout == "", f"unlintable file is silent:\n{r.stdout}"
+
+
+def test_bash_committed_marker_unchanged_silent(tmp_path):
+    # HEAD is the approval record: a marker already in HEAD, edited elsewhere in
+    # the file, does not re-ask (equal marker multiset vs HEAD).
+    _dev_py(tmp_path)
+    (tmp_path / "svc.py").write_text("x = 1  # no-report: approved committed marker\n")
+    _init(tmp_path)
+    (tmp_path / "svc.py").write_text("x = 2  # no-report: approved committed marker\n")
+    r = _bash(tmp_path)
+    assert r.returncode == 0 and r.stdout == "", f"unchanged marker vs HEAD is silent:\n{r.stdout}"
+
+
+def test_bash_marker_removed_silent(tmp_path):
+    _dev_py(tmp_path)
+    (tmp_path / "svc.py").write_text("x = 1  # no-report: committed marker to remove\n")
+    _init(tmp_path)
+    (tmp_path / "svc.py").write_text("x = 1\n")
+    r = _bash(tmp_path)
+    assert r.returncode == 0 and r.stdout == "", f"removing a marker is free:\n{r.stdout}"
+
+
+def test_bash_marker_reason_change_blocks(tmp_path):
+    _dev_py(tmp_path)
+    (tmp_path / "svc.py").write_text("x = 1  # no-report: original committed reason\n")
+    _init(tmp_path)
+    (tmp_path / "svc.py").write_text("x = 1  # no-report: a different reason now here\n")
+    reason = _block(_bash(tmp_path))
+    assert "no-report" in reason and "svc.py" in reason, reason
+
+
+def test_bash_laundering_txt_to_py_blocks(tmp_path):
+    # ADVERSARIAL laundering: a marker parked in a dead .py.txt in HEAD, then moved
+    # live (delete + untracked .py). The move makes its marker new at a lintable
+    # path, and the Bash arm asks at the transition (D012).
+    _dev_py(tmp_path)
+    (tmp_path / "fixture.py.txt").write_text(
+        "x = 1  # no-report: laundered marker going live\n"
+    )
+    _init(tmp_path)
+    (tmp_path / "fixture.py.txt").unlink()
+    (tmp_path / "fixture.py").write_text(
+        "x = 1  # no-report: laundered marker going live\n"
+    )
+    reason = _block(_bash(tmp_path))
+    assert "no-report" in reason and "fixture.py" in reason, reason
+
+
+def test_bash_reporters_added_line_blocks(tmp_path):
+    # The .tackbox-reporters gate is exempt from the lintability predicate and
+    # fires on any added line, worktree vs HEAD.
+    _dev_py(tmp_path)
+    (tmp_path / ".tackbox-reporters").write_text("a.py#f: sink one\n")
+    _init(tmp_path)
+    (tmp_path / ".tackbox-reporters").write_text("a.py#f: sink one\nb.py#g: sink two\n")
+    reason = _block(_bash(tmp_path))
+    assert "b.py#g" in reason and ".tackbox-reporters" in reason, reason
+
+
+def test_bash_unborn_head_blocks(tmp_path):
+    # Unborn HEAD (git init, no commit): git show HEAD:<path> fails everywhere, so
+    # old="" and every marker is new - a block, never a crash.
+    _dev_py(tmp_path)
+    init_repo(tmp_path, commit=False)
+    (tmp_path / "svc.py").write_text("x = 1  # no-report: marker in unborn head repo\n")
+    reason = _block(_bash(tmp_path))
+    assert "no-report" in reason and "svc.py" in reason, reason
+
+
+def test_bash_clean_tree_silent(tmp_path):
+    _dev_py(tmp_path)
+    (tmp_path / "svc.py").write_text("x = 1\n")
+    _init(tmp_path)
+    r = _bash(tmp_path)
+    assert r.returncode == 0 and r.stdout == "", f"clean tree is silent:\n{r.stdout}"
+
+
+def test_lintable_normalizes_backslash_paths():
+    # Windows-shape sanity (D011/D012): a backslash hook path meets the same
+    # forward-slash path filters git output uses; git-side paths stay '/'.
+    eng = active_engines()
+    assert lintable("go\\analyzers\\x\\testdata\\src\\x\\x.go", eng) is False
+    assert lintable("app\\svc.py", eng) is True

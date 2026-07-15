@@ -201,7 +201,8 @@ The same model is enforced beyond Go:
   where the CancelledError on the await IS the confirmation that the
   cancel propagated, not an error to log. The notify gate (TBX010) and
   the user-lane argument contract - static-literal msg, well-formed
-  `dedup_key` (TBX011) - are recognized by name (the D004 caveat).
+  `dedup_key` (TBX011) - apply to the `tackbox_report` verbs recognized
+  by import origin (D010).
 - **JS / TS / Svelte** swallow and test-skip rules run under ESLint.
   A skip reason is accepted in the call itself: node:test options
   (`{ skip: 'reason' }` / `{ todo: 'reason' }`) and Playwright's
@@ -228,12 +229,14 @@ Every language also honors a function declared in a repo-root
 `.tackbox-reporters` file (`file#function: reason`) - tier-2. A
 declaration names a report sink - it is not an exclude: it disables no
 rule, and a declared call is honored only when the caught error flows
-into its arguments. Python is the exception: its flake8/ast engine
-resolves no origins - the `tackbox_report` capture functions
-(`report_error` / `report_warn` / `report_quiet` / `report_panic`) are a
-built-in tier-1 set matched by name, and a tier-2 declaration likewise matches
-by function name (any same-named call), not by resolving the callee to
-its file.
+into its arguments. Python resolves tier-1 by import origin too (D010),
+scoped to the fixed `tackbox_report` package (`report_error` /
+`report_warn` / `report_quiet` / `report_panic` / `notify`): a call
+counts only when it resolves through the module's own import bindings -
+`from tackbox_report import ...` or `import tackbox_report` (attribute
+form included) - so a same-named local def or a foreign import is not
+the verb. Only its tier-2 declarations stay matched by function name
+(any same-named call), not by resolving the callee to its file.
 
 A `[usage]` declaration (`file#function [usage]: reason`) names the
 opposite lane: a deliberate user-facing diagnostic exit, e.g. a CLI
@@ -247,8 +250,8 @@ contract.
 
 ## Deduplication: telemetry, never the user
 
-Dedup lives at two levels with different owners (`rules/DECISIONS.md`
-D005):
+Dedup lives at two levels with different owners
+(`docs/report-contracts.md` D005):
 
 - The capture helpers rate-limit telemetry: repeat captures with the
   same dedupKey inside the rate window (default 60s) are not re-sent.
@@ -265,13 +268,25 @@ D005):
 `tackbox hook` wires the rules into an agent's edit loop. It reads a
 Claude Code hook event on stdin and dispatches by `hook_event_name`:
 
-- **PostToolUse** re-lints the edited file (Go: its package). On a
-  finding it exits 2 with the finding on stderr, so the model sees it
-  and fixes it in-loop. The authoritative gate stays pre-commit / CI.
+- **PostToolUse** on an Edit/Write re-lints the edited file (Go: its
+  package). On a finding it exits 2 with the finding on stderr, so the
+  model sees it and fixes it in-loop. On a **Bash** command it instead
+  diffs the whole worktree against HEAD and blocks if the command
+  planted a new suppression marker (on a lintable file) or a new
+  `.tackbox-reporters` line - containment for a marker a shell wrote
+  behind the Edit gate. Stateless: HEAD is the approval record, so an
+  approved marker stops asking once committed (worst case, a repeated
+  question, never a silent pass). The authoritative gate stays
+  pre-commit / CI.
 - **PreToolUse** asks for approval before a new suppression marker
   (`// no-report`, `// parse-skip`, `// nil-return`, `// test-skip`,
   `// dup-ok`) or a new `.tackbox-reporters` line lands;
   removing one is free.
+
+Both marker gates ask only about files an engine would lint (D012): a
+marker in a Go `testdata/` path or a non-lintable fixture extension
+(a `.java.txt`) is dead text and draws no question, while the
+`.tackbox-reporters` gate stays unconditional.
 
 The hook is a no-op unless the edit's `cwd` is a git repo with a
 `dev.py` at its root. Wire it once, globally, in
@@ -285,7 +300,7 @@ The hook is a no-op unless the edit's `cwd` is a git repo with a
        "hooks": [{"type": "command", "command": "uvx tackbox hook"}]}
     ],
     "PostToolUse": [
-      {"matcher": "Edit|Write|MultiEdit",
+      {"matcher": "Edit|Write|MultiEdit|Bash",
        "hooks": [{"type": "command", "command": "uvx tackbox hook", "timeout": 120}]}
     ]
   }

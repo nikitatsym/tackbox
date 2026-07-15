@@ -193,13 +193,15 @@ def test_bare_except_is_bare_not_swallowed(tmp_path):
     assert "TBX003" in r.stdout and "TBX001" not in r.stdout, r.stdout
 
 
-# --- built-in tier-1 reporters: the tackbox_report public capture API (D004) ---
+# --- tier-1 reporters recognized by import origin (D004/D010) ---
 
 
-def test_builtin_tier1_report_error_credits_without_declaration(tmp_path):
-    # No --reporters flag and no marker: report_error is a built-in tier-1 sink,
-    # and the caught flows into it, so the handler is credited.
+def test_tier1_report_error_credits_without_declaration(tmp_path):
+    # No --reporters flag and no marker: report_error is a tier-1 sink recognized
+    # by its tackbox_report import origin, and the caught flows into it, so the
+    # handler is credited.
     src = (
+        "from tackbox_report import report_error\n\n\n"
         "def h():\n    try:\n        work()\n"
         "    except ValueError as e:\n"
         "        report_error('db down', cause=e, dedup_key='area.k')\n"
@@ -209,11 +211,12 @@ def test_builtin_tier1_report_error_credits_without_declaration(tmp_path):
     assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
 
 
-def test_builtin_tier1_report_warn_and_panic_credit(tmp_path):
+def test_tier1_report_warn_and_panic_credit(tmp_path):
     # report_warn (cause keyword) and report_panic (caught as positional arg) are
-    # both built-in tier-1 sinks. report_warn carries a dedup_key (D008); panic
+    # both tier-1 sinks by origin. report_warn carries a dedup_key (D008); panic
     # takes no dedup_key.
     src = (
+        "from tackbox_report import report_warn, report_panic\n\n\n"
         "def h():\n    try:\n        work()\n"
         "    except ValueError as e:\n        report_warn('transient', cause=e, dedup_key='task.transient')\n\n\n"
         "def g():\n    try:\n        work()\n"
@@ -224,10 +227,11 @@ def test_builtin_tier1_report_warn_and_panic_credit(tmp_path):
     assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
 
 
-def test_builtin_tier1_without_argflow_still_swallows(tmp_path):
+def test_tier1_without_argflow_still_swallows(tmp_path):
     # The caught must flow into the call; a report_error that does not carry it is
     # not a capture of THIS error, so the handler still swallows.
     src = (
+        "from tackbox_report import report_error\n\n\n"
         "def h():\n    try:\n        work()\n"
         "    except ValueError as e:\n        report_error('unrelated')\n"
     )
@@ -236,18 +240,20 @@ def test_builtin_tier1_without_argflow_still_swallows(tmp_path):
     assert r.returncode == 1 and "TBX001" in r.stdout, r.stdout
 
 
-def test_builtin_tier1_name_model_credits_same_named_local(tmp_path):
-    # Documented D004 limitation: pyrules has no import origin, so a same-named
-    # report_error from ANY module is credited - even this unrelated local def.
-    # This is the Python name model's inherent false-positive-credit.
+def test_shadow_attack_local_def_is_not_credited(tmp_path):
+    # Origin model (reworked from the old name-model false-credit fixture, D010):
+    # a module-level def report_error rebinds the imported name from that point,
+    # so the call in h is NOT the verb and the silent catch fires TBX001. The
+    # shadow attack self-defeats.
     src = (
+        "from tackbox_report import report_error\n\n\n"
         "def report_error(x):\n    print(x)\n\n\n"
         "def h():\n    try:\n        work()\n"
         "    except ValueError as e:\n        report_error(e)\n"
     )
     _write(tmp_path, "r.py", src)
     r = _flake8(tmp_path, "r.py")
-    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+    assert r.returncode == 1 and "TBX001" in r.stdout, r.stdout
 
 
 # --- TBX008 python-test-skip ---
@@ -450,6 +456,7 @@ def test_notify_narrow_except_is_clean(tmp_path):
     # A notify carrying the caught error on a narrow except routes it to the user
     # lane (gate satisfied): credited for TBX001, no TBX010.
     src = (
+        "from tackbox_report import notify\n\n\n"
         "def h():\n    try:\n        work()\n"
         "    except ConnectionError as e:\n"
         "        notify('connection lost, retrying', cause=e, dedup_key='net.offline')\n"
@@ -463,6 +470,7 @@ def test_notify_broad_except_fires(tmp_path):
     # A notify in a broad `except Exception` routes every failure to the user
     # lane and blinds telemetry - the gate finding.
     src = (
+        "from tackbox_report import notify\n\n\n"
         "def h():\n    try:\n        work()\n"
         "    except Exception as e:\n"
         "        notify('connection lost, retrying', cause=e, dedup_key='net.offline')\n"
@@ -476,6 +484,7 @@ def test_notify_without_argflow_still_swallows(tmp_path):
     # A notify the caught error does not reach is not credited: still a swallow,
     # and not the notify gate (it is not terminating this failure path).
     src = (
+        "from tackbox_report import notify\n\n\n"
         "def h():\n    try:\n        work()\n"
         "    except ValueError as e:\n"
         "        notify('connection lost, retrying', cause=other, dedup_key='net.offline')\n"
@@ -489,6 +498,7 @@ def test_notify_double_lane_fires(tmp_path):
     # capture + notify on one path in a narrow except: error already reaches the
     # user lane, so the notify double-shows.
     src = (
+        "from tackbox_report import report_error, notify\n\n\n"
         "def h():\n    try:\n        work()\n"
         "    except ConnectionError as e:\n"
         "        report_error('server unreachable', cause=e, dedup_key='net.fail')\n"
@@ -503,6 +513,7 @@ def test_match_exclusive_cases_clean(tmp_path):
     # notify in one match case, capture in the exclusive capture-all case: only
     # one runs, so no single path both captures and notifies.
     src = (
+        "from tackbox_report import report_error, notify\n\n\n"
         "def h(status):\n    try:\n        work()\n"
         "    except ConnectionError as e:\n"
         "        match status:\n"
@@ -519,6 +530,7 @@ def test_match_exclusive_cases_clean(tmp_path):
 def test_match_same_case_double_lane_fires(tmp_path):
     # capture and notify in the SAME match case run on one path: double-lane.
     src = (
+        "from tackbox_report import report_error, notify\n\n\n"
         "def h(status):\n    try:\n        work()\n"
         "    except ConnectionError as e:\n"
         "        match status:\n"
@@ -537,6 +549,7 @@ def test_notify_loop_then_capture_double_lane_fires(tmp_path):
     # notify inside a loop, capture after it: a loop body may run alongside the
     # post-loop capture, so the pair stays a double-lane.
     src = (
+        "from tackbox_report import report_error, notify\n\n\n"
         "def h(items):\n    try:\n        work()\n"
         "    except ConnectionError as e:\n"
         "        for _ in items:\n"
@@ -555,6 +568,7 @@ def test_conditional_notify_silent_complement_fires(tmp_path):
     # notify narrowed under `if cond` whose complement does nothing with the
     # caught error: the notify credits only its path, the fall-through swallows.
     src = (
+        "from tackbox_report import notify\n\n\n"
         "def h(cond):\n    try:\n        work()\n"
         "    except ConnectionError as e:\n"
         "        if cond:\n"
@@ -570,6 +584,7 @@ def test_conditional_notify_silent_complement_fires(tmp_path):
 def test_conditional_capture_silent_complement_fires(tmp_path):
     # same shape with a capture: the capture credits only its path.
     src = (
+        "from tackbox_report import report_error\n\n\n"
         "def h(cond):\n    try:\n        work()\n"
         "    except ConnectionError as e:\n"
         "        if cond:\n"
@@ -586,6 +601,7 @@ def test_conditional_notify_else_capture_clean(tmp_path):
     # notify in one leg, capture in the exclusive else leg: every path handled,
     # and the legs are exclusive so no double-lane.
     src = (
+        "from tackbox_report import report_error, notify\n\n\n"
         "def h(cond):\n    try:\n        work()\n"
         "    except ConnectionError as e:\n"
         "        if cond:\n"
@@ -602,6 +618,7 @@ def test_conditional_notify_fallthrough_capture_clean(tmp_path):
     # notify+return on the guarded path, capture on the fall-through: both paths
     # handled, and the return keeps the two lanes exclusive.
     src = (
+        "from tackbox_report import report_error, notify\n\n\n"
         "def h(cond):\n    try:\n        work()\n"
         "    except ConnectionError as e:\n"
         "        if cond:\n"
@@ -619,6 +636,7 @@ def test_conditional_notify_fallthrough_capture_clean(tmp_path):
 
 def test_reporter_dynamic_msg_fires(tmp_path):
     src = (
+        "from tackbox_report import report_error\n\n\n"
         "def h(m):\n    try:\n        work()\n"
         "    except ValueError as e:\n"
         "        report_error(m, cause=e, dedup_key='area.key')\n"
@@ -630,6 +648,7 @@ def test_reporter_dynamic_msg_fires(tmp_path):
 
 def test_reporter_dedup_missing_fires(tmp_path):
     src = (
+        "from tackbox_report import report_error\n\n\n"
         "def h():\n    try:\n        work()\n"
         "    except ValueError as e:\n"
         "        report_error('db write failed', cause=e)\n"
@@ -641,6 +660,7 @@ def test_reporter_dedup_missing_fires(tmp_path):
 
 def test_reporter_dedup_not_literal_fires(tmp_path):
     src = (
+        "from tackbox_report import report_error\n\n\n"
         "def h(k):\n    try:\n        work()\n"
         "    except ValueError as e:\n"
         "        report_error('db write failed', cause=e, dedup_key=k)\n"
@@ -652,6 +672,7 @@ def test_reporter_dedup_not_literal_fires(tmp_path):
 
 def test_reporter_dedup_bad_format_fires(tmp_path):
     src = (
+        "from tackbox_report import report_error\n\n\n"
         "def h():\n    try:\n        work()\n"
         "    except ValueError as e:\n"
         "        report_error('db write failed', cause=e, dedup_key='BadKey')\n"
@@ -665,6 +686,7 @@ def test_quiet_dynamic_msg_clean_dedup_validated(tmp_path):
     # quiet is telemetry-only: msg-static (D007) does not apply, but the
     # dedup_key (D008) still does - a valid literal key keeps it clean.
     src = (
+        "from tackbox_report import report_quiet\n\n\n"
         "def h(m):\n    try:\n        work()\n"
         "    except ValueError as e:\n"
         "        report_quiet(m, cause=e, dedup_key='cache.refresh')\n"
@@ -678,6 +700,7 @@ def test_dynamic_dedup_in_test_file_clean(tmp_path):
     # D-4: TBX011 (and TBX010) skip test files - a dynamic dedup_key in a
     # test_*.py is clean; the swallow rule still credits the capture.
     src = (
+        "from tackbox_report import report_error\n\n\n"
         "def test_h(k):\n    try:\n        work()\n"
         "    except ValueError as e:\n"
         "        report_error('db write failed', cause=e, dedup_key=k)\n"
@@ -690,6 +713,7 @@ def test_dynamic_dedup_in_test_file_clean(tmp_path):
 def test_broad_notify_in_test_file_clean(tmp_path):
     # D-4: the notify gate (TBX010) skips test files - a broad notify is clean.
     src = (
+        "from tackbox_report import notify\n\n\n"
         "def test_h():\n    try:\n        work()\n"
         "    except Exception as e:\n"
         "        notify('connection lost, retrying', cause=e, dedup_key='net.offline')\n"
@@ -699,18 +723,21 @@ def test_broad_notify_in_test_file_clean(tmp_path):
     assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
 
 
-def test_verb_defined_in_file_is_exempt(tmp_path):
-    # A file that DEFINES the verb is the library (owns per-name fingerprints,
-    # D002) or a local shadow (D004), not a consumer site: its own call with a
-    # computed dedup_key is not validated.
+def test_owner_package_self_credits_and_skips_arg_checks(tmp_path):
+    # Owner package (a tackbox_report/ path segment, D010): its own top-level verb
+    # defs ARE the origin, so an internal broad-except calling report_error with a
+    # computed dedup_key self-credits (no TBX001) and TBX010/TBX011 do not bind the
+    # owner - zero findings, no marker.
     src = (
         "def report_error(msg, cause=None, tags=None, dedup_key=''):\n    pass\n\n\n"
         "def run_task(name):\n    try:\n        work()\n"
         "    except Exception as e:\n"
         "        report_error('background task failed', cause=e, dedup_key=f'task:{name}')\n"
     )
-    _write(tmp_path, "lib.py", src)
-    r = _flake8(tmp_path, "lib.py")
+    pkg = tmp_path / "tackbox_report"
+    pkg.mkdir()
+    (pkg / "lib.py").write_text(src)
+    r = _flake8(tmp_path, "tackbox_report/lib.py")
     assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
 
 
