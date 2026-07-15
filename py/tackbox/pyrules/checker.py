@@ -17,6 +17,7 @@ from tackbox import __version__ as _version
 
 from .codes import CODE_TO_ID, MESSAGES
 from .markers import MarkerIndex, TEST_SKIP
+from . import origin
 from . import reporters as _reporters
 
 # Sound supervised-shutdown carve-out: an except catching only these, whose
@@ -27,21 +28,18 @@ _SHUTDOWN_TYPES = frozenset(
 _SHUTDOWN_CALLS = frozenset({"kill", "terminate"})
 _EXIT_CALLS = frozenset({"sys.exit", "os._exit"})
 
-# Built-in tier-1 reporters: the tackbox_report public capture API, recognized by
-# NAME (pyrules has no import origin). So a consumer's
-# `except X as e: report_error(..., e)` is credited without a `# no-report:`
-# marker or a `.tackbox-reporters` entry - the Python analog of how Go credits
-# go/report by origin and JS credits tackbox/report (DECISIONS D004). Name-model
-# limitation: a same-named function from any module is credited too; origin is
-# not provable source-only.
-_BUILTIN_REPORTERS = frozenset({"report_error", "report_warn", "report_quiet", "report_panic"})
+# Tier-1 recognition is by import origin (origin.resolve_map, D010): a call is
+# credited only when it resolves through the file's own tackbox_report import
+# bindings, so a same-named local def or a foreign import is not the verb. This
+# is the Python analog of how Go credits go/report and JS credits tackbox/report
+# by origin (DECISIONS D004). notify is the user-lane-only verb (D006):
+# origin-resolved like the reporters but NEVER a capture - it credits a failure
+# path for TBX001 and TBX010 gates it.
+_NOTIFY = "notify"
 
-# notify is the user-lane-only verb (D006): recognized by name like the
-# reporters, but NEVER a capture - it credits a failure path for TBX001 without
-# joining _BUILTIN_REPORTERS, and TBX010 gates it. panic is excluded from the
-# double-lane capture set (it is terminal, like Go's capPanic).
-_NOTIFY_NAME = "notify"
-_LANE_CAPTURE_BUILTINS = _BUILTIN_REPORTERS - {"report_panic"}
+# Double-lane captures (D006): the tier-1 reporters minus terminal panic and the
+# user-lane-only notify.
+_LANE_CAPTURE_VERBS = frozenset({"report_error", "report_warn", "report_quiet"})
 
 # Broad except types for the notify gate (D006). bare / BaseException single
 # catches early-return to TBX003, so Exception is the broad type this gate
@@ -51,10 +49,10 @@ _BROAD_EXCEPT_TYPES = frozenset(
 )
 
 # User-lane verbs whose msg must be a static literal (D007) and whose dedup_key
-# must be a well-formed literal (D008), recognized by name (the D004 caveat).
-# report_panic is exempt (it takes a name, not a msg/dedup_key).
-_MSG_VERBS = frozenset({"report_error", "report_warn", _NOTIFY_NAME})
-_DEDUP_VERBS = frozenset({"report_error", "report_warn", "report_quiet", _NOTIFY_NAME})
+# must be a well-formed literal (D008). report_panic is exempt (it takes a name,
+# not a msg/dedup_key).
+_MSG_VERBS = frozenset({"report_error", "report_warn", _NOTIFY})
+_DEDUP_VERBS = frozenset({"report_error", "report_warn", "report_quiet", _NOTIFY})
 _DEDUP_KEY_RE = re.compile(r"^[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*(:[a-zA-Z0-9_.-]+)?$")
 
 # TBX010 double-lane and TBX011 dedup_key sub-messages (the default arm of each
@@ -143,7 +141,25 @@ _OPAQUE_STMTS: tuple[type, ...] = (ast.Try, ast.For, ast.While, ast.AsyncFor) + 
 )
 
 
-def _silent_path(body: list[ast.stmt], reporter_names: frozenset[str], caught: str | None) -> bool:
+def _credits_call(
+    call: ast.Call, resolve: dict[int, str | None], tier2: frozenset[str], caught: str
+) -> bool:
+    """The call routes the caught error: an origin-resolved tier-1 verb (any of
+    the five, notify included) or a tier-2 declared bare name, with the caught
+    flowing into its arguments."""
+    if not _reporters.arg_flows(call, caught):
+        return False
+    if resolve.get(id(call)) is not None:
+        return True
+    return isinstance(call.func, ast.Name) and call.func.id in tier2
+
+
+def _silent_path(
+    body: list[ast.stmt],
+    resolve: dict[int, str | None],
+    tier2: frozenset[str],
+    caught: str | None,
+) -> bool:
     """Some execution path through the handler body drops the caught error:
     reaches a plain return / break / continue / sys.exit, or the body's end,
     with no capture or notify routing it on the way. Path-sensitive - if/elif/
@@ -157,12 +173,7 @@ def _silent_path(body: list[ast.stmt], reporter_names: frozenset[str], caught: s
         if not caught:
             return False
         for n in _walk(node):
-            if (
-                isinstance(n, ast.Call)
-                and isinstance(n.func, ast.Name)
-                and (n.func.id in reporter_names or n.func.id == _NOTIFY_NAME)
-                and _reporters.arg_flows(n, caught)
-            ):
+            if isinstance(n, ast.Call) and _credits_call(n, resolve, tier2, caught):
                 return True
         return False
 
@@ -216,7 +227,7 @@ def _silent_path(body: list[ast.stmt], reporter_names: frozenset[str], caught: s
     return not r  # fell off the end: silent iff no event routed the error
 
 
-def _notifies(handler: ast.ExceptHandler) -> bool:
+def _notifies(handler: ast.ExceptHandler, resolve: dict[int, str | None]) -> bool:
     """A notify(...) carrying the caught error is called in the handler - it
     routes the error to the user lane, terminating that path (D006). Never a
     capture; TBX010 decides whether the except type is narrow enough."""
@@ -225,8 +236,7 @@ def _notifies(handler: ast.ExceptHandler) -> bool:
     for n in _iter_body(handler):
         if (
             isinstance(n, ast.Call)
-            and isinstance(n.func, ast.Name)
-            and n.func.id == _NOTIFY_NAME
+            and resolve.get(id(n)) == _NOTIFY
             and _reporters.arg_flows(n, handler.name)
         ):
             return True
@@ -242,7 +252,12 @@ def _is_broad_except(handler: ast.ExceptHandler) -> bool:
     return any(t in _BROAD_EXCEPT_TYPES for t in types)
 
 
-def _lane_conflict(body: list[ast.stmt], capture_names: frozenset[str], caught: str | None) -> bool:
+def _lane_conflict(
+    body: list[ast.stmt],
+    resolve: dict[int, str | None],
+    tier2: frozenset[str],
+    caught: str | None,
+) -> bool:
     """Some execution path through body both captures (a recognized reporter,
     panic excluded) and notifies (a notify carrying the caught) - the D006
     double-lane. Path-sensitive: exclusive if/else and match-case legs do not
@@ -255,13 +270,14 @@ def _lane_conflict(body: list[ast.stmt], capture_names: frozenset[str], caught: 
     def calls(node: ast.AST) -> tuple[bool, bool]:
         cap = notify = False
         for n in _walk(node):
-            if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)):
+            if not (isinstance(n, ast.Call) and _reporters.arg_flows(n, caught)):
                 continue
-            if not _reporters.arg_flows(n, caught):
-                continue
-            if n.func.id in capture_names:
+            verb = resolve.get(id(n))
+            if verb in _LANE_CAPTURE_VERBS or (
+                isinstance(n.func, ast.Name) and n.func.id in tier2
+            ):
                 cap = True
-            if n.func.id == _NOTIFY_NAME:
+            if verb == _NOTIFY:
                 notify = True
         return cap, notify
 
@@ -330,18 +346,6 @@ def _arg_expr(call: ast.Call, index: int, name: str) -> ast.expr | None:
 
 def _is_str_literal(expr: ast.expr | None) -> bool:
     return isinstance(expr, ast.Constant) and isinstance(expr.value, str)
-
-
-def _local_def_names(tree: ast.AST) -> frozenset[str]:
-    """Every function name defined anywhere in the module. A verb call in a file
-    that defines that verb is the library's own primitive (tackbox_report owns
-    per-name fingerprints, D002) or a local shadow (D004), not a consumer call
-    site, so the msg/dedup_key contract (D007/D008) does not apply to it."""
-    return frozenset(
-        node.name
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    )
 
 
 def _exit_call(handler: ast.ExceptHandler) -> ast.Call | None:
@@ -469,6 +473,14 @@ def _is_test_file(filename: str) -> bool:
     return "/tests/" in p or p.startswith("tests/")
 
 
+def _is_owner_file(filename: str) -> bool:
+    """A file inside the tackbox_report package (a `tackbox_report` path segment).
+    The package self-credits its own top-level verb defs as the origin, and
+    TBX010/TBX011 do not bind it (D010). Consumer repos never lint the installed
+    package, so the segment rule is inert outside this repo."""
+    return "tackbox_report" in filename.replace("\\", "/").split("/")
+
+
 class _Visitor(ast.NodeVisitor):
     def __init__(
         self,
@@ -476,17 +488,18 @@ class _Visitor(ast.NodeVisitor):
         skip_markers: MarkerIndex,
         reporter_names: frozenset[str],
         unittest_skip: bool,
-        local_defs: frozenset[str] = frozenset(),
+        resolve: dict[int, str | None],
+        owner: bool = False,
         in_test_file: bool = False,
     ):
         self.markers = markers
         self.skip_markers = skip_markers
-        # Built-in tier-1 names are always recognized; declared tier-2 names extend them.
-        self.reporter_names = _BUILTIN_REPORTERS | reporter_names
-        # Double-lane capture set: recognized reporters minus the terminal panic.
-        self.lane_captures = (_LANE_CAPTURE_BUILTINS | reporter_names) - {"report_panic"}
+        # Tier-2 declared names (by bare name + arg flow); tier-1 comes from resolve.
+        self.reporter_names = reporter_names
+        # id(ast.Call) -> the tier-1 verb it origin-resolves to, or None (D010).
+        self.resolve = resolve
+        self.owner = owner
         self.unittest_skip = unittest_skip
-        self.local_defs = local_defs
         self.in_test_file = in_test_file
         self.findings: list[tuple[int, int, str, str]] = []
         self._func_depth = 0
@@ -532,25 +545,22 @@ class _Visitor(ast.NodeVisitor):
         if _is_pytest_skip_call(node) and not _reason_present(node, positional=True, kw=True):
             if not self.skip_markers.suppresses(node.lineno):
                 self._add(node, "TBX008")
-        if not self.in_test_file:
-            self._check_reporter_args(node)  # TBX011 skips tests (D-4)
+        if not self.in_test_file and not self.owner:
+            self._check_reporter_args(node)  # TBX011 skips tests (D008 amend) + owner (D010)
         self.generic_visit(node)
 
     def _check_reporter_args(self, node: ast.Call) -> None:
         """TBX011: a user-lane verb's msg must be a static literal (D007) and its
-        dedup_key a well-formed literal (D008). Recognized by name; a call in a
-        file that defines that verb (the library primitive or a local shadow) is
-        exempt - the contract governs consumer call sites, not the owner."""
-        if not isinstance(node.func, ast.Name):
+        dedup_key a well-formed literal (D008). Recognized by import origin (D010),
+        so an attribute-form call (rep.report_error(...)) is validated too."""
+        verb = self.resolve.get(id(node))
+        if verb is None:
             return
-        name = node.func.id
-        if name in self.local_defs:
-            return
-        if name in _MSG_VERBS:
+        if verb in _MSG_VERBS:
             msg = _arg_expr(node, 0, "msg")
             if msg is not None and not _is_str_literal(msg):
                 self._add(node, "TBX011")
-        if name in _DEDUP_VERBS:
+        if verb in _DEDUP_VERBS:
             key = _arg_expr(node, 3, "dedup_key")
             if key is None:
                 self._add(node, "TBX011", _DEDUP_MISSING)
@@ -580,8 +590,8 @@ class _Visitor(ast.NodeVisitor):
         if exit_call is not None:
             self._add(exit_call, "TBX007")
 
-        if not self.in_test_file:
-            self._check_notify(handler)  # TBX010 skips tests (D-4)
+        if not self.in_test_file and not self.owner:
+            self._check_notify(handler)  # TBX010 skips tests (D008 amend) + owner (D010)
 
         if self._swallows(try_node, handler):
             self._add(try_node, "TBX001")
@@ -591,12 +601,12 @@ class _Visitor(ast.NodeVisitor):
         typed catch the gate is the except type - a notify in a broad `except
         Exception` is a finding (marker-suppressible, last resort). On a narrow
         catch, a notify paired with a capture on one path is the double-lane."""
-        if not _notifies(handler):
+        if not _notifies(handler, self.resolve):
             return
         if _is_broad_except(handler):
             if not self.markers.suppresses(handler.body[0].lineno):
                 self._add(handler, "TBX010")
-        elif _lane_conflict(handler.body, self.lane_captures, handler.name):
+        elif _lane_conflict(handler.body, self.resolve, self.reporter_names, handler.name):
             self._add(handler, "TBX010", _DOUBLE_LANE_MSG)
 
     def _swallows(self, try_node: ast.Try, handler: ast.ExceptHandler) -> bool:
@@ -604,7 +614,7 @@ class _Visitor(ast.NodeVisitor):
             return False
         if self.markers.suppresses(handler.body[0].lineno):
             return False
-        return _silent_path(handler.body, self.reporter_names, handler.name)
+        return _silent_path(handler.body, self.resolve, self.reporter_names, handler.name)
 
 
 class Plugin:
@@ -622,12 +632,14 @@ class Plugin:
         self.file_tokens = file_tokens
 
     def run(self):
+        owner = _is_owner_file(self.filename)
         visitor = _Visitor(
             MarkerIndex(self.file_tokens),
             MarkerIndex(self.file_tokens, prefix=TEST_SKIP),
             type(self)._reporter_names,
             _imports_unittest_skip(self.tree),
-            _local_def_names(self.tree),
+            origin.resolve_map(self.tree, owner=owner),
+            owner,
             _is_test_file(self.filename),
         )
         visitor.visit(self.tree)

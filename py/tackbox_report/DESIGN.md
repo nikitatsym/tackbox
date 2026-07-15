@@ -201,14 +201,17 @@ call from any module counts (subject to argument-flow of the caught error).
 
 Recognition of `tackbox_report` as a reporter:
 
-- Recognition is by the **names** `report_error` / `report_warn` /
-  `report_quiet` / `report_panic`, not by import origin. pyrules now carries these
-  as a **built-in tier-1 set** (DECISIONS D004), so a consumer needs no `.tackbox-reporters`
-  entry -- the Python analog of the built-in Go origin check. Because the engine
-  is name-based, *any* same-named call from any module counts (subject to
-  argument-flow of the caught error), including an unrelated local `report_error`
-  that is not this helper. That false-positive-credit risk is inherent to the
-  name-based engine and cannot be closed without type resolution.
+- Recognition is by **file-local import origin** (DECISIONS D010, see
+  `py/tackbox/pyrules/origin.py`): a call counts only when it resolves, through
+  the module's own import bindings, to `tackbox_report` -- `from tackbox_report
+  import report_error` or `import tackbox_report` (attribute form included).
+  pyrules carries the five verbs (`report_error` / `report_warn` / `report_quiet`
+  / `report_panic` / `notify`) as the origin target, a **built-in tier-1 set**
+  (DECISIONS D004), so a consumer needs no `.tackbox-reporters` entry -- the
+  Python analog of the built-in Go origin check. A same-named local def or a
+  foreign import is not the verb, so the old name-model false-positive-credit is
+  closed. This package self-credits its own top-level verb defs (a
+  `tackbox_report` path segment).
 - With that recognition in place, the two background-task wrappers carry **no**
   `# no-report:` marker. Each internal `except` calls `report_error` directly --
   identical routing to the old private `_report_task_failure` (per-name

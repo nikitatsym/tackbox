@@ -6,6 +6,11 @@ entry here. This file is the authority: the specs state the intent,
 the per-language READMEs render it for users, git messages are not a
 decision home.
 
+Entry format: Rules affected / Decision (present tense) / short
+rationale / named gaps. No history, no examples, no plan or session
+references. Runtime-helper library contracts live in
+docs/report-contracts.md (D002/D003/D005 moved there, ids kept).
+
 ## Scope
 
 tackbox enforces a minimal, structural discipline for how code handles
@@ -55,74 +60,16 @@ Kept - the other two arms of ERC006, structural, not name-based:
 
 Privacy still holds as a principle (no secret values in
 message/tags/dedupKey) but is enforced by scrubbing and review, not by
-a name lint. If value-level secret scanning is ever wanted, delegate it
-to a dedicated scanner (gitleaks / trufflehog) on a separate track.
+a name lint.
 
 ## D002 - per-name fingerprints for GoSafe and Panic (2026-07-13)
 
-Rules affected: none. This records a go/report library contract and
-its boundary with ERC006 (dedupKey arm); no lint rule changes.
-
-Decision: the go/report background-task and panic primitives
-fingerprint and rate-limit PER GOROUTINE NAME, not per class. GoSafe's
-error path keys on `go.task:<name>`; Panic keys on `panic:<name>`.
-Both keys are built directly from the name, so two differently-named
-background tasks (or panics) failing inside the 60s rate window each
-surface as their own Glitchtip issue instead of collapsing into one.
-
-Rationale: a background failure needs individual Glitchtip visibility.
-The previous error path passed the constant literal `go.task` to the
-public SentryErr, so every goroutine's error shared one fingerprint
-and one rate-limit bucket; a second task failing within the window was
-silently dropped and all failures grouped as a single issue. The name
-was only a tag. Panic was already per-name, so this also restores
-consistency between GoSafe's two paths (panic and error). An earlier
-goSafe keyed `goroutine:<name>`; `go.task:<name>` is the current form.
-
-A library primitive legitimately builds its fingerprint directly. The
-static-literal dedupKey rule (ERC006 arm 3) targets application call
-sites, where a computed key would mean unbounded telemetry cardinality
-from untrusted input. It does not target the blessed go/report wrapper,
-which owns a small closed set of goroutine names. GoSafe and Panic
-therefore set the fingerprint through the package-internal capture
-core, bypassing the public SentryErr literal-key contract by design -
-not by an escape marker.
+Library contract, moved to docs/report-contracts.md (id kept). Not a
+lint rule; its boundary with ERC006 arm 3 is recorded there.
 
 ## D003 - concurrency-isolated capture in go/report (2026-07-13)
 
-Rules affected: none. This records a go/report library contract; no
-lint rule changes.
-
-Decision: every event-capture site in go/report clones the current hub
-before setting scope and shipping the event
-(`sentry.CurrentHub().Clone()`, then `hub.WithScope` + `hub.Capture*`
-on the clone). This covers the error/warn core (capture), Panic, and
-the Verify healthcheck. Each capture therefore owns an isolated scope
-instead of pushing onto sentry-go's shared global scope stack.
-
-Rationale: GoSafe runs tasks in goroutines by design, so captures run
-concurrently on the process-wide hub. sentry-go's global scope stack
-is shared, so concurrent WithScope/Capture calls on it can bleed scope
-between goroutines - an event can pick up another goroutine's
-fingerprint and tags. It is memory-safe (no data race) but logically
-corrupts grouping under simultaneity. Cloning is the documented
-sentry-go per-goroutine idiom and gives each capture its own scope.
-
-This completes D002: the per-name fingerprints (`go.task:<name>`,
-`panic:<name>`) only hold under real concurrency because of this
-isolation; without it, two background tasks failing at the same instant
-could swap fingerprints and mis-group. Cloning preserves global
-context - Release/Environment come from the Init ClientOptions applied
-by the client, and Clone copies the client plus the top-most scope, so
-no Init-time context is dropped and the shared transport that Flush
-drains is unchanged.
-
-Rate-limit is unaffected: shouldDrop was already concurrency-safe, keyed
-on the string via sync.Map before capture, and stays as-is.
-
-Known limitation: breadcrumbs (Crumb / AddBreadcrumb) still write to the
-global hub. The package is not request-scoped, so breadcrumb isolation
-is a separate, deeper design concern and is left out of scope here.
+Library contract, moved to docs/report-contracts.md (id kept).
 
 ## D004 - runtime helper capture APIs are tier-1 reporters (2026-07-13)
 
@@ -161,12 +108,9 @@ cannot introduce a swallow finding on existing code. JV006 does count
 a recognized Report capture as a capture (report + rethrow is a double
 capture), matching how it already counts slf4j and declared reporters.
 
-This also retires the two `# no-report:` markers the Python helper's
-background-task wrappers (`run_task` / `run_task_async`) carried: each
-internal `except` now calls `report_error` directly - identical
-routing (per-name `task:<name>` fingerprint, log-before-drop,
-rate-limit) - so the background boundary is a recognized capture, not
-a false-positive swallow.
+The Python helper's background-task wrappers route their internal
+except through `report_error`, so that boundary is a recognized
+capture and carries no markers.
 
 Amendment (2026-07-15): the `quiet` verb (Go `Quiet`, JS `reportQuiet`,
 Python `report_quiet`, Java `quiet`) is a capture - it skips only the
@@ -180,42 +124,15 @@ from the AST and imports, not value or content analysis. See the
 tackbox runtime-helpers plan (Python + Java capture helpers) for the
 full helper design.
 
+Amendment (2026-07-15): Python tier-1 and notify recognition moved
+from bare name to file-local import origin (D010); the name-model
+caveat above now applies only to tier-2 declared reporters.
+
 ## D005 - dedup rate-limits telemetry, never the user lane (2026-07-14)
 
-Rules affected: none. This records a cross-language runtime-helper
-library contract (like D002/D003); no lint rule changes.
-
-Decision: deduplication lives at two levels with different owners.
-
-- Telemetry: the helper rate-limits captures per dedupKey (default 60s
-  window) before they ship. Suppressing here is lossless - the server
-  already groups by fingerprint and counts repeats, so a dropped
-  duplicate changes nothing about visibility.
-- The user lane is never suppressed by the helper. Every user-facing
-  event is delivered, each carrying its dedupKey; collapsing a storm
-  (twelve identical "offline" toasts from a 5s poll loop) into one
-  live banner, a counter, or a per-click toast is presentation policy
-  and belongs to the app's listener, keyed on the dedupKey the helper
-  provides.
-
-Rationale: a notification silently dropped inside the helper is a
-swallowed error at the UI level - the user clicks retry, nothing
-happens, no toast - the exact failure mode tackbox exists to prevent.
-How to collapse is UX policy that differs per app (banner vs counter
-vs toast-per-action), so a library-imposed policy would just get
-worked around. And a connectivity loss is a STATE, not an event
-stream: the right UX is one keyed, live banner - the stable key is
-precisely what the helper contributes.
-
-The asymmetry, named: suppressing telemetry loses nothing (the server
-counts); suppressing the user lane loses the failure for its only
-audience. Hence rate-limit on capture, deliver-always on the user
-lane.
-
-Per-sink order at a call site: local log always; user-lane dispatch
-unconditional, before any gate; capture behind init + rate window. A
-helper without a user lane simply has no second sink; the contract
-binds it as soon as one ships.
+Library contract, moved to docs/report-contracts.md (id kept): the
+telemetry rate window, the never-suppressed user lane, and the
+per-sink order live there.
 
 ## D006 - notify is a gated err-branch terminal (2026-07-15)
 
@@ -293,3 +210,142 @@ length is a structural nudge, and the substance is judged by review
 and the approval gate. In-call skip reasons (`t.Skip("...")`,
 `{ skip: '...' }`) keep the existing non-empty rule: they are visible
 strings in the test body, not lint escapes.
+
+## D010 - Python tier-1 recognition by import origin (2026-07-15)
+
+Rules affected: TBX001 (swallow credit), TBX010 (notify gate,
+double-lane), TBX011 (reporter args) - every pyrules site that
+recognized tier-1 verbs by bare name. Tier-2 declared reporters are
+unchanged.
+
+Decision: pyrules recognizes the tier-1 verbs (report_error /
+report_warn / report_quiet / report_panic) and notify by file-local
+import origin, not by name. A call counts only when it resolves,
+through the module's own import bindings, to the tackbox_report
+package:
+
+- `from tackbox_report import report_error [as x]` binds the local
+  name; `import tackbox_report [as tr]` binds the module, and
+  attribute calls through it (`tr.report_error(...)`) resolve - calls
+  a bare-name model cannot credit.
+- Kill semantics (ruff's ordered-binding model): a later module-level
+  rebinding of the bound name (def / class / assignment / any binding
+  statement) or `del` kills the binding from that point; a function
+  parameter or local binding shadows it inside that scope; a call
+  before the import gets no credit. One source-order pass, position
+  sensitive. A def in a try/except ImportError fallback kills too -
+  the conservative direction: over-flag, never hide.
+- `from tackbox_report import *` binds the five verbs (the exporter
+  is our own fixed package, so the star is enumerable); a star import
+  from any other module binds nothing and kills nothing - a clobber
+  via a star re-export is an accepted, greppable residual.
+- The resolver core is vendored from bandit (Apache-2.0, notice
+  retained): the import alias map plus dotted-attribute resolution.
+  The kill layer is ours, specified by ruff's binding kinds - no
+  third-party per-file resolver ships the rebinding-kill semantics
+  this rule stands on.
+
+Consequences:
+
+- No reserved names. A consumer's own module-level `def notify` (or
+  report_error) is just a function: never credited, not gated by
+  TBX010, not validated by TBX011. The de-facto call-site reservation
+  D006-D008 introduced for bare `notify(...)` disappears.
+- The shadow attack self-defeats: a local def named like a verb kills
+  the binding, calls stop being credited, and the swallow rules fire
+  on the silent catch. No def-site rule needed.
+- TBX011's local-defs exemption is obsolete (origin resolution makes
+  it precise) and is removed.
+
+The tackbox_report package itself (a tackbox_report path segment)
+self-credits: its own top-level defs of the verbs are the origin, so
+internal routing keeps its swallow credit (D004's marker retirement
+stands), while TBX010/TBX011 do not bind the owner - the library
+builds per-name keys by design (D002). Consumer repos never lint the
+installed package, so the segment rule is inert outside this repo.
+
+Tier-2 stays name-based (declared name + argument flow + dead-symbol
+validation): origin for tier-2 would need module-path-to-file
+resolution - Python's genuinely messy half (src layouts, namespace
+packages, relative imports) - for names the consumer already declares
+consciously in a user-gated file. Accepted residual gap: a same-named
+def in another file still shadows a tier-2 name; the D004 caveat now
+applies to tier-2 only.
+
+Facades: a consumer module that re-exports helper verbs
+(`from tackbox_report import report_error` in app/reporting.py)
+breaks file-local tier-1 origin for its importers; the fix is
+declaring the facade in `.tackbox-reporters`. Tier-2 validation
+therefore loosens from "top-level def" to "top-level def or a
+top-level import binding of the declared name". Plain assignments
+stay invalid.
+
+## D011 - the suppression gate covers Bash (stateless diff) (2026-07-15)
+
+Rules affected: none. This is a `tackbox hook` contract (as D005 is a
+helper contract); the hook is the enforcement surface.
+
+Decision: the hook gains a Bash arm. On a PostToolUse event for the
+Bash tool (same guard: cwd inside a git repo with dev.py at its
+root), the hook compares the working tree against HEAD - tracked
+modifications plus untracked files, .gitignore respected - and
+applies per file the same gate the Edit arm applies per edit: the
+marker multiset diff (more markers -> block; equal count but a
+changed marker or reason -> block; fewer -> free) on lintable files
+(D012), plus added `.tackbox-reporters` lines, unconditionally. A hit
+returns the PostToolUse block decision carrying the same approval
+wording as the PreToolUse gate: the marker and its file, and that a
+new suppression marker needs explicit user approval - revert it or
+get the approval.
+
+Stateless by design: no ledger of approved markers; HEAD is the
+approval record - an approved marker stops flagging once committed.
+Worst mode is a repeated question about a not-yet-committed approved
+marker on every later Bash call, never a silent pass. A rename of a
+marker-bearing file re-asks (its markers are new against HEAD at the
+new path): over-asks, never under.
+
+The asymmetry with the Edit arm, named: PreToolUse asks before a
+marker lands; a Bash command's effect is observable only after it
+ran, so the Bash arm asks after the fact - containment, not
+prevention. The diff is command-agnostic: sed, echo, a heredoc or
+python -c all land in the same worktree diff. Infra failures (git not
+answering) follow the hook's existing non-blocking contract (exit 1 +
+stderr); the approval gate has no CI backstop, so review owns what an
+infra failure lets through.
+
+## D012 - marker gates ask only about lintable files (2026-07-15)
+
+Rules affected: none. A `tackbox hook` contract; engine dispatch is
+unchanged.
+
+Decision: both marker-gate arms - PreToolUse (Edit / Write /
+MultiEdit) and the D011 Bash arm - ask only about files the engine
+dispatch would lint (extension match plus the engine's own path
+filter, e.g. Go's testdata/ convention). A marker in a file no engine
+lints is dead text: nothing reads it, so an approval question about
+it is noise. The `.tackbox-reporters` gate is exempt from the
+predicate and stays unconditional - the file itself is unlintable by
+design.
+
+The predicate is evaluated at mutation time against the destination
+path. Planting a marker in a dead file (fixture.py.txt) is free and
+stays dead; the move that brings it live (mv to fixture.py) makes its
+markers new-against-HEAD at a lintable path, and the Bash arm asks
+right there. Laundering is caught at the transition, statelessly.
+
+Fixture space thus asks nothing: Go analyzer fixtures (dropped by the
+Go engines' path filter) and non-lintable fixture extensions (java's
+.java.txt) draw no questions, while consumer tests (`_test.go`,
+`src/test/`, `test_*.py`, `*.test.js`) are lintable, so their markers
+keep asking - test-skip suppression there is live. A path-name
+exemption (a testdata/ segment) would be unsound wherever an engine
+does lint such a path; lintability is sound by construction, and it
+is the same predicate the post arm applies when it lints an edited
+file - one scope, both sides of the hook.
+
+Residual, named: a tackbox release that widens an engine's file set
+can turn dead markers live without a mutation event - that is our own
+release review's job; files generated at runtime by tests are outside
+a static gate's model - escape-inventory tooling, not the gate, is
+the net for both.

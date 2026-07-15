@@ -335,6 +335,19 @@ def dispatch(
     return plan
 
 
+def lintable(rel_path: str, engines: list[EngineSpec]) -> bool:
+    """True iff some engine in `engines` would lint `rel_path` - dispatch's
+    per-file test (extension match plus the engine's own path filter). The marker
+    gates (D012) ask only about lintable files; a marker in a file no engine reads
+    is dead text. Backslashes are normalized so a Windows-shaped hook path meets
+    the same forward-slash path filters (e.g. Go's testdata/) git output uses."""
+    rel_path = rel_path.replace("\\", "/")
+    return any(
+        _has_ext(rel_path, engine.extensions) and engine.path_filter(rel_path)
+        for engine in engines
+    )
+
+
 @dataclass(frozen=True)
 class EngineRun:
     """Everything one engine invocation needs, bundled so it flows unchanged
