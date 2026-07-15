@@ -82,15 +82,9 @@ func errBranchGuards(pass *analysis.Pass, body *ast.BlockStmt) []*ast.IfStmt {
 		if _, ok := n.(*ast.FuncLit); ok {
 			return false
 		}
-		ifst, ok := n.(*ast.IfStmt)
-		if !ok {
-			return true
+		if ifst, _, ok := astutil.ErrBranch(pass.TypesInfo, n); ok {
+			guards = append(guards, ifst)
 		}
-		errIdent, ok := astutil.ErrIdentExprFromIfCond(ifst.Cond)
-		if !ok || !astutil.IsErrorAssignableExpr(pass.TypesInfo, errIdent) {
-			return true
-		}
-		guards = append(guards, ifst)
 		return true
 	})
 	return guards

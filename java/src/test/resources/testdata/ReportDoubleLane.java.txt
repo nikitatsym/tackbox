@@ -1,0 +1,30 @@
+import nl.tsym.tackbox.report.Report;
+
+// JV006 double-lane (D006): a capture and a notify on one path both reach the
+// user lane; error/warn already show the user, so the notify double-shows.
+class ReportDoubleLane {
+    // Sequential capture + notify on one path.
+    void bothOnOnePath() {
+        try {
+            risky();
+        } catch (java.io.IOException e) { // want "JV006.*captures the caught and notifies"
+            Report.warn("server unreachable", e, null, "net.fail");
+            Report.notify("connection lost, retrying", e, null, "net.offline");
+        }
+    }
+
+    // Exclusive if/else legs: notify on one, capture on the other - no double.
+    void exclusiveLegsClean(boolean offline) {
+        try {
+            risky();
+        } catch (java.io.IOException e) {
+            if (offline) {
+                Report.notify("connection lost, retrying", e, null, "net.offline");
+            } else {
+                Report.warn("server unreachable", e, null, "net.fail");
+            }
+        }
+    }
+
+    void risky() throws Exception {}
+}

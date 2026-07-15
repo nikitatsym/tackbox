@@ -16,15 +16,19 @@ import tokenize
 NO_REPORT = "no-report:"
 TEST_SKIP = "test-skip:"
 
+# D009: a marker's reason must be at least this many chars after trimming.
+# Non-empty was too cheap (`ok` / `todo` passed).
+_MIN_REASON = 10
+
 
 def _marker_reason_ok(comment: str, prefix: str) -> bool:
-    """True iff `comment` (a `#...` token) carries `prefix` with a non-empty
-    reason. Whitespace-only reason does not suppress (parity with the yaml
-    `[ \\t]*\\S` guard and the Go `TrimSpace(...) == ""` check)."""
+    """True iff `comment` (a `#...` token) carries `prefix` with a reason of at
+    least _MIN_REASON chars after trimming (D009; parity with the Go/JS/Java
+    marker parsers)."""
     text = comment.lstrip("#").strip()
     if not text.startswith(prefix):
         return False
-    return text[len(prefix):].strip() != ""
+    return len(text[len(prefix):].strip()) >= _MIN_REASON
 
 
 def _is_standalone(tok: tokenize.TokenInfo) -> bool:

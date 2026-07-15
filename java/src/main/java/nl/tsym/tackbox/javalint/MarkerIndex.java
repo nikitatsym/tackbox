@@ -17,7 +17,7 @@ import java.util.Optional;
 public final class MarkerIndex {
 
     /** Why a marker-shaped comment suppresses nothing. */
-    public enum Cause { TRAILING, EMPTY_REASON }
+    public enum Cause { TRAILING, SHORT_REASON }
 
     /** A marker-shaped comment that suppresses nothing. */
     public record Dead(int line, Marker.Kind kind, Cause cause) {}
@@ -54,7 +54,7 @@ public final class MarkerIndex {
             if (!standalone) {
                 dead.add(new Dead(line, kind, Cause.TRAILING));
             } else if (Marker.parse(lc.getContent()) == null) {
-                dead.add(new Dead(line, kind, Cause.EMPTY_REASON));
+                dead.add(new Dead(line, kind, Cause.SHORT_REASON));
             }
         }
         dead.sort(Comparator.comparingInt(Dead::line));

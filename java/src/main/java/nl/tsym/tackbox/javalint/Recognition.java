@@ -220,6 +220,29 @@ public final class Recognition {
                 && o.packageName().equals(REPORT_PACKAGE);
     }
 
+    /** A Report.notify(...) carrying the caught: the user-lane-only verb (D006).
+     *  Never a capture - absent from reportSink, so captures()/capturesOrPrints()
+     *  never count it and JV006/JV001's capture path is unaffected. SwallowRule
+     *  credits a notify separately; NotifyGateRule (JV009) gates it. */
+    public boolean notifies(CompilationUnit cu, MethodCallExpr call, String caught) {
+        return argFlows(call, caught) && "notify".equals(reportVerb(cu, call));
+    }
+
+    /** The Report verb a call resolves to by origin - error/warn/quiet/notify/
+     *  panic on nl.tsym.tackbox.report.Report - or null. Drives the notify
+     *  recognition and the JV010 user-lane argument contract (msg-static,
+     *  dedupKey). Same origin gate as reportSink; the name alone never matches. */
+    public String reportVerb(CompilationUnit cu, MethodCallExpr call) {
+        String m = call.getNameAsString();
+        if (!m.equals("error") && !m.equals("warn") && !m.equals("quiet")
+                && !m.equals("notify") && !m.equals("panic")) {
+            return null;
+        }
+        Origin o = callOrigin(cu, call).orElse(null);
+        return o != null && o.className().equals(REPORT_CLASS)
+                && o.packageName().equals(REPORT_PACKAGE) ? m : null;
+    }
+
     // --- tier-2: declared reporters -----------------------------------------
 
     private boolean declaredCaptures(CompilationUnit cu, MethodCallExpr call, String caught) {

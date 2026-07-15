@@ -45,7 +45,11 @@ public final class SwallowRule extends CatchRule {
             return -1;
         }
         String caught = cc.getParameter().getNameAsString();
+        // A notify carrying the caught routes it to the user lane, terminating
+        // that path (D006), so a notified path is not silent. NotifyGateRule
+        // (JV009) decides whether the catch type is narrow enough.
         return Flow.silentPathEnd(cc.getBody(),
-                call -> rec.capturesOrPrints(cu, call, caught), markers);
+                call -> rec.capturesOrPrints(cu, call, caught) || rec.notifies(cu, call, caught),
+                markers);
     }
 }

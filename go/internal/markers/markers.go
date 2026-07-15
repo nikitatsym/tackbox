@@ -1,7 +1,8 @@
 // Package markers parses suppression comments that consumers attach in the
 // comment block directly above a branch or return to opt out of an
 // err-coverage rule. A marker is recognized on any line of that adjacent
-// block and must carry a non-empty reason after the colon.
+// block and must carry a reason of at least MinReason characters after the
+// colon.
 package markers
 
 import (
@@ -9,6 +10,11 @@ import (
 	"go/token"
 	"strings"
 )
+
+// MinReason is the floor on a suppression marker's reason length after
+// trimming (D009): non-empty was too cheap (`ok` / `todo` passed). No
+// keyword bans - length is a structural nudge; substance is judged at review.
+const MinReason = 10
 
 type Kind int
 
@@ -85,7 +91,7 @@ func parse(c *ast.Comment) (Marker, bool) {
 	for _, p := range prefixes {
 		if strings.HasPrefix(text, p.prefix) {
 			reason := strings.TrimSpace(strings.TrimPrefix(text, p.prefix))
-			if reason == "" {
+			if len(reason) < MinReason {
 				return Marker{}, false
 			}
 			return Marker{Kind: p.kind, Reason: reason, Pos: c.Slash}, true

@@ -9,6 +9,10 @@ func Error(args ...any) {}
 
 func Warn(args ...any) {}
 
+func Quiet(args ...any) {}
+
+func Notify(args ...any) {}
+
 func Panic(name string, recovered any) {}
 
 func Flush() {}

@@ -1,6 +1,6 @@
 const {
   REPORTER_FULL, REPORTER_SYNTH,
-  tier1ReporterName, isStaticString, staticStringValue,
+  tier1ReporterName, isTier1Notify, isStaticString, staticStringValue,
 } = require('./_shared')
 
 const MIN = 15
@@ -9,7 +9,7 @@ const MAX = 200
 module.exports = {
   meta: {
     type: 'problem',
-    docs: { description: 'reporter args: static 15-200 msg, cause non-null, tags non-empty, dedupKey present' },
+    docs: { description: 'reporter/notify args: static 15-200 msg, cause non-null, tags non-empty, dedupKey present (notify shares the msg/cause/tags/dedupKey shape - D007/D008)' },
     messages: {
       noArgs: '{{name}} requires at least (msg, cause)',
       msgNotStatic: '{{name}}: first arg (msg) must be a static string literal (no template interpolation)',
@@ -24,8 +24,19 @@ module.exports = {
   create(context) {
     return {
       CallExpression(node) {
-        const name = tier1ReporterName(context, node)
-        if (!name) return
+        let name = tier1ReporterName(context, node)
+        // notify is not a reporter (never credits a swallow), but its user-lane
+        // msg must be a static literal (D007) and it carries the full
+        // (msg, cause, tags, dedupKey) shape, so it is validated like one.
+        let notifyVerb = false
+        if (!name) {
+          if (isTier1Notify(context, node)) {
+            name = 'notify'
+            notifyVerb = true
+          } else {
+            return
+          }
+        }
 
         const args = node.arguments
         if (args.length < 1) {
@@ -45,7 +56,7 @@ module.exports = {
           }
         }
 
-        const isFull = REPORTER_FULL.has(name)
+        const isFull = REPORTER_FULL.has(name) || notifyVerb
         const isSynth = REPORTER_SYNTH.has(name)
 
         // (msg, cause, tags, dedupKey) for full reporters.

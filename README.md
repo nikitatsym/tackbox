@@ -139,10 +139,11 @@ absent and verifies the payload against it.
 
 ## What the rules enforce
 
-Covers ERC001-008 (Go, via `erclint`), JV001-007 (Java, via the native
-`javalint` engine), Python exception and test-skip rules (via the
-`pyrules` flake8 plugin), frontend swallow and test-skip rules (JS, TS,
-Svelte, via ESLint), and Markdown (MD001-060 + ASCII).
+Covers ERC001-009 (Go, via `erclint`), JV001-010 (Java, via the native
+`javalint` engine; JV008 is retired), Python exception, notify, and
+test-skip rules (via the `pyrules` flake8 plugin), frontend swallow,
+notify, and test-skip rules (JS, TS, Svelte, via ESLint), and Markdown
+(MD001-060 + ASCII).
 
 See `go/README.md` for the Go ruleset. The specs these rules implement
 (`error-reporting-and-coverage`, `error-handling-frontend`) live
@@ -160,6 +161,14 @@ outside this repo (private notes); the public summary:
 - A single err-branch may not both capture and `return err`.
 - Capture-call arguments must not carry raw user input, and the
   dedupKey must be a well-formed literal.
+- A `notify` (user lane only, no capture) may terminate a failure path
+  only when it is narrowed: a narrow catch type (Java/Python) or an
+  additional condition inside the branch (Go/JS). An unconditional
+  notify in a broad catch routes every failure to a toast and blinds
+  telemetry - a finding. A single path may not both capture and notify
+  (error/warn already reach the user, so the pair double-shows). A
+  `notify` is validated like a capture: static-literal msg, well-formed
+  literal dedupKey.
 - A skipped test must state a reason: `t.Skip("why")` / `t.Skipf`, or
   `// test-skip: <reason>` above a bare `t.SkipNow()`. The same
   contract holds in every language (skip / todo / xfail /
@@ -168,7 +177,7 @@ outside this repo (private notes); the public summary:
 
 The same model is enforced beyond Go:
 
-- **Java** (`javalint`, JV001-007) on a typed javaparser AST: JV001
+- **Java** (`javalint`, JV001-010) on a typed javaparser AST: JV001
   swallow (every catch path must propagate, report, print, or carry
   `// no-report`), JV002 chain (a thrown exception must carry the
   caught as its cause), JV003 throwable (a catch of `Throwable` /
@@ -176,8 +185,11 @@ The same model is enforced beyond Go:
   rethrows the caught unchanged - deleted, not annotated), JV005 exit
   (`System.exit` in a catch needs a preceding capture; port of ERC003),
   JV006 double-capture (no path may both report and rethrow; port of
-  ERC005), and JV007 skip (`@Disabled` / `@Ignore` must carry a
-  non-empty reason string).
+  ERC005 - and no path may both capture and notify), JV007 skip
+  (`@Disabled` / `@Ignore` must carry a non-empty reason string), JV009
+  notify gate (a notify in a broad catch must narrow the type), and
+  JV010 reporter args (a Report user-lane verb needs a static-literal
+  msg and a well-formed literal dedupKey). JV008 is retired.
 - **Python** exception and test-skip rules ship as the `pyrules`
   flake8 plugin (`TBX` codes). A skip reason is accepted in any of
   the natural forms: `@pytest.mark.skip(reason=...)`,
@@ -187,18 +199,24 @@ The same model is enforced beyond Go:
   cosmetic dodge of the swallow rule; the one allowlisted use is
   `asyncio.CancelledError` around `await task` after `task.cancel()`,
   where the CancelledError on the await IS the confirmation that the
-  cancel propagated, not an error to log.
+  cancel propagated, not an error to log. The notify gate (TBX010) and
+  the user-lane argument contract - static-literal msg, well-formed
+  `dedup_key` (TBX011) - are recognized by name (the D004 caveat).
 - **JS / TS / Svelte** swallow and test-skip rules run under ESLint.
   A skip reason is accepted in the call itself: node:test options
   (`{ skip: 'reason' }` / `{ todo: 'reason' }`) and Playwright's
-  `test.skip(cond, 'reason')` / `test.fixme(cond, 'reason')`.
+  `test.skip(cond, 'reason')` / `test.fixme(cond, 'reason')`. The
+  notify gate is `no-broad-notify` (a notify must sit under a condition
+  inside the catch); `valid-error-report` and `valid-dedup-key` also
+  validate `notify`'s msg and dedupKey.
 
 ## No configuration
 
 By design, the ruleset is a single non-negotiable bundle. There are
 no flags to disable individual rules. Suppressing a finding requires
 the explicit per-site marker (`// no-report`, `// parse-skip`,
-`// nil-return`, `// test-skip`) with a non-empty reason.
+`// nil-return`, `// test-skip`, `// dup-ok`) with a reason of at
+least 10 characters - non-empty was too cheap (`ok` / `todo` passed).
 
 Capture helpers are recognized by origin, not by name: a Go call
 counts only when its callee resolves (type info / import) to the
@@ -288,7 +306,7 @@ eslint.config.preset.js                # default config used by tackbox-eslint b
 bin/tackbox-eslint.js                  # ESLint CLI wrapper with bundled preset
 bin/tackbox-mdlint.js                  # markdownlint wrapper with bundled preset
 go/
-  cmd/erclint/                         # native Go analyzers (ERC001-008)
+  cmd/erclint/                         # native Go analyzers (ERC001-009)
   cmd/erclint-opengrep/                # opengrep wrapper, embedded rule yamls
     rules/                             # exceptions-go (go-exit-in-recover)
   analyzers/                           # per-rule go/analysis packages
@@ -296,7 +314,7 @@ go/
   report/                              # Go capture helper (Sentry/glitchtip)
 java/
   pom.xml                              # Maven module -> shaded javalint.jar
-  src/main/.../javalint/               # typed-AST analyzer (JV001-007)
+  src/main/.../javalint/               # typed-AST analyzer (JV001-010)
     rules/                             # per-rule checkers
   report/                              # Java capture helper -> Maven Central io.github.nikitatsym:report
 js/

@@ -53,7 +53,8 @@ npx tackbox-eslint src/**/*.{ts,svelte}
 | `tackbox/no-console-error`         | banned; use `reportError`            |
 | `tackbox/valid-error-report`       | static msg + cause + tags + dedupKey |
 | `tackbox/valid-dedup-key`          | static `area.suffix[:identifier]`    |
-| `tackbox/no-throw-and-report`      | catch may not both throw and report  |
+| `tackbox/no-throw-and-report`      | catch: no throw+report, no cap+notify|
+| `tackbox/no-broad-notify`          | notify must sit under a condition    |
 | `tackbox/no-parse-fallback`        | JSON.parse catch must propagate err  |
 | `tackbox/ts-rethrow-without-cause` | `throw new` in catch needs `{cause}` |
 | `tackbox/ts-useless-catch`         | catch that only re-throws is a no-op |
@@ -80,10 +81,20 @@ Full constraints per rule:
   `// no-report: <reason>` marker above.
 - `no-console-error` - `console.error` is banned; use `reportError`.
 - `valid-error-report` - static 15-200 char msg, cause non-null,
-  tags non-empty, dedupKey required.
+  tags non-empty, dedupKey required. `notify` shares the
+  `(msg, cause, tags, dedupKey)` shape and is validated the same way
+  (D007), though it is never credited as a reporter.
 - `valid-dedup-key` - dedupKey must be a static literal in
-  `area.suffix[:identifier]` form.
-- `no-throw-and-report` - `catch` may not both throw and report.
+  `area.suffix[:identifier]` form; `notify`'s dedupKey too (D008).
+- `no-throw-and-report` - a `catch` may not both throw and report; nor
+  may one path both capture and `notify` (D006 double-lane -
+  error/warn already reach the user lane, so the notify double-shows).
+- `no-broad-notify` - a `notify` carrying the caught error may
+  terminate a `catch` only when it sits under an additional condition
+  (an `if`/`switch` inside the catch); an unconditional notify as the
+  sole handling routes every error to a toast and blinds telemetry. The
+  complement stays covered by `no-swallow-catch`; a `// no-report:`
+  marker above the `try` suppresses.
 - `no-parse-fallback` - a `try` containing `JSON.parse` must propagate
   the parse error on every `catch` path: `throw` the caught error
   object, or return a Result boundary carrying it (`return { ok: false,
@@ -118,6 +129,11 @@ to a function declared in a repo-root `.tackbox-reporters` file
 Names: `reportError`, `reportWarn`, `reportApiError`, `reportLayerError`
 (4-arg form: msg, cause, tags, dedupKey) and `reportSynth`,
 `reportSynthError` (3-arg form: msg, tags, dedupKey).
+
+`notify` (user lane only) is resolved through the same origin gate but
+is deliberately not a reporter name: it never credits a swallow as a
+capture. `no-broad-notify` gates it, and `valid-error-report` /
+`valid-dedup-key` validate its msg and dedupKey.
 
 Tier-1 covers named, renamed, default- or namespace-member, and CJS
 `require('tackbox/report')` forms. The strict argument contracts

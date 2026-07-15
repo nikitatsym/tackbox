@@ -28,6 +28,11 @@ public final class DoubleCaptureRule {
             ID + ": a catch path both reports the caught and rethrows it; upstream"
             + " reports it again - pick one";
 
+    private static final String LANE_MESSAGE =
+            ID + ": a catch path both captures the caught and notifies with it;"
+            + " error/warn already reach the user lane, so the notify double-shows"
+            + " - drop the notify, or use only notify with no capture";
+
     private final Recognition rec;
 
     public DoubleCaptureRule(Recognition rec) {
@@ -41,13 +46,24 @@ public final class DoubleCaptureRule {
             Flow.Double d = Flow.doubleCapture(cc.getBody(),
                     call -> rec.captures(cu, call, caught),
                     ts -> propagates(ts, caught));
-            if (d == null) {
-                continue;
+            if (d != null) {
+                Position p = cc.getBegin().orElseThrow();
+                out.add(new Finding(ID, file, p.line, p.column, p.line, p.column,
+                        MESSAGE + " (reported at line " + d.reportLine()
+                                + ", rethrown at line " + d.rethrowLine() + ")"));
             }
-            Position p = cc.getBegin().orElseThrow();
-            out.add(new Finding(ID, file, p.line, p.column, p.line, p.column,
-                    MESSAGE + " (reported at line " + d.reportLine()
-                            + ", rethrown at line " + d.rethrowLine() + ")"));
+            // Double-lane (D006): a capture (error/warn/quiet or tier-2, panic
+            // excluded - it is terminal) paired with a notify on one path.
+            Flow.Lane lane = Flow.laneConflict(cc.getBody(),
+                    call -> rec.captures(cu, call, caught)
+                            && !"panic".equals(rec.reportVerb(cu, call)),
+                    call -> rec.notifies(cu, call, caught));
+            if (lane != null) {
+                Position p = cc.getBegin().orElseThrow();
+                out.add(new Finding(ID, file, p.line, p.column, p.line, p.column,
+                        LANE_MESSAGE + " (captured at line " + lane.captureLine()
+                                + ", notified at line " + lane.notifyLine() + ")"));
+            }
         }
         return out;
     }

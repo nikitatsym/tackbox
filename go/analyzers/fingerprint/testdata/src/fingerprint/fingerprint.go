@@ -59,14 +59,14 @@ func warnBadFormat(ctx context.Context, err error) {
 
 // ---- user-input (any recognized reporter) ----
 
-// raw r.URL.Path as a capture arg.
+// raw r.URL.Path in a capture arg (a tags value; msg stays a literal per D007).
 func rawURLPath(ctx context.Context, err error, req *http.Request) {
-	report.Error(ctx, req.URL.Path, err, nil, "http.path") // want `ERC006: capture arg carries raw \*http.Request input \(r.URL.Path\)`
+	report.Error(ctx, "request handling failed", err, map[string]string{"path": req.URL.Path}, "http.path") // want `ERC006: capture arg carries raw \*http.Request input \(r.URL.Path\)`
 }
 
 // raw r.Header.Get(...) under a different receiver name.
 func rawHeaderGet(ctx context.Context, err error, httpReq *http.Request) {
-	report.Warn(ctx, httpReq.Header.Get("X-Trace"), err, nil, "http.hdr") // want `ERC006: capture arg carries raw \*http.Request input \(r.Header.Get\(\.\.\.\)\)`
+	report.Warn(ctx, "trace lookup failed", err, map[string]string{"trace": httpReq.Header.Get("X-Trace")}, "http.hdr") // want `ERC006: capture arg carries raw \*http.Request input \(r.Header.Get\(\.\.\.\)\)`
 }
 
 // raw r.Body as a capture arg.
@@ -75,8 +75,45 @@ func rawBody(req *http.Request) {
 }
 
 // same-shaped selector on an unrelated type: type-aware detection keeps it
-// clean (cfg is not *http.Request).
+// clean (cfg is not *http.Request), and the msg is a literal.
 func cleanNonRequestSelector(ctx context.Context, err error) {
 	var cfg struct{ URL struct{ Path string } }
-	report.Error(ctx, cfg.URL.Path, err, nil, "cfg.path")
+	report.Error(ctx, "config load failed", err, map[string]string{"path": cfg.URL.Path}, "cfg.path")
+}
+
+// ---- msg-static (D007: Error / Warn / Notify) ----
+
+// Error with a non-literal msg: dynamic data belongs in cause and tags.
+func errorDynamicMsg(ctx context.Context, err error, msg string) {
+	report.Error(ctx, msg, err, nil, "auth.creds") // want `ERC006: msg must be a static string literal`
+}
+
+// ---- notify: validated like a capture (D007 msg + D008 dedupKey), never one ----
+
+// clean notify: static msg and a well-formed literal dedupKey.
+func cleanNotify(ctx context.Context, err error) {
+	report.Notify(ctx, "connection lost", err, nil, "net.offline")
+}
+
+// notify dedupKey is a non-literal variable (D008 - notify carries the 5-arg shape).
+func notifyDedupNotLiteral(ctx context.Context, err error, dk string) {
+	report.Notify(ctx, "connection lost", err, nil, dk) // want `ERC006: dedupKey must be a string literal`
+}
+
+// notify with a non-literal msg (D007).
+func notifyDynamicMsg(ctx context.Context, err error, msg string) {
+	report.Notify(ctx, msg, err, nil, "net.offline") // want `ERC006: msg must be a static string literal`
+}
+
+// notify wrong arity: dedupKey missing (D008, same 5-arg shape as a capture).
+func notifyArityWrong(ctx context.Context, err error) {
+	report.Notify(ctx, "connection lost", err, nil) // want `ERC006: capture call must pass 5 args`
+}
+
+// ---- quiet: dedupKey validated (D008), msg exempt (D007) ----
+
+// quiet with a dynamic msg is clean - quiet is telemetry-only, so msg-static
+// does not apply; the literal dedupKey still validates.
+func quietDynamicMsgClean(ctx context.Context, err error, msg string) {
+	report.Quiet(ctx, msg, err, nil, "cache.refresh")
 }

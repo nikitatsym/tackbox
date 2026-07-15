@@ -11,6 +11,8 @@ import com.github.javaparser.ast.stmt.ReturnStmt;
 import com.github.javaparser.ast.stmt.Statement;
 import com.github.javaparser.ast.stmt.SynchronizedStmt;
 import com.github.javaparser.ast.stmt.ThrowStmt;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Predicate;
 import nl.tsym.tackbox.javalint.MarkerIndex;
 
@@ -29,6 +31,14 @@ final class Flow {
      *  reported and where it then rethrows. Null when no path does both. */
     record Double(int reportLine, int rethrowLine) {}
 
+    /** A double-lane found on one execution path: where the caught was captured
+     *  and where it was notified. Null when no path does both. */
+    record Lane(int captureLine, int notifyLine) {}
+
+    private static int line(Node n) {
+        return n.getBegin().orElseThrow().line;
+    }
+
     /** JV006: some execution path captures the caught and then reaches a throw
      *  that propagates it - report-then-rethrow on one path. Exclusive legs
      *  (a capture after a terminal guard's throw) do not pair. */
@@ -36,6 +46,19 @@ final class Flow {
             Predicate<ThrowStmt> propagates) {
         DoubleScan scan = new DoubleScan(captures, propagates);
         scan.block(body, DoubleScan.LIVE);
+        return scan.found;
+    }
+
+    /** JV006 double-lane (D006): some execution path both captures the caught
+     *  and notifies with it - error/warn already reach the user lane, so the
+     *  notify double-shows. Path-correlated (unlike DoubleScan's boolean merge):
+     *  exclusive if/else legs must not pair, since a lane conflict needs both on
+     *  ONE path, so a set of live states is threaded. if/else is followed;
+     *  loops / switch / nested try are opaque Frame-scanned units (may-run). */
+    static Lane laneConflict(BlockStmt body, Predicate<MethodCallExpr> captures,
+            Predicate<MethodCallExpr> notifies) {
+        LaneScan scan = new LaneScan(captures, notifies);
+        scan.walk(body.getStatements(), List.of(LaneScan.EMPTY));
         return scan.found;
     }
 
@@ -262,6 +285,89 @@ final class Flow {
 
         private boolean reportsIn(Node n) {
             return Frame.scan(n).calls.stream().anyMatch(reports);
+        }
+    }
+
+    /** JV006 double-lane walk. Each live path carries the line of its first
+     *  capture and first notify (-1 = unseen); a state with both fires. if/else
+     *  legs are threaded as separate states so exclusive legs never pair. */
+    private static final class LaneScan {
+
+        record St(int captureLine, int notifyLine) {}
+
+        static final St EMPTY = new St(-1, -1);
+
+        private final Predicate<MethodCallExpr> captures;
+        private final Predicate<MethodCallExpr> notifies;
+        Lane found;
+
+        LaneScan(Predicate<MethodCallExpr> captures, Predicate<MethodCallExpr> notifies) {
+            this.captures = captures;
+            this.notifies = notifies;
+        }
+
+        List<St> walk(List<Statement> stmts, List<St> in) {
+            List<St> cur = in;
+            for (Statement st : stmts) {
+                if (found != null) {
+                    return List.of();
+                }
+                cur = step(st, cur);
+            }
+            return cur;
+        }
+
+        private List<St> step(Statement st, List<St> in) {
+            if (st instanceof BlockStmt b) {
+                return walk(b.getStatements(), in);
+            }
+            if (st instanceof IfStmt f) {
+                List<St> base = mark(f.getCondition(), in);
+                List<St> then = step(f.getThenStmt(), base);
+                List<St> other = f.getElseStmt().map(e -> step(e, base)).orElse(base);
+                return merge(then, other);
+            }
+            if (st instanceof ReturnStmt || st instanceof ThrowStmt
+                    || st instanceof BreakStmt || st instanceof ContinueStmt) {
+                mark(st, in); // a capture/notify in the returned/thrown expr still counts
+                return List.of();
+            }
+            return mark(st, in);
+        }
+
+        /** Frame-scan node for its first capture and first notify (nested scopes
+         *  skipped, compound units flattened), folding them into every live
+         *  state; a state that now carries both fires. */
+        private List<St> mark(Node node, List<St> in) {
+            Frame f = Frame.scan(node);
+            int capLine = f.calls.stream().filter(captures).findFirst().map(Flow::line).orElse(-1);
+            int notifyLine = f.calls.stream().filter(notifies).findFirst().map(Flow::line).orElse(-1);
+            if (capLine < 0 && notifyLine < 0) {
+                return in;
+            }
+            List<St> out = new ArrayList<>();
+            for (St s : in) {
+                int nc = s.captureLine() >= 0 ? s.captureLine() : capLine;
+                int nn = s.notifyLine() >= 0 ? s.notifyLine() : notifyLine;
+                if (found == null && nc >= 0 && nn >= 0) {
+                    found = new Lane(nc, nn);
+                }
+                St ns = new St(nc, nn);
+                if (!out.contains(ns)) {
+                    out.add(ns);
+                }
+            }
+            return out;
+        }
+
+        private static List<St> merge(List<St> a, List<St> b) {
+            List<St> out = new ArrayList<>(a);
+            for (St s : b) {
+                if (!out.contains(s)) {
+                    out.add(s);
+                }
+            }
+            return out;
         }
     }
 }

@@ -10,6 +10,7 @@ stays id-for-id. TBX008 (python-test-skip) is py-native from the start.
 from __future__ import annotations
 
 import ast
+import re
 import sys
 
 from tackbox import __version__ as _version
@@ -34,6 +35,37 @@ _EXIT_CALLS = frozenset({"sys.exit", "os._exit"})
 # limitation: a same-named function from any module is credited too; origin is
 # not provable source-only.
 _BUILTIN_REPORTERS = frozenset({"report_error", "report_warn", "report_quiet", "report_panic"})
+
+# notify is the user-lane-only verb (D006): recognized by name like the
+# reporters, but NEVER a capture - it credits a failure path for TBX001 without
+# joining _BUILTIN_REPORTERS, and TBX010 gates it. panic is excluded from the
+# double-lane capture set (it is terminal, like Go's capPanic).
+_NOTIFY_NAME = "notify"
+_LANE_CAPTURE_BUILTINS = _BUILTIN_REPORTERS - {"report_panic"}
+
+# Broad except types for the notify gate (D006). bare / BaseException single
+# catches early-return to TBX003, so Exception is the broad type this gate
+# actually sees; the set also covers a tuple member that is broad.
+_BROAD_EXCEPT_TYPES = frozenset(
+    {"Exception", "BaseException", "builtins.Exception", "builtins.BaseException"}
+)
+
+# User-lane verbs whose msg must be a static literal (D007) and whose dedup_key
+# must be a well-formed literal (D008), recognized by name (the D004 caveat).
+# report_panic is exempt (it takes a name, not a msg/dedup_key).
+_MSG_VERBS = frozenset({"report_error", "report_warn", _NOTIFY_NAME})
+_DEDUP_VERBS = frozenset({"report_error", "report_warn", "report_quiet", _NOTIFY_NAME})
+_DEDUP_KEY_RE = re.compile(r"^[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*(:[a-zA-Z0-9_.-]+)?$")
+
+# TBX010 double-lane and TBX011 dedup_key sub-messages (the default arm of each
+# code lives in codes.MESSAGES; these carry the other arms as finding details).
+_DOUBLE_LANE_MSG = (
+    "except both captures and notifies on one path; report_error/report_warn already reach the "
+    "user lane, so the notify double-shows - drop the notify, or use only notify with no capture"
+)
+_DEDUP_MISSING = "dedup_key is required on a user-lane verb - it is the Sentry fingerprint and coalescing key"
+_DEDUP_NOT_LITERAL = "dedup_key must be a static string literal so the fingerprint is stable"
+_DEDUP_BAD_FORMAT = "dedup_key must match area.suffix[:identifier]"
 
 
 def _dotted_name(expr: ast.expr) -> str:
@@ -110,6 +142,121 @@ def _reporter_captures(handler: ast.ExceptHandler, reporter_names: frozenset[str
         ):
             return True
     return False
+
+
+def _notifies(handler: ast.ExceptHandler) -> bool:
+    """A notify(...) carrying the caught error is called in the handler - it
+    routes the error to the user lane, terminating that path (D006). Never a
+    capture; TBX010 decides whether the except type is narrow enough."""
+    if not handler.name:
+        return False
+    for n in _iter_body(handler):
+        if (
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == _NOTIFY_NAME
+            and _reporters.arg_flows(n, handler.name)
+        ):
+            return True
+    return False
+
+
+def _is_broad_except(handler: ast.ExceptHandler) -> bool:
+    """True iff any caught type is broad (Exception/BaseException). A tuple is
+    narrow only when every member is narrow."""
+    types = _handler_types(handler)
+    if not types:
+        return True  # bare - the caller has already emitted TBX003
+    return any(t in _BROAD_EXCEPT_TYPES for t in types)
+
+
+def _lane_conflict(body: list[ast.stmt], capture_names: frozenset[str], caught: str | None) -> bool:
+    """Some execution path through body both captures (a recognized reporter,
+    panic excluded) and notifies (a notify carrying the caught) - the D006
+    double-lane. Path-sensitive: exclusive if/else legs do not pair, nor does a
+    capture after a notify+return. if/else is followed; compound statements
+    (loops / try / with) are opaque (their calls may-run), matching the flat
+    leniency the other Python rules already take. Each live path carries which
+    lanes have fired; the state set holds at most four tuples."""
+    found = False
+
+    def calls(node: ast.AST) -> tuple[bool, bool]:
+        cap = notify = False
+        for n in _walk(node):
+            if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)):
+                continue
+            if not _reporters.arg_flows(n, caught):
+                continue
+            if n.func.id in capture_names:
+                cap = True
+            if n.func.id == _NOTIFY_NAME:
+                notify = True
+        return cap, notify
+
+    def apply(states: list[tuple[bool, bool]], cap: bool, notify: bool) -> list[tuple[bool, bool]]:
+        nonlocal found
+        if not cap and not notify:
+            return states
+        out: list[tuple[bool, bool]] = []
+        for c, nt in states:
+            ns = (c or cap, nt or notify)
+            if ns[0] and ns[1]:
+                found = True
+            if ns not in out:
+                out.append(ns)
+        return out
+
+    def step(st: ast.stmt, states: list[tuple[bool, bool]]) -> list[tuple[bool, bool]]:
+        if isinstance(st, ast.If):
+            base = apply(states, *calls(st.test))
+            then_exit = step_list(st.body, base)
+            else_exit = step_list(st.orelse, base) if st.orelse else base
+            merged: list[tuple[bool, bool]] = []
+            for s in then_exit + else_exit:
+                if s not in merged:
+                    merged.append(s)
+            return merged
+        if isinstance(st, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
+            apply(states, *calls(st))
+            return []
+        return apply(states, *calls(st))
+
+    def step_list(stmts: list[ast.stmt], states: list[tuple[bool, bool]]) -> list[tuple[bool, bool]]:
+        cur = states
+        for st in stmts:
+            if found:
+                return []
+            cur = step(st, cur)
+        return cur
+
+    step_list(body, [(False, False)])
+    return found
+
+
+def _arg_expr(call: ast.Call, index: int, name: str) -> ast.expr | None:
+    """The positional arg at `index`, or the keyword arg `name`, else None."""
+    if len(call.args) > index:
+        return call.args[index]
+    for kw in call.keywords:
+        if kw.arg == name:
+            return kw.value
+    return None
+
+
+def _is_str_literal(expr: ast.expr | None) -> bool:
+    return isinstance(expr, ast.Constant) and isinstance(expr.value, str)
+
+
+def _local_def_names(tree: ast.AST) -> frozenset[str]:
+    """Every function name defined anywhere in the module. A verb call in a file
+    that defines that verb is the library's own primitive (tackbox_report owns
+    per-name fingerprints, D002) or a local shadow (D004), not a consumer call
+    site, so the msg/dedup_key contract (D007/D008) does not apply to it."""
+    return frozenset(
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    )
 
 
 def _exit_call(handler: ast.ExceptHandler) -> ast.Call | None:
@@ -232,17 +379,21 @@ class _Visitor(ast.NodeVisitor):
         skip_markers: MarkerIndex,
         reporter_names: frozenset[str],
         unittest_skip: bool,
+        local_defs: frozenset[str] = frozenset(),
     ):
         self.markers = markers
         self.skip_markers = skip_markers
         # Built-in tier-1 names are always recognized; declared tier-2 names extend them.
         self.reporter_names = _BUILTIN_REPORTERS | reporter_names
+        # Double-lane capture set: recognized reporters minus the terminal panic.
+        self.lane_captures = (_LANE_CAPTURE_BUILTINS | reporter_names) - {"report_panic"}
         self.unittest_skip = unittest_skip
-        self.findings: list[tuple[int, int, str]] = []
+        self.local_defs = local_defs
+        self.findings: list[tuple[int, int, str, str]] = []
         self._func_depth = 0
 
-    def _add(self, node: ast.AST, code: str) -> None:
-        self.findings.append((node.lineno, node.col_offset, code))
+    def _add(self, node: ast.AST, code: str, detail: str = "") -> None:
+        self.findings.append((node.lineno, node.col_offset, code, detail))
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._check_skip_decorators(node)
@@ -282,7 +433,31 @@ class _Visitor(ast.NodeVisitor):
         if _is_pytest_skip_call(node) and not _reason_present(node, positional=True, kw=True):
             if not self.skip_markers.suppresses(node.lineno):
                 self._add(node, "TBX008")
+        self._check_reporter_args(node)
         self.generic_visit(node)
+
+    def _check_reporter_args(self, node: ast.Call) -> None:
+        """TBX011: a user-lane verb's msg must be a static literal (D007) and its
+        dedup_key a well-formed literal (D008). Recognized by name; a call in a
+        file that defines that verb (the library primitive or a local shadow) is
+        exempt - the contract governs consumer call sites, not the owner."""
+        if not isinstance(node.func, ast.Name):
+            return
+        name = node.func.id
+        if name in self.local_defs:
+            return
+        if name in _MSG_VERBS:
+            msg = _arg_expr(node, 0, "msg")
+            if msg is not None and not _is_str_literal(msg):
+                self._add(node, "TBX011")
+        if name in _DEDUP_VERBS:
+            key = _arg_expr(node, 3, "dedup_key")
+            if key is None:
+                self._add(node, "TBX011", _DEDUP_MISSING)
+            elif not _is_str_literal(key):
+                self._add(node, "TBX011", _DEDUP_NOT_LITERAL)
+            elif not _DEDUP_KEY_RE.match(key.value):
+                self._add(node, "TBX011", _DEDUP_BAD_FORMAT)
 
     def visit_Try(self, node: ast.Try) -> None:
         for handler in node.handlers:
@@ -305,8 +480,23 @@ class _Visitor(ast.NodeVisitor):
         if exit_call is not None:
             self._add(exit_call, "TBX007")
 
+        self._check_notify(handler)
+
         if not _handler_raises(handler) and self._swallows(try_node, handler):
             self._add(try_node, "TBX001")
+
+    def _check_notify(self, handler: ast.ExceptHandler) -> None:
+        """TBX010: a notify carrying the caught error must be narrowed. For a
+        typed catch the gate is the except type - a notify in a broad `except
+        Exception` is a finding (marker-suppressible, last resort). On a narrow
+        catch, a notify paired with a capture on one path is the double-lane."""
+        if not _notifies(handler):
+            return
+        if _is_broad_except(handler):
+            if not self.markers.suppresses(handler.body[0].lineno):
+                self._add(handler, "TBX010")
+        elif _lane_conflict(handler.body, self.lane_captures, handler.name):
+            self._add(handler, "TBX010", _DOUBLE_LANE_MSG)
 
     def _swallows(self, try_node: ast.Try, handler: ast.ExceptHandler) -> bool:
         if _is_shutdown_carveout(handler):
@@ -314,6 +504,8 @@ class _Visitor(ast.NodeVisitor):
         if self.markers.suppresses(handler.body[0].lineno):
             return False
         if _reporter_captures(handler, self.reporter_names):
+            return False
+        if _notifies(handler):
             return False
         return True
 
@@ -338,10 +530,12 @@ class Plugin:
             MarkerIndex(self.file_tokens, prefix=TEST_SKIP),
             type(self)._reporter_names,
             _imports_unittest_skip(self.tree),
+            _local_def_names(self.tree),
         )
         visitor.visit(self.tree)
-        for line, col, code in visitor.findings:
-            text = f"{code} {CODE_TO_ID[code]}: {MESSAGES[code]}"
+        for line, col, code, detail in visitor.findings:
+            msg = detail or MESSAGES[code]
+            text = f"{code} {CODE_TO_ID[code]}: {msg}"
             yield line, col, text, type(self)
 
     @classmethod
