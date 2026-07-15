@@ -496,6 +496,22 @@ func BlockPropagatesChain(info *types.Info, body *ast.BlockStmt, errName string)
 	return false
 }
 
+// ReturnPropagates reports whether return stmt ret carries the err object
+// onward in any of its results (chain-preserving), resolving a two-step wrap
+// against body. The per-statement form of BlockPropagatesChain - a path walk
+// credits only the return on ITS path, not any return in the branch.
+func ReturnPropagates(info *types.Info, body *ast.BlockStmt, ret *ast.ReturnStmt, errName string) bool {
+	if errName == "" {
+		return false
+	}
+	for _, res := range ret.Results {
+		if returnResultPropagates(info, body, res, errName) {
+			return true
+		}
+	}
+	return false
+}
+
 // returnResultPropagates reports whether one returned result carries the err
 // object onward. A bare local carrier (`v` from `v := <wrap>`) is resolved to
 // its assignment in body first, crediting a two-step wrap. A tuple-returning

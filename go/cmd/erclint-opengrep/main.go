@@ -92,14 +92,13 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 		return 0, fmt.Errorf("write stderr: %w", err)
 	}
 
-	if runErr != nil {
-		var exitErr *exec.ExitError
-		if errors.As(runErr, &exitErr) {
-			return exitErr.ExitCode(), nil
-		}
+	// A non-ExitError means opengrep could not be invoked - a real failure.
+	// An ExitError (or nil) means it ran; its exit code is data (0 clean, 1
+	// findings, 2 opengrep error) that we propagate as our own via ProcessState.
+	if runErr != nil && !errors.As(runErr, new(*exec.ExitError)) {
 		return 0, fmt.Errorf("invoke opengrep (must be on PATH): %w", runErr)
 	}
-	return 0, nil
+	return cmd.ProcessState.ExitCode(), nil
 }
 
 func rejectSemgrepignore(dir string) error {

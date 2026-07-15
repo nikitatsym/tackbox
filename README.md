@@ -230,8 +230,8 @@ declaration names a report sink - it is not an exclude: it disables no
 rule, and a declared call is honored only when the caught error flows
 into its arguments. Python is the exception: its flake8/ast engine
 resolves no origins - the `tackbox_report` capture functions
-(`report_error` / `report_warn` / `report_panic`) are a built-in
-tier-1 set matched by name, and a tier-2 declaration likewise matches
+(`report_error` / `report_warn` / `report_quiet` / `report_panic`) are a
+built-in tier-1 set matched by name, and a tier-2 declaration likewise matches
 by function name (any same-named call), not by resolving the callee to
 its file.
 
@@ -270,7 +270,7 @@ Claude Code hook event on stdin and dispatches by `hook_event_name`:
   and fixes it in-loop. The authoritative gate stays pre-commit / CI.
 - **PreToolUse** asks for approval before a new suppression marker
   (`// no-report`, `// parse-skip`, `// nil-return`, `// test-skip`,
-  `// long-comment`) or a new `.tackbox-reporters` line lands;
+  `// dup-ok`) or a new `.tackbox-reporters` line lands;
   removing one is free.
 
 The hook is a no-op unless the edit's `cwd` is a git repo with a
@@ -319,7 +319,7 @@ java/
   report/                              # Java capture helper -> Maven Central io.github.nikitatsym:report
 js/
   eslint-plugin.js                     # ESLint plugin entry
-  rules/                               # 13 frontend rules
+  rules/                               # 14 frontend rules
   markdownlint-rules/                  # custom markdownlint rules
   report.js                            # browser capture helper (@sentry/browser)
   tests/                               # RuleTester + node:test

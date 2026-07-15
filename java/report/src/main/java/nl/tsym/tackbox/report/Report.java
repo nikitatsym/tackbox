@@ -271,14 +271,10 @@ public final class Report {
     }
 
     public static Runnable safeRunnable(String name, Runnable body, TaskMode mode) {
-        return () -> {
-            try {
-                body.run();
-            } catch (Exception e) {
-                log.log(Level.ERROR, "background task '" + name + "' failed", e);
-                shipTaskFailure(name, e, mode);
-            }
-        };
+        return () -> guard(name, mode, () -> {
+            body.run();
+            return null;
+        }, null);
     }
 
     /** GoSafe analog for value-returning tasks: reports a thrown Exception under
@@ -293,22 +289,32 @@ public final class Report {
     }
 
     public static <T> Callable<Optional<T>> safeCallable(String name, Callable<T> body, TaskMode mode) {
-        return () -> {
-            try {
-                return Optional.ofNullable(body.call());
-            } catch (Exception e) {
+        return () -> Optional.ofNullable(guard(name, mode, body, null));
+    }
+
+    // guard runs body and, on a checked Exception, logs (warning for a QUIET
+    // task, error otherwise) and ships the failure under task:<name>, yielding
+    // onFailure. The single report-and-swallow core for the task wrappers: the
+    // local log lives in this one catch so javalint sees the recognized capture
+    // (log-before-ship = log-before-drop) and the wrappers do not duplicate it.
+    private static <T> T guard(String name, TaskMode mode, Callable<T> body, T onFailure) {
+        try {
+            return body.call();
+        } catch (Exception e) {
+            if (mode == TaskMode.QUIET) {
+                log.log(Level.WARNING, "background task '" + name + "' failed", e);
+            } else {
                 log.log(Level.ERROR, "background task '" + name + "' failed", e);
-                shipTaskFailure(name, e, mode);
-                return Optional.empty();
             }
-        };
+            shipTaskFailure(name, e, mode);
+            return onFailure;
+        }
     }
 
     // shipTaskFailure mirrors go/report's reportTaskErr: a library primitive that
-    // builds the per-name fingerprint directly (task:<name>). The local log is
-    // emitted at the catch site (before this ship), preserving log-before-drop.
-    // A loud task feeds the user lane and captures at error; QUIET is
-    // telemetry-only at warning (capture yes, user lane no).
+    // builds the per-name fingerprint directly (task:<name>). guard logs before
+    // calling this, preserving log-before-drop. A loud task feeds the user lane
+    // and captures at error; QUIET is telemetry-only at warning (capture, no notice).
     private static void shipTaskFailure(String name, Throwable t, TaskMode mode) {
         String key = "task:" + name;
         if (mode != TaskMode.QUIET) {
@@ -397,17 +403,9 @@ public final class Report {
     // The Callable path for the executor wrapper: unlike public safeCallable
     // (Callable<Optional<T>>), it must keep the ExecutorService contract's
     // Future<T>, so a captured failure yields null rather than Optional.empty().
-    // Same report-and-swallow core; the local log stays at the catch site.
+    // Same report-and-swallow core (guard).
     private static <T> Callable<T> guardedCallable(String name, Callable<T> body, TaskMode mode) {
-        return () -> {
-            try {
-                return body.call();
-            } catch (Exception e) {
-                log.log(Level.ERROR, "background task '" + name + "' failed", e);
-                shipTaskFailure(name, e, mode);
-                return null;
-            }
-        };
+        return () -> guard(name, mode, body, null);
     }
 
     private static final class CapturingExecutorService implements ExecutorService {

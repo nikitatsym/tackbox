@@ -499,6 +499,121 @@ def test_notify_double_lane_fires(tmp_path):
     assert r.returncode == 1 and "TBX010" in r.stdout, r.stdout
 
 
+def test_match_exclusive_cases_clean(tmp_path):
+    # notify in one match case, capture in the exclusive capture-all case: only
+    # one runs, so no single path both captures and notifies.
+    src = (
+        "def h(status):\n    try:\n        work()\n"
+        "    except ConnectionError as e:\n"
+        "        match status:\n"
+        "            case 503:\n"
+        "                notify('connection lost, retrying', cause=e, dedup_key='net.offline')\n"
+        "            case _:\n"
+        "                report_error('server unreachable', cause=e, dedup_key='net.fail')\n"
+    )
+    _write(tmp_path, "n.py", src)
+    r = _flake8(tmp_path, "n.py")
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+
+
+def test_match_same_case_double_lane_fires(tmp_path):
+    # capture and notify in the SAME match case run on one path: double-lane.
+    src = (
+        "def h(status):\n    try:\n        work()\n"
+        "    except ConnectionError as e:\n"
+        "        match status:\n"
+        "            case 503:\n"
+        "                report_error('server unreachable', cause=e, dedup_key='net.fail')\n"
+        "                notify('connection lost, retrying', cause=e, dedup_key='net.offline')\n"
+        "            case _:\n"
+        "                raise\n"
+    )
+    _write(tmp_path, "n.py", src)
+    r = _flake8(tmp_path, "n.py")
+    assert r.returncode == 1 and "TBX010" in r.stdout, r.stdout
+
+
+def test_notify_loop_then_capture_double_lane_fires(tmp_path):
+    # notify inside a loop, capture after it: a loop body may run alongside the
+    # post-loop capture, so the pair stays a double-lane.
+    src = (
+        "def h(items):\n    try:\n        work()\n"
+        "    except ConnectionError as e:\n"
+        "        for _ in items:\n"
+        "            notify('connection lost, retrying', cause=e, dedup_key='net.offline')\n"
+        "        report_error('server unreachable', cause=e, dedup_key='net.fail')\n"
+    )
+    _write(tmp_path, "n.py", src)
+    r = _flake8(tmp_path, "n.py")
+    assert r.returncode == 1 and "TBX010" in r.stdout, r.stdout
+
+
+# --- D-1 path-sensitive swallow: a handled leg must not credit its complement ---
+
+
+def test_conditional_notify_silent_complement_fires(tmp_path):
+    # notify narrowed under `if cond` whose complement does nothing with the
+    # caught error: the notify credits only its path, the fall-through swallows.
+    src = (
+        "def h(cond):\n    try:\n        work()\n"
+        "    except ConnectionError as e:\n"
+        "        if cond:\n"
+        "            notify('connection lost, retrying', cause=e, dedup_key='net.offline')\n"
+        "            return\n"
+        "        # cond False: e neither captured nor notified\n"
+    )
+    _write(tmp_path, "p.py", src)
+    r = _flake8(tmp_path, "p.py")
+    assert r.returncode == 1 and "TBX001" in r.stdout, r.stdout
+
+
+def test_conditional_capture_silent_complement_fires(tmp_path):
+    # same shape with a capture: the capture credits only its path.
+    src = (
+        "def h(cond):\n    try:\n        work()\n"
+        "    except ConnectionError as e:\n"
+        "        if cond:\n"
+        "            report_error('server unreachable', cause=e, dedup_key='net.fail')\n"
+        "            return\n"
+        "        # cond False: e swallowed\n"
+    )
+    _write(tmp_path, "p.py", src)
+    r = _flake8(tmp_path, "p.py")
+    assert r.returncode == 1 and "TBX001" in r.stdout, r.stdout
+
+
+def test_conditional_notify_else_capture_clean(tmp_path):
+    # notify in one leg, capture in the exclusive else leg: every path handled,
+    # and the legs are exclusive so no double-lane.
+    src = (
+        "def h(cond):\n    try:\n        work()\n"
+        "    except ConnectionError as e:\n"
+        "        if cond:\n"
+        "            notify('connection lost, retrying', cause=e, dedup_key='net.offline')\n"
+        "        else:\n"
+        "            report_error('server unreachable', cause=e, dedup_key='net.fail')\n"
+    )
+    _write(tmp_path, "p.py", src)
+    r = _flake8(tmp_path, "p.py")
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+
+
+def test_conditional_notify_fallthrough_capture_clean(tmp_path):
+    # notify+return on the guarded path, capture on the fall-through: both paths
+    # handled, and the return keeps the two lanes exclusive.
+    src = (
+        "def h(cond):\n    try:\n        work()\n"
+        "    except ConnectionError as e:\n"
+        "        if cond:\n"
+        "            notify('connection lost, retrying', cause=e, dedup_key='net.offline')\n"
+        "            return\n"
+        "        report_error('server unreachable', cause=e, dedup_key='net.fail')\n"
+    )
+    _write(tmp_path, "p.py", src)
+    r = _flake8(tmp_path, "p.py")
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+
+
 # --- TBX011 msg-static (D007) + dedup_key (D008) ---
 
 
@@ -556,6 +671,31 @@ def test_quiet_dynamic_msg_clean_dedup_validated(tmp_path):
     )
     _write(tmp_path, "q.py", src)
     r = _flake8(tmp_path, "q.py")
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+
+
+def test_dynamic_dedup_in_test_file_clean(tmp_path):
+    # D-4: TBX011 (and TBX010) skip test files - a dynamic dedup_key in a
+    # test_*.py is clean; the swallow rule still credits the capture.
+    src = (
+        "def test_h(k):\n    try:\n        work()\n"
+        "    except ValueError as e:\n"
+        "        report_error('db write failed', cause=e, dedup_key=k)\n"
+    )
+    _write(tmp_path, "test_x.py", src)
+    r = _flake8(tmp_path, "test_x.py")
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+
+
+def test_broad_notify_in_test_file_clean(tmp_path):
+    # D-4: the notify gate (TBX010) skips test files - a broad notify is clean.
+    src = (
+        "def test_h():\n    try:\n        work()\n"
+        "    except Exception as e:\n"
+        "        notify('connection lost, retrying', cause=e, dedup_key='net.offline')\n"
+    )
+    _write(tmp_path, "test_x.py", src)
+    r = _flake8(tmp_path, "test_x.py")
     assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
 
 

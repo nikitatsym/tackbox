@@ -52,6 +52,64 @@ func notifyNoArgFlowFires() error {
 	return errors.New("noop")
 }
 
+// --- path-sensitivity (D-1): a handled leg does not credit its silent complement ---
+
+// a notify narrowed under `if cond` whose complement (cond==false) does nothing
+// with the error: the notify credits only its own path, the fall-through
+// swallows.
+func narrowedNotifyUnhandledComplement(cond bool) error {
+	err := errors.New("x")
+	if err != nil { // want `ERC001:.*err=err`
+		if cond {
+			report.Notify("net", "connection lost", err, nil, "net.offline")
+			return errors.New("handled")
+		}
+		// cond==false: err neither captured, propagated, nor notified.
+	}
+	return errors.New("noop")
+}
+
+// same shape with a capture instead of a notify: the capture credits only its
+// path, the complement still swallows.
+func narrowedCaptureUnhandledComplement(cond bool) error {
+	err := errors.New("x")
+	if err != nil { // want `ERC001:.*err=err`
+		if cond {
+			report.Error("net", "server error", err, nil, "net.fail")
+			return errors.New("handled")
+		}
+		// cond==false: err swallowed.
+	}
+	return errors.New("noop")
+}
+
+// notify in one leg, capture in the exclusive else leg: every path is handled.
+func okNotifyElseCapture(cond bool) error {
+	err := errors.New("x")
+	if err != nil {
+		if cond {
+			report.Notify("net", "connection lost", err, nil, "net.offline")
+		} else {
+			report.Error("net", "server error", err, nil, "net.fail")
+		}
+	}
+	return errors.New("noop")
+}
+
+// notify+return on the guarded path, capture on the fall-through: both paths
+// are handled, and the return keeps the two lanes exclusive.
+func okNotifyThenFallthroughCapture(cond bool) error {
+	err := errors.New("x")
+	if err != nil {
+		if cond {
+			report.Notify("net", "connection lost", err, nil, "net.offline")
+			return errors.New("handled")
+		}
+		report.Error("net", "server error", err, nil, "net.fail")
+	}
+	return errors.New("noop")
+}
+
 func okMarker() error {
 	err := errors.New("x")
 	// no-report: caller already wraps and captures

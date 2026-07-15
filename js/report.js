@@ -149,13 +149,27 @@ function maskDSN(dsn) {
   }
 }
 
+let dispatching = false
+
 function dispatchEventSafely(name, detail) {
   if (typeof window === 'undefined' || typeof CustomEvent === 'undefined') return
+  // Re-entrancy guard: a throwing `tackbox:error` listener surfaces via
+  // window.onerror (the DOM routes listener failures there, not to dispatchEvent),
+  // which setupGlobalHandlers turns back into reportError -> dispatch on the same
+  // stack. Skip the nested dispatch so that cannot loop; sequential dispatches
+  // are unaffected (D005 deliver-always intact).
+  if (dispatching) {
+    console.warn('[tackbox] report: nested tackbox:error dispatch skipped (listener-failure re-entry)')
+    return
+  }
+  dispatching = true
   // no-report: dispatch failure loses only the notice; the verb's local log already ran
   try {
     window.dispatchEvent(new CustomEvent(name, { detail }))
   } catch (e) {
     // dispatch failed
+  } finally {
+    dispatching = false
   }
 }
 

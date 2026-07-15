@@ -105,9 +105,9 @@ func Silent() Option
 - `Panic` - level fatal; pass the `recover()` value.
 - `Crumb` - a breadcrumb toward the next capture; not itself an event.
 
-erclint credits `Error`, `Warn`, and `Panic` as captures; `Init`,
-`Flush`, `Verify`, `Ready`, `Notify`, and `Crumb` are not. In an
-`if err != nil` branch, a capture is one of those three - anything else
+erclint credits `Error`, `Warn`, `Quiet`, and `Panic` as captures;
+`Init`, `Flush`, `Verify`, `Ready`, `Notify`, and `Crumb` are not. In an
+`if err != nil` branch, a capture is one of those four - anything else
 leaves the branch uncovered.
 
 ```go

@@ -1,13 +1,9 @@
-# tackbox_report -- design forks (FIRST CUT, review only)
+# tackbox_report -- design forks
 
 A Python runtime capture helper over `sentry-sdk`, mirroring the Go `go/report`
-and JS `js/report.js` helpers and the error-reporting spec. Nothing here ships:
-it is a self-contained package under `py/tackbox_report/`, not wired into
-publishing, CI, or `py/pyproject.toml`, and separate from the `py/tackbox`
+and JS `js/report.js` helpers and the error-reporting spec. A self-contained
+package under `py/tackbox_report/`, published independently of the `py/tackbox`
 linter/CLI.
-
-Installed toolchain used to build + test this: **sentry-sdk 2.64.0**,
-Python 3.12.11, pytest 9.1.1, uv 0.11.19.
 
 ## API (mirrors go/report, Pythonic)
 
@@ -36,7 +32,10 @@ Three lanes - local log (always), user lane (`set_notifier`), Sentry capture
 user lane; `notify` feeds only the user lane (no capture, no rate-limit state
 touched); `report_panic` feeds all three by default. A background task's failure
 surfaces to the user lane by default; `quiet=True` routes it telemetry-only at
-warning. The user lane is dispatched before the readiness+rate gate and is never
+warning. A raised task exception routes to `task:<name>` at error, not a fatal
+`panic:<name>` like Go's GoSafe - Python has no panic/error split, so a raised
+exception is a normal failure, not a fatal signal. The user lane is dispatched
+before the readiness+rate gate and is never
 rate-limited (D005); a notifier that raises is caught and captured
 telemetry-only, never breaking the caller's path or recursing into the lane.
 
@@ -203,8 +202,8 @@ call from any module counts (subject to argument-flow of the caught error).
 Recognition of `tackbox_report` as a reporter:
 
 - Recognition is by the **names** `report_error` / `report_warn` /
-  `report_panic`, not by import origin. pyrules now carries these as a **built-in
-  tier-1 set** (DECISIONS D004), so a consumer needs no `.tackbox-reporters`
+  `report_quiet` / `report_panic`, not by import origin. pyrules now carries these
+  as a **built-in tier-1 set** (DECISIONS D004), so a consumer needs no `.tackbox-reporters`
   entry -- the Python analog of the built-in Go origin check. Because the engine
   is name-based, *any* same-named call from any module counts (subject to
   argument-flow of the caught error), including an unrelated local `report_error`

@@ -27,15 +27,14 @@ type pathErr struct{ msg string }
 
 func (e *pathErr) Error() string { return e.msg }
 
-// capture through the errors.As alias is capture of the guarded error.
+// capture through the errors.As alias is capture of the guarded error - the
+// capture is unconditional, so every path through the branch is credited.
 func okDeclaredCaptureViaAsAlias() error {
 	err := errors.New("x")
 	if err != nil {
 		var pe *pathErr
-		if errors.As(err, &pe) {
-			myReport(pe)
-		}
-		return errors.New("wrap")
+		errors.As(err, &pe)
+		myReport(pe)
 	}
 	return errors.New("noop")
 }

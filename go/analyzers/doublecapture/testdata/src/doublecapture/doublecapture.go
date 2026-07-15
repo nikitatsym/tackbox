@@ -96,6 +96,49 @@ func okNotifyReturnThenCapture() error {
 	return errors.New("noop")
 }
 
+// notify in one switch case, capture in the exclusive default case: only one
+// runs, so no single path both captures and notifies.
+func okSwitchExclusiveCases(code int) error {
+	err := errors.New("x")
+	if err != nil {
+		switch code {
+		case 503:
+			report.Notify("net", "connection lost", err, nil, "net.offline")
+		default:
+			report.Warn("net", "server error", err, nil, "net.fail")
+		}
+	}
+	return errors.New("noop")
+}
+
+// capture and notify in the SAME switch case run on one path: double-lane.
+func switchSameCaseFires(code int) error {
+	err := errors.New("x")
+	if err != nil { // want `ERC005:.*captures and notifies`
+		switch code {
+		case 503:
+			report.Warn("net", "server error", err, nil, "net.fail")
+			report.Notify("net", "connection lost", err, nil, "net.offline")
+		default:
+			return errors.New("noop")
+		}
+	}
+	return errors.New("noop")
+}
+
+// notify inside a loop, capture after it: a loop body may run alongside the
+// post-loop capture, so the pair stays a double-lane (loops are not exclusive).
+func loopNotifyThenCaptureFires(items []int) error {
+	err := errors.New("x")
+	if err != nil { // want `ERC005:.*captures and notifies`
+		for range items {
+			report.Notify("net", "connection lost", err, nil, "net.offline")
+		}
+		report.Warn("net", "server error", err, nil, "net.fail")
+	}
+	return errors.New("noop")
+}
+
 func wrapCode(cause error) (int, error) { return 0, cause }
 
 // a tuple-returning wrap after the capture: the error component reaches the

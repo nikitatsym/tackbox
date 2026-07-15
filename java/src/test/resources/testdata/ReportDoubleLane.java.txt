@@ -26,5 +26,48 @@ class ReportDoubleLane {
         }
     }
 
+    // notify in one switch case, capture in the exclusive default case - no double.
+    void switchExclusiveCasesClean(int code) {
+        try {
+            risky();
+        } catch (java.io.IOException e) {
+            switch (code) {
+                case 503:
+                    Report.notify("connection lost, retrying", e, null, "net.offline");
+                    break;
+                default:
+                    Report.warn("server unreachable", e, null, "net.fail");
+            }
+        }
+    }
+
+    // capture and notify in the SAME switch case run on one path - a double.
+    void switchSameCaseFires(int code) {
+        try {
+            risky();
+        } catch (java.io.IOException e) { // want "JV006.*captures the caught and notifies"
+            switch (code) {
+                case 503:
+                    Report.warn("server unreachable", e, null, "net.fail");
+                    Report.notify("connection lost, retrying", e, null, "net.offline");
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+    // notify inside a loop, capture after it - the loop body may run alongside.
+    void loopNotifyThenCaptureFires(int[] items) {
+        try {
+            risky();
+        } catch (java.io.IOException e) { // want "JV006.*captures the caught and notifies"
+            for (int x : items) {
+                Report.notify("connection lost, retrying", e, null, "net.offline");
+            }
+            Report.warn("server unreachable", e, null, "net.fail");
+        }
+    }
+
     void risky() throws Exception {}
 }

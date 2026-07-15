@@ -84,6 +84,38 @@ test('rate window drops the second capture but never the dispatch', () => {
   assert.equal(captured.length, 1, 'duplicate capture suppressed within the window')
 })
 
+// (D-5) re-entrancy guard: a throwing tackbox:error listener surfaces via
+// window.onerror, which setupGlobalHandlers turns back into reportError ->
+// dispatch on the same stack. The guard skips the nested dispatch so it cannot
+// loop; sequential dispatches are unaffected.
+test('a re-entering dispatch is skipped (no infinite loop, one outer dispatch)', () => {
+  const report = load()
+  report.init({})
+  let calls = 0
+  const realWindow = window
+  Object.defineProperty(globalThis, 'window', {
+    value: {
+      addEventListener() {},
+      dispatchEvent(ev) {
+        calls++
+        dispatched.push(ev.detail)
+        // the listener failure re-enters synchronously via reportError
+        report.reportError('re-entry from a listener failure', new Error('inner'), null, 'reentry.key')
+        return true
+      },
+    },
+    configurable: true,
+    writable: true,
+  })
+  try {
+    report.reportError('outer dispatch that re-enters', new Error('outer'), null, 'outer.key')
+    assert.equal(calls, 1, 'exactly one dispatch; the nested re-entry is skipped')
+    assert.equal(dispatched.length, 1, 'only the outer notice reaches the user lane')
+  } finally {
+    Object.defineProperty(globalThis, 'window', { value: realWindow, configurable: true, writable: true })
+  }
+})
+
 // (c) reportPanic routes to the user lane with level fatal and a per-name key.
 test('reportPanic dispatches level fatal with panic:<name> dedupKey', () => {
   const report = load()

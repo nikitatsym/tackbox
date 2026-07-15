@@ -377,6 +377,8 @@ test('valid-dedup-key', () => {
       "const report = require('tackbox/report')\nreport.reportError('connection lost mid-stream', err, null, 'api.lost')",
       // a same-named LOCAL function is not a reporter: a non-literal key earns nothing.
       'function reportError(m, e, t, k) {}\nreportError("m", err, null, dynKey)',
+      // D-4: the reporter-arg rules skip test files - a dynamic key is clean there.
+      { code: R + 'reportError("connection lost mid-stream", err, null, key)', filename: 'widget.test.js' },
     ],
     invalid: [
       { code: R + 'reportError("connection lost mid-stream", err, null, key)', errors: [{ messageId: 'notLiteral' }] },
@@ -413,12 +415,26 @@ test('no-throw-and-report double-lane (D006)', () => {
     valid: [
       // notify in one leg, capture in the exclusive leg: different paths.
       N + 'try { f() } catch (e) { if (isOffline(e)) { notify("connection lost", e, null, "net.offline") } else { reportError("server unreachable now", e, null, "net.fail") } }',
+      // notify in one switch case, capture in the exclusive default case.
+      N + 'try { f() } catch (e) { switch (code) { case 503: notify("connection lost", e, null, "net.offline"); break; default: reportError("server unreachable now", e, null, "net.fail") } }',
       // notify only, no capture: no-broad-notify governs narrowing, not this rule.
       N + 'try { f() } catch (e) { notify("connection lost", e, null, "net.offline") }',
+      // D-4: the double-lane arm skips test files (the `both` arm still runs).
+      { code: N + 'try { f() } catch (e) { reportError("server unreachable now", e, null, "net.fail"); notify("connection lost", e, null, "net.offline") }', filename: 'net.spec.js' },
     ],
     invalid: [
       {
         code: N + 'try { f() } catch (e) { reportError("server unreachable now", e, null, "net.fail"); notify("connection lost", e, null, "net.offline") }',
+        errors: [{ messageId: 'doubleLane' }],
+      },
+      {
+        // capture and notify in the SAME switch case run on one path.
+        code: N + 'try { f() } catch (e) { switch (code) { case 503: reportError("server unreachable now", e, null, "net.fail"); notify("connection lost", e, null, "net.offline"); break } }',
+        errors: [{ messageId: 'doubleLane' }],
+      },
+      {
+        // notify inside a loop, capture after it: the loop body may run alongside.
+        code: N + 'try { f() } catch (e) { for (const x of xs) { notify("connection lost", e, null, "net.offline") } reportError("server unreachable now", e, null, "net.fail") }',
         errors: [{ messageId: 'doubleLane' }],
       },
     ],
@@ -438,6 +454,8 @@ test('no-broad-notify', () => {
       N + 'try { f() } catch (e) { notify("connection lost", other, null, "net.offline") }',
       // a no-report marker directly above the try suppresses.
       N + '// no-report: bootstrap notice, telemetry wired later in the boot sequence\ntry { f() } catch (e) { notify("connection lost", e, null, "net.offline") }',
+      // D-4: the notify gate skips test files - an unconditional notify is clean there.
+      { code: N + 'try { f() } catch (e) { notify("connection lost", e, null, "net.offline") }', filename: '__tests__/widget.js' },
     ],
     invalid: [
       {

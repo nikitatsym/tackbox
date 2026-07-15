@@ -1,4 +1,4 @@
-const { hasMarkerAbove, walk, isTier1Notify, argFlows } = require('./_shared')
+const { hasMarkerAbove, walk, isTier1Notify, argFlows, isTestFile } = require('./_shared')
 
 // guarded: `call` sits under an additional condition strictly inside the catch
 // body - an if-branch (consequent/alternate) or a switch case. A notify
@@ -28,6 +28,7 @@ module.exports = {
     schema: [],
   },
   create(context) {
+    if (isTestFile(context)) return {}
     return {
       CatchClause(node) {
         const errName = node.param && node.param.type === 'Identifier' ? node.param.name : null

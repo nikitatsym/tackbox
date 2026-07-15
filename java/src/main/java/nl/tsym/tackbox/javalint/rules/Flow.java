@@ -9,6 +9,8 @@ import com.github.javaparser.ast.stmt.ExpressionStmt;
 import com.github.javaparser.ast.stmt.IfStmt;
 import com.github.javaparser.ast.stmt.ReturnStmt;
 import com.github.javaparser.ast.stmt.Statement;
+import com.github.javaparser.ast.stmt.SwitchEntry;
+import com.github.javaparser.ast.stmt.SwitchStmt;
 import com.github.javaparser.ast.stmt.SynchronizedStmt;
 import com.github.javaparser.ast.stmt.ThrowStmt;
 import java.util.ArrayList;
@@ -53,8 +55,9 @@ final class Flow {
      *  and notifies with it - error/warn already reach the user lane, so the
      *  notify double-shows. Path-correlated (unlike DoubleScan's boolean merge):
      *  exclusive if/else legs must not pair, since a lane conflict needs both on
-     *  ONE path, so a set of live states is threaded. if/else is followed;
-     *  loops / switch / nested try are opaque Frame-scanned units (may-run). */
+     *  ONE path, so a set of live states is threaded. if/else and switch entries
+     *  are followed (only one runs); loops / nested try stay opaque Frame-scanned
+     *  units (may-run). */
     static Lane laneConflict(BlockStmt body, Predicate<MethodCallExpr> captures,
             Predicate<MethodCallExpr> notifies) {
         LaneScan scan = new LaneScan(captures, notifies);
@@ -290,7 +293,8 @@ final class Flow {
 
     /** JV006 double-lane walk. Each live path carries the line of its first
      *  capture and first notify (-1 = unseen); a state with both fires. if/else
-     *  legs are threaded as separate states so exclusive legs never pair. */
+     *  legs and switch entries are threaded as separate states so exclusive legs
+     *  never pair; a terminator-less colon-case falls through into the next. */
     private static final class LaneScan {
 
         record St(int captureLine, int notifyLine) {}
@@ -327,12 +331,31 @@ final class Flow {
                 List<St> other = f.getElseStmt().map(e -> step(e, base)).orElse(base);
                 return merge(then, other);
             }
+            if (st instanceof SwitchStmt sw) {
+                return switchEntries(sw, in);
+            }
             if (st instanceof ReturnStmt || st instanceof ThrowStmt
                     || st instanceof BreakStmt || st instanceof ContinueStmt) {
                 mark(st, in); // a capture/notify in the returned/thrown expr still counts
                 return List.of();
             }
             return mark(st, in);
+        }
+
+        /** Switch entries are exclusive legs (only one runs), but a colon-form
+         *  case with no terminator falls into the next: thread each entry's
+         *  fall-through exit into the next entry's start, so only a real
+         *  fall-through pairs. A missing default leaves a no-match path. */
+        private List<St> switchEntries(SwitchStmt sw, List<St> in) {
+            List<St> base = mark(sw.getSelector(), in);
+            List<St> fall = List.of();
+            boolean sawDefault = false;
+            for (SwitchEntry entry : sw.getEntries()) {
+                sawDefault |= entry.getLabels().isEmpty();
+                List<St> exit = walk(entry.getStatements(), merge(base, fall));
+                fall = entry.getType() == SwitchEntry.Type.STATEMENT_GROUP ? exit : List.of();
+            }
+            return sawDefault ? fall : merge(fall, base);
         }
 
         /** Frame-scan node for its first capture and first notify (nested scopes

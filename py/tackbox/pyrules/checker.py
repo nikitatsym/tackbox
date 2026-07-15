@@ -96,10 +96,6 @@ def _walk(node: ast.AST):
         yield from _walk(child)
 
 
-def _handler_raises(handler: ast.ExceptHandler) -> bool:
-    return any(isinstance(n, ast.Raise) for n in _iter_body(handler))
-
-
 def _is_bare_or_base(handler: ast.ExceptHandler) -> bool:
     if handler.type is None:
         return True
@@ -128,20 +124,96 @@ def _is_shutdown_carveout(handler: ast.ExceptHandler) -> bool:
     return False
 
 
-def _reporter_captures(handler: ast.ExceptHandler, reporter_names: frozenset[str]) -> bool:
-    """A recognized reporter (built-in tier-1 or declared tier-2) is called in the
-    handler with the caught error flowing into it - the name-based capture path."""
-    if not reporter_names or not handler.name:
+def _irrefutable(case: ast.match_case) -> bool:
+    """A guardless capture-all case (`case _` / `case x`): it always matches, so
+    a match carrying one is exhaustive - no implicit no-match fall-through."""
+    return case.guard is None and isinstance(case.pattern, ast.MatchAs) and case.pattern.pattern is None
+
+
+# _silent_path verdicts: a statement (or statement list) either terminates every
+# path handled (_TERMINAL), drops the error on some path (_BAD), or falls through
+# carrying a bool - whether an event has routed the error on the way (reported).
+_TERMINAL = "terminal"
+_BAD = "bad"
+
+# The opaque, order-blind statements: their internal control flow is not modeled,
+# so a routing event or raise anywhere inside credits every path through them.
+_OPAQUE_STMTS: tuple[type, ...] = (ast.Try, ast.For, ast.While, ast.AsyncFor) + (
+    (ast.TryStar,) if hasattr(ast, "TryStar") else ()
+)
+
+
+def _silent_path(body: list[ast.stmt], reporter_names: frozenset[str], caught: str | None) -> bool:
+    """Some execution path through the handler body drops the caught error:
+    reaches a plain return / break / continue / sys.exit, or the body's end,
+    with no capture or notify routing it on the way. Path-sensitive - if/elif/
+    else and match cases are exclusive legs, so a handled leg does not credit
+    its silent complement; a raise terminates the path handled; with is
+    transparent; try and loops stay opaque, lenient units. Ported from the JS
+    makeHandledAnalysis / Java SilentScan references."""
+
+    def credits(node: ast.AST) -> bool:
+        # An event routing the caught error: a recognized capture or a notify.
+        if not caught:
+            return False
+        for n in _walk(node):
+            if (
+                isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Name)
+                and (n.func.id in reporter_names or n.func.id == _NOTIFY_NAME)
+                and _reporters.arg_flows(n, caught)
+            ):
+                return True
         return False
-    for n in _iter_body(handler):
-        if (
-            isinstance(n, ast.Call)
-            and isinstance(n.func, ast.Name)
-            and n.func.id in reporter_names
-            and _reporters.arg_flows(n, handler.name)
-        ):
-            return True
-    return False
+
+    def opaque_handled(node: ast.AST) -> bool:
+        return credits(node) or any(isinstance(n, ast.Raise) for n in _walk(node))
+
+    def merge(legs: list[str | bool]) -> str | bool:
+        if any(v == _BAD for v in legs):
+            return _BAD
+        if all(v == _TERMINAL for v in legs):
+            return _TERMINAL
+        return all(v == _TERMINAL or v for v in legs)  # falls through reported iff every leg does
+
+    def analyze(st: ast.stmt, reported: bool) -> str | bool:
+        if isinstance(st, ast.Raise):
+            return _TERMINAL
+        if isinstance(st, ast.Return):
+            return _TERMINAL if reported or (st.value is not None and credits(st.value)) else _BAD
+        if isinstance(st, (ast.Break, ast.Continue)):
+            return _TERMINAL if reported else _BAD
+        if isinstance(st, ast.If):
+            then_v = analyze_list(st.body, reported)
+            else_v = analyze_list(st.orelse, reported) if st.orelse else reported
+            return merge([then_v, else_v])
+        if isinstance(st, ast.Match):
+            legs = [analyze_list(c.body, reported) for c in st.cases]
+            if not any(_irrefutable(c) for c in st.cases):
+                legs.append(reported)  # a no-match fall-through reaches the body's end
+            return merge(legs)
+        if isinstance(st, (ast.With, ast.AsyncWith)):
+            return analyze_list(st.body, reported)
+        if isinstance(st, _OPAQUE_STMTS):
+            return True if opaque_handled(st) else reported
+        if isinstance(st, ast.Expr) and isinstance(st.value, ast.Call) and _dotted_name(st.value.func) in _EXIT_CALLS:
+            return _TERMINAL if reported else _BAD  # sys.exit / os._exit drops the error unless already routed
+        return True if credits(st) else reported
+
+    def analyze_list(stmts: list[ast.stmt], reported: bool) -> str | bool:
+        for st in stmts:
+            v = analyze(st, reported)
+            if v == _BAD or v == _TERMINAL:
+                return v
+            reported = v
+        return reported
+
+    r = analyze_list(body, False)
+    if r == _BAD:
+        return True
+    if r == _TERMINAL:
+        return False
+    return not r  # fell off the end: silent iff no event routed the error
 
 
 def _notifies(handler: ast.ExceptHandler) -> bool:
@@ -173,11 +245,11 @@ def _is_broad_except(handler: ast.ExceptHandler) -> bool:
 def _lane_conflict(body: list[ast.stmt], capture_names: frozenset[str], caught: str | None) -> bool:
     """Some execution path through body both captures (a recognized reporter,
     panic excluded) and notifies (a notify carrying the caught) - the D006
-    double-lane. Path-sensitive: exclusive if/else legs do not pair, nor does a
-    capture after a notify+return. if/else is followed; compound statements
-    (loops / try / with) are opaque (their calls may-run), matching the flat
-    leniency the other Python rules already take. Each live path carries which
-    lanes have fired; the state set holds at most four tuples."""
+    double-lane. Path-sensitive: exclusive if/else and match-case legs do not
+    pair, nor does a capture after a notify+return. if/elif/else and match cases
+    are followed; loops / try / with stay opaque (their calls may-run), matching
+    the flat leniency the other Python rules already take. Each live path carries
+    which lanes have fired; the state set holds at most four tuples."""
     found = False
 
     def calls(node: ast.AST) -> tuple[bool, bool]:
@@ -206,16 +278,29 @@ def _lane_conflict(body: list[ast.stmt], capture_names: frozenset[str], caught: 
                 out.append(ns)
         return out
 
+    def dedup(states: list[tuple[bool, bool]]) -> list[tuple[bool, bool]]:
+        out: list[tuple[bool, bool]] = []
+        for s in states:
+            if s not in out:
+                out.append(s)
+        return out
+
     def step(st: ast.stmt, states: list[tuple[bool, bool]]) -> list[tuple[bool, bool]]:
         if isinstance(st, ast.If):
             base = apply(states, *calls(st.test))
             then_exit = step_list(st.body, base)
             else_exit = step_list(st.orelse, base) if st.orelse else base
-            merged: list[tuple[bool, bool]] = []
-            for s in then_exit + else_exit:
-                if s not in merged:
-                    merged.append(s)
-            return merged
+            return dedup(then_exit + else_exit)
+        if isinstance(st, ast.Match):
+            # Each case is an exclusive leg (only one runs); a missing capture-all
+            # leaves a no-match path carrying base through.
+            base = apply(states, *calls(st.subject))
+            legs: list[tuple[bool, bool]] = []
+            for c in st.cases:
+                legs += step_list(c.body, base)
+            if not any(_irrefutable(c) for c in st.cases):
+                legs += base
+            return dedup(legs)
         if isinstance(st, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
             apply(states, *calls(st))
             return []
@@ -372,6 +457,18 @@ def _imports_unittest_skip(tree: ast.AST) -> bool:
     return False
 
 
+def _is_test_file(filename: str) -> bool:
+    """A test file - a test_*.py / *_test.py basename, conftest.py, or a tests/
+    path segment. TBX010/TBX011 (the new notify-gate and reporter-arg rules) skip
+    tests, parity with Go _test.go and Java src/test; the swallow and test-skip
+    rules keep running there."""
+    p = filename.replace("\\", "/")
+    base = p.rsplit("/", 1)[-1]
+    if base == "conftest.py" or base.startswith("test_") or base.endswith("_test.py"):
+        return True
+    return "/tests/" in p or p.startswith("tests/")
+
+
 class _Visitor(ast.NodeVisitor):
     def __init__(
         self,
@@ -380,6 +477,7 @@ class _Visitor(ast.NodeVisitor):
         reporter_names: frozenset[str],
         unittest_skip: bool,
         local_defs: frozenset[str] = frozenset(),
+        in_test_file: bool = False,
     ):
         self.markers = markers
         self.skip_markers = skip_markers
@@ -389,6 +487,7 @@ class _Visitor(ast.NodeVisitor):
         self.lane_captures = (_LANE_CAPTURE_BUILTINS | reporter_names) - {"report_panic"}
         self.unittest_skip = unittest_skip
         self.local_defs = local_defs
+        self.in_test_file = in_test_file
         self.findings: list[tuple[int, int, str, str]] = []
         self._func_depth = 0
 
@@ -433,7 +532,8 @@ class _Visitor(ast.NodeVisitor):
         if _is_pytest_skip_call(node) and not _reason_present(node, positional=True, kw=True):
             if not self.skip_markers.suppresses(node.lineno):
                 self._add(node, "TBX008")
-        self._check_reporter_args(node)
+        if not self.in_test_file:
+            self._check_reporter_args(node)  # TBX011 skips tests (D-4)
         self.generic_visit(node)
 
     def _check_reporter_args(self, node: ast.Call) -> None:
@@ -480,9 +580,10 @@ class _Visitor(ast.NodeVisitor):
         if exit_call is not None:
             self._add(exit_call, "TBX007")
 
-        self._check_notify(handler)
+        if not self.in_test_file:
+            self._check_notify(handler)  # TBX010 skips tests (D-4)
 
-        if not _handler_raises(handler) and self._swallows(try_node, handler):
+        if self._swallows(try_node, handler):
             self._add(try_node, "TBX001")
 
     def _check_notify(self, handler: ast.ExceptHandler) -> None:
@@ -503,11 +604,7 @@ class _Visitor(ast.NodeVisitor):
             return False
         if self.markers.suppresses(handler.body[0].lineno):
             return False
-        if _reporter_captures(handler, self.reporter_names):
-            return False
-        if _notifies(handler):
-            return False
-        return True
+        return _silent_path(handler.body, self.reporter_names, handler.name)
 
 
 class Plugin:
@@ -531,6 +628,7 @@ class Plugin:
             type(self)._reporter_names,
             _imports_unittest_skip(self.tree),
             _local_def_names(self.tree),
+            _is_test_file(self.filename),
         )
         visitor.visit(self.tree)
         for line, col, code, detail in visitor.findings:

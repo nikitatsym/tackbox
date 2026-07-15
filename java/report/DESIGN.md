@@ -1,9 +1,9 @@
 # report (Java) - design
 
 Runtime capture helper for Java: a thin wrapper over sentry-java with the
-`error` / `warn` / `panic` / `crumb` API the tackbox error-reporting spec
-expects. Empty DSN = log-only no-op. Java mirror of `go/report/report.go`
-and `js/report.js`.
+`error` / `warn` / `quiet` / `notify` / `panic` / `crumb` API the tackbox
+error-reporting spec expects. Empty DSN = log-only no-op. Java mirror of
+`go/report/report.go` and `js/report.js`.
 
 Standalone module, built on its own. It emits an OSGi bundle and is
 published to Maven Central as `io.github.nikitatsym:report` (see
