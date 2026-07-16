@@ -168,6 +168,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "flake8" },
     { name = "pytest" },
     { name = "pyyaml" },
 ]
@@ -177,6 +178,7 @@ requires-dist = [{ name = "flake8", specifier = ">=6" }]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "flake8" },
     { name = "pytest", specifier = ">=8" },
     { name = "pyyaml", specifier = ">=6" },
 ]

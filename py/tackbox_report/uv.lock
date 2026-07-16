@@ -93,17 +93,16 @@ dependencies = [
     { name = "sentry-sdk" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
     { name = "pytest" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
-    { name = "sentry-sdk", specifier = ">=2.0,<3.0" },
-]
-provides-extras = ["dev"]
+requires-dist = [{ name = "sentry-sdk", specifier = ">=2.0,<3.0" }]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8" }]
 
 [[package]]
 name = "urllib3"

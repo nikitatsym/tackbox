@@ -34,6 +34,13 @@ jobs:
         with:
           python-version: '3.12'
 
+      - uses: astral-sh/setup-uv@v8
+
+      # Test gate: never publish an untested runtime helper. Runs the standalone
+      # tackbox_report suite via its PEP 735 dev group before build + publish.
+      - name: Test tackbox-report
+        run: uv run --directory py/tackbox_report --group dev pytest -q
+
       # Version is taken from pyproject.toml (0.1.0). The tag is only the
       # trigger; it is not injected into the build.
       - name: Build sdist + wheel

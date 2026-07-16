@@ -33,9 +33,14 @@ exclude = ["tests*"]
     "engines.json",
 ]
 
+# Dev/test toolchain (what dev.py passes via `uv run --group dev`). flake8 hosts
+# the pyrules TBX plugin declared above; pyyaml backs the workflow/hygiene tests.
 [dependency-groups]
-dev = ["pytest>=8", "pyyaml>=6"]
+dev = ["pytest>=8", "pyyaml>=6", "flake8"]
 
 [tool.pytest.ini_options]
+# Project boundary, not a suite filter: the nested py/tackbox_report is its own
+# project that dev.py discovers and runs separately, so a bare pytest here must
+# not descend into it.
 testpaths = ["tests"]
 pythonpath = [".", "tests"]
