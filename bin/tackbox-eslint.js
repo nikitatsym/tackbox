@@ -121,6 +121,10 @@ async function main() {
   }
   validateDeclarations(decls)
   const eslint = new ESLint({
+    // Inline directives (eslint-disable ... tackbox/<rule>) would be an
+    // uninventoried, ungated bypass of every tackbox JS rule. Closed here on
+    // the hermetic/published wrapper path; the preset closes it for consumers.
+    allowInlineConfig: false,
     overrideConfigFile: path.join(__dirname, '..', 'eslint.config.preset.js'),
     overrideConfig: [{ settings: { tackbox: { reporters: decls.map(d => d.raw) } } }],
   })
