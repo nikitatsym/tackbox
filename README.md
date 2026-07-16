@@ -107,6 +107,48 @@ lint:
       codequality: gl-code-quality.json
 ```
 
+## Lint scope and flags
+
+`tackbox lint [path] [flags]` scans the git-tracked source set. The
+positional `path` (default `.`) narrows the scan to a subtree; a path
+matching no file in the source set is a usage error (exit 2).
+
+- **`--changed`** limits the scan to the dirty tree: files staged,
+  unstaged, or untracked.
+- **`--since <ref>`** limits it to the three-dot diff `<ref>...HEAD`
+  (what this branch changed since its merge-base with `<ref>`) unioned
+  with the dirty tree, so it already covers `--changed`; passing both
+  is the same scope as `--since` alone. An unknown ref, or a repo with
+  no commits yet, is a usage error (exit 2), not a crash.
+- **`--no-cache`** ignores the per-`(unit, engine)` result cache for
+  this run and writes nothing back to it.
+
+The `path` scope and the change filters compose:
+`tackbox lint src --changed` lints only the dirty files under `src/`.
+
+This scope filter is unrelated to the `escapes` command's `--since`
+`<rev>`, which selects inventory entries new against a revision.
+
+## Exit codes
+
+Across commands, `2` is a usage or setup error the command cannot run
+past (argparse misuse, and the per-command cases below).
+
+- **lint** - `0` clean, `1` one or more findings, `2` a scope matching
+  no files or a git/engine setup failure (a bad `--changed` / `--since`
+  ref; an engine-store, reporters, or `go list` error). A closed
+  downstream pipe (`lint | head`) exits `141`; `--codequality` never
+  changes the code.
+- **doctor** - `0` all checks pass, `1` at least one failed; every
+  check always runs (no short-circuit).
+- **hook** - `0` a no-op, a clean re-lint, or a JSON decision (a
+  PreToolUse approval prompt or a PostToolUse Bash block); `1` a
+  non-blocking infra error (unreadable stdin, a git failure); `2` a
+  PostToolUse finding on the edited lines or a non-compiling Go
+  package, which blocks the edit in-loop.
+- **escapes** - `0` whenever it runs, entries or not (an inventory,
+  not a gate); `1` only for a bad `--since` rev.
+
 ## Distribution
 
 `uvx tackbox@latest` installs one small wheel; the engine payload is
@@ -210,6 +252,77 @@ The same model is enforced beyond Go:
   notify gate is `no-broad-notify` (a notify must sit under a condition
   inside the catch); `valid-error-report` and `valid-dedup-key` also
   validate `notify`'s msg and dedupKey.
+
+### Python rules (TBX001-011)
+
+The `pyrules` flake8 plugin emits these codes; each maps to a stable
+rule id (parity with the pre-migration ids).
+
+| Code | Rule | Summary |
+| --- | --- | --- |
+| TBX001 | swallowed-exception | propagate or wrap via `raise ... from e` |
+| TBX002 | suppress-exception | restructure so it can't raise |
+| TBX003 | bare-except | catch a specific type, not bare |
+| TBX004 | reraise-without-cause | keep the cause via `raise ... from e` |
+| TBX005 | useless-except | drop a try/except that only re-raises |
+| TBX006 | import-inside-function | move the import to module top |
+| TBX007 | exit-in-except | don't `sys.exit` in except; propagate |
+| TBX008 | test-skip | a skipped/xfailed test needs a reason |
+| TBX010 | notify-lane | notify needs a narrow except type |
+| TBX011 | reporter-args | literal msg and dedup key; data in cause/tags |
+
+Full ids carry the `python-` prefix (e.g. `python-swallowed-exception`).
+TBX009 is retired (the removed secret-name heuristic, D001), as JV008 is.
+
+### Duplication (DUP001, DUP002)
+
+The `tackbox-jscpd` engine wraps a copy/paste detector and runs by
+default over Go, Python, Java, and the JS family (`.js`, `.jsx`, `.mjs`,
+`.cjs`, `.ts`, `.tsx`, `.svelte`); Markdown is excluded, since prose
+repetition is not a defect. A consumer on `@latest` gets it in CI with
+no wiring.
+
+- **DUP001** flags a duplicated block - a clone of at least 50 tokens.
+  Both ends are reported, each a finding at its own site, naming the
+  counterpart block and the token count.
+- **DUP002** flags a native `jscpd:ignore` marker. That channel would
+  bypass the gated suppression below, so its presence alone is a
+  finding; remove it.
+
+Suppress one clone with a standalone `// dup-ok: <reason>` comment
+directly above the block - a `#` or a single-line `/* ... */` comment
+works per language. The reason must be at least 10 characters (D009),
+and a trailing comment after code does not count. `dup-ok` above one
+end drops only that end; above both ends it drops the whole clone.
+
+Duplication is cross-file, so the engine is never cached: it runs on
+every lint and writes no clean-cache markers. A `java`-format clone that
+lies entirely within both files' headers (package, imports, leading
+comments) has no extractable code and is dropped before it is reported.
+
+### Markdown: ASCII and the language marker
+
+The Markdown engine runs the standard markdownlint rules plus `MD-ASCII`,
+which flags any non-ASCII character (any codepoint above U+007F) - em
+dashes, curly quotes, other scripts, emoji - keeping docs portable and
+grep-friendly.
+
+One HTML comment on one of the first five lines widens the alphabet for
+a single file:
+
+```text
+<!-- tackbox: lang=ru personal experimental repo -->
+```
+
+It widens the allowed set to that language's script plus its typographic
+punctuation - `ru` today: Cyrillic, guillemets, em/en dash, ellipsis,
+curly quotes, NBSP - and nothing else: every other non-ASCII character,
+emoji and other scripts included, is still flagged.
+
+The marker is single-use and never disables the rule. A second marker, a
+marker past the fifth line, a missing code, or an unknown language code
+is itself a finding and leaves the whole file strict ASCII. Any text
+after the code (as above) is a free-form note.
 
 ## No configuration
 
