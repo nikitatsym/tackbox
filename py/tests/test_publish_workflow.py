@@ -256,6 +256,36 @@ def test_publish_fat_skips_when_version_already_on_pypi(workflow):
     )
 
 
+def test_publish_fat_runs_integrity_guard_before_publish(workflow):
+    """skip-existing keeps the OLD fat when a fat input changed without an
+    engines/VERSION bump, while the new thin ships pointing at the NEW payload
+    tree-sha - bricking every fresh install. A pre-publish guard compares the
+    local fat payload against any already-published same-version wheel and hard-
+    fails on a mismatch. It must run BEFORE the publish action (post-publish is
+    too late - skip-existing has already kept the stale wheel), and skip-existing
+    must stay set: the guard is what makes the idempotent re-run safe."""
+    fat = _publish_fat_job(workflow["jobs"])
+    steps = fat["steps"]
+    guard_idx = _guard_step_index(steps)
+    assert guard_idx is not None, (
+        "publish-fat must run scripts/guard_engines_publish.py before publishing"
+    )
+    publish_idx = _pypi_publish_step_index(steps)
+    assert publish_idx is not None, "publish-fat has no pypa/gh-action-pypi-publish step"
+    assert guard_idx < publish_idx, (
+        "the integrity guard must run BEFORE the pypa publish action"
+    )
+    with_args = _pypi_publish_with(fat)
+    assert with_args is not None and with_args.get("skip-existing") is True, (
+        "skip-existing must remain set; the pre-publish guard is what makes an "
+        "idempotent fat re-upload safe"
+    )
+    guard_text = _steps_text([steps[guard_idx]])
+    assert "engines/VERSION" in guard_text, (
+        "guard must resolve the engines version from engines/VERSION, not an ad hoc value"
+    )
+
+
 def test_publish_thin_does_not_set_skip_existing(workflow):
     """Thin version comes from the pushed tag; a duplicate publish means the
     engineer rebased or re-tagged. That is a workflow bug, not a silent-skip
@@ -378,6 +408,20 @@ def _find_smoke_job(jobs: dict) -> dict | None:
         text = _steps_text((job or {}).get("steps", []))
         if "tackbox doctor" in text and "tackbox lint" in text and "uvx" not in text:
             return job
+    return None
+
+
+def _guard_step_index(steps: list) -> int | None:
+    for i, step in enumerate(steps):
+        if isinstance(step, dict) and "guard_engines_publish.py" in str(step.get("run", "")):
+            return i
+    return None
+
+
+def _pypi_publish_step_index(steps: list) -> int | None:
+    for i, step in enumerate(steps):
+        if isinstance(step, dict) and "pypa/gh-action-pypi-publish" in str(step.get("uses", "")):
+            return i
     return None
 
 

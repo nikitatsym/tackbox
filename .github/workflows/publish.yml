@@ -236,6 +236,18 @@ jobs:
           done
           ls -lh fat/
 
+      # skip-existing keeps the OLD fat when a fat input changed without an
+      # engines/VERSION bump, while the new thin pins the NEW payload tree-sha -
+      # bricking every fresh install. This guard compares each local fat payload
+      # against the same-platform already-published wheel and hard-fails on a
+      # mismatch, before publish, so the skip stays idempotent-safe.
+      - name: Guard fat payload against the already-published wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cat engines/VERSION | tr -d '[:space:]')"
+          python scripts/guard_engines_publish.py --fat-dir fat --version "$version"
+
       # A thin-only patch bump reuploads the same fat version; PyPI 409s
       # on identical version, and skip-existing turns that 409 into success.
       - name: Publish tackbox-engines via Trusted Publisher (OIDC)
