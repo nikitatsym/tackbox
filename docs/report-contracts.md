@@ -59,8 +59,10 @@ Deduplication lives at two levels with different owners:
   one live banner, a counter, or a per-click toast is presentation
   policy and belongs to the app's listener, keyed on that dedupKey.
 
-Why, the asymmetry: suppressing telemetry loses nothing (the server
-counts); suppressing the user lane loses the failure for its only
+Why the asymmetry: dropping an in-window telemetry repeat loses only
+duplicate detail (occurrence count and any changed context) - the
+failure itself is already recorded from the first capture in the
+window; suppressing the user lane loses the failure for its only
 audience - a notification dropped inside the helper is a swallowed
 error at the UI level, the exact failure mode tackbox exists to
 prevent. How to collapse is per-app UX policy; a library-imposed one
