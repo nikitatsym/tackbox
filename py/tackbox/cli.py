@@ -20,6 +20,7 @@ from .engines import (
     dispatch,
     engines_hash_hermetic,
     ensure_engines,
+    erclint_base_import_path,
     erclint_compile_broken_pkgs,
     is_hermetic,
     lintable,
@@ -404,7 +405,11 @@ def _clean_args(r: EngineResult, info: dict) -> list[str]:
         except ValueError:
             # no-report: unparseable erclint json -> attribute nothing, never a false clean
             return []
-        dirty_ips = {f.get("pkg") for f in findings}
+        # erclint keys a test-file finding under a `.test` package variant
+        # (`pkg [pkg.test]`, `pkg_test [pkg.test]`), while arg_ip holds bare
+        # import paths - so normalize every finding key to its base package or a
+        # test-file finding would never match and the package would cache clean.
+        dirty_ips = {erclint_base_import_path(f.get("pkg", "")) for f in findings}
         ip_map = info.get("arg_ip", {})
         # Unknown import path -> cannot attribute findings -> never clean.
         return [

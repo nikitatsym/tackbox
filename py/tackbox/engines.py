@@ -518,9 +518,33 @@ def parse_erclint_findings(raw: str) -> list[dict]:
 COMPILE_SKIP = "analysis skipped due to errors in package"
 
 
+def erclint_base_import_path(pkg: str) -> str:
+    """Base import path for an erclint result key.
+
+    erclint keys a test-file result under a `.test` binary variant of the
+    package. Observed forms: `foo` (normal), `foo [foo.test]` (in-package test),
+    `foo.test` (the test main), and `foo_test [foo.test]` (external test
+    package). For a bracketed key the pre-bracket text is unreliable - it is
+    `foo_test`, not the base, for an external test - so the base is taken from
+    the bracket CONTENT (the `.test` binary path), with the trailing `.test`
+    stripped; the same strip recovers the base from a bare `foo.test`. All four
+    forms collapse to `foo`, so a test-file finding attributes to its package.
+    """
+    start = pkg.find(" [")
+    if start != -1:
+        end = pkg.find("]", start)
+        base = pkg[start + 2 : end if end != -1 else len(pkg)]
+    else:
+        base = pkg
+    if base.endswith(".test"):
+        base = base[: -len(".test")]
+    return base
+
+
 def erclint_compile_broken_pkgs(stdout: str) -> list[str]:
     """Base packages whose erclint run was skipped because they do not compile.
-    `pkg`, `pkg [pkg.test]`, and `pkg.test` variants collapse to one entry."""
+    The `pkg`, `pkg [pkg.test]`, `pkg.test`, and `pkg_test [pkg.test]` variants
+    collapse to one entry (via erclint_base_import_path)."""
     bases: list[str] = []
     seen: set[str] = set()
     for doc in iter_json_objects(stdout):
@@ -530,9 +554,7 @@ def erclint_compile_broken_pkgs(stdout: str) -> list[str]:
                 for p in analyzers.values()
             ):
                 continue
-            base = pkg.split(" [", 1)[0]
-            if base.endswith(".test"):
-                base = base[: -len(".test")]
+            base = erclint_base_import_path(pkg)
             if base not in seen:
                 seen.add(base)
                 bases.append(base)
