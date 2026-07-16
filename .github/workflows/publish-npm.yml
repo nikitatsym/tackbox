@@ -48,14 +48,14 @@ jobs:
       id-token: write   # OIDC token for npm Trusted Publishing + provenance
       contents: read    # checkout
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # Node 24 is current, but the npm it bundles is not guaranteed to be
       # >= 11.5.1 - the first npm release that speaks Trusted Publishing (OIDC).
       # registry-url pins the public registry (also the target provenance
       # records); the explicit npm upgrade below removes any dependence on the
       # runner image's bundled npm version.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
