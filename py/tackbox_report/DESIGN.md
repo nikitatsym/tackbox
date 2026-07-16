@@ -106,7 +106,7 @@ Invariants carried over verbatim from `go/report`:
 
 ---
 
-## Load-bearing forks (for the user to decide)
+## Load-bearing forks (defaults + alternatives)
 
 ### 1. Background-task (GoSafe) analog: threads vs asyncio
 
@@ -118,17 +118,16 @@ under `isolation_scope()`, and captures failure under `task:<name>`. Returns the
 Two sub-forks inside this:
 
 - **Failure routing.** Go's `GoSafe` splits paths: a panic goes to
-  `panic:<name>` (fatal), a returned error to `go.task:<name>` (error). The task
-  brief for this Python cut says the wrapper captures *"a returned error /
-  raised exception under `task:<name>`"* -- so this implementation funnels
-  **both** a raised `Exception` and a returned `Exception` (the `func() error`
-  analog) into `task:<name>` at level error. `report_panic` remains the separate
-  primitive for the `panic:<name>` fatal fingerprint.
+  `panic:<name>` (fatal), a returned error to `go.task:<name>` (error). The
+  wrapper funnels **both** a raised `Exception` and a returned `Exception`
+  (the `func() error` analog) into `task:<name>` at level error.
+  `report_panic` remains the separate primitive for the `panic:<name>` fatal
+  fingerprint.
   - *Alternative (closer to Go):* route a raised exception in `run_task` through
     `report_panic` -> `panic:<name>` fatal, and reserve `task:<name>` for
-    returned errors only. Rejected for the first cut because it contradicts the
-    brief and because a raised exception is Python's *normal* failure mode (not
-    an exceptional "panic"), so grouping it as fatal would over-signal.
+    returned errors only. Rejected because a raised exception is Python's
+    *normal* failure mode (not an exceptional "panic"), so grouping it as fatal
+    would over-signal.
 - **Concurrency model.** Both models are implemented: `run_task` (threads) and
   `run_task_async` (asyncio). Python has both worlds and a consumer may be
   async-first, so the wrapper is offered for each; failure routing, `task:<name>`
@@ -138,17 +137,16 @@ Two sub-forks inside this:
     `asyncio.Task` -- the same shape as `run_task` returning its `Thread`.
     `await`-ing the returned task is the join analog (mirror of
     `run_task(..., join=True)`); a failure is captured, never re-raised, so the
-    await completes rather than propagating. A separate await-inline entry point
-    was rejected as redundant: `await report.run_task_async(...)` already is the
-    inline path, so one function covers both. An `asyncio.CancelledError`
+    await completes rather than propagating. There is no separate await-inline
+    entry point: `await report.run_task_async(...)` already is the inline path,
+    so one function covers both. An `asyncio.CancelledError`
     (a `BaseException`, not caught by the wrapper's `except Exception`)
     propagates and is not reported -- cancellation is not a task failure, and it
     must reach the awaiter. Must be called from within a running event loop;
     outside one `create_task` raises `RuntimeError` (fail loud, no fallback).
-  - **daemon default (threads).** Deferred: whether `run_task` should default to
-    `daemon=True` (goroutines die with the process) vs `daemon=False` (current
-    default -- the task and its capture/flush complete). Current default is
-    `daemon=False` to avoid losing an in-flight capture.
+  - **daemon default (threads).** `run_task` defaults to `daemon=False` (the
+    task and its capture/flush complete) rather than `daemon=True` (the thread
+    dies with the process), to avoid losing an in-flight capture.
 
 ### 2. Packaging + name
 
@@ -176,9 +174,8 @@ standalone `pyproject.toml`:
     dependency closure (every `uvx tackbox` lint run would resolve sentry), and
     couple runtime-capture releases to linter releases.
 
-Verified locally: `python -m build` produces the sdist + wheel and `twine check`
-passes both; the wheel contains `tackbox_report/__init__.py` and
-`tackbox_report/py.typed`.
+`python -m build` produces the sdist + wheel (`twine check`-clean); the
+wheel carries `tackbox_report/__init__.py` and `tackbox_report/py.typed`.
 
 #### Publishing
 
@@ -224,11 +221,11 @@ Recognition of `tackbox_report` as a reporter:
 ### 4. Handler / middleware analog (WrapHandler) -- DEFERRED
 
 Go's `WrapHandler` (and the JS `setupGlobalHandlers`) wrap an HTTP handler with
-recover+capture. **Not implemented in this cut.** The Python analog is a
+recover+capture. **Not implemented.** The Python analog is a
 WSGI/ASGI middleware (or a framework-specific integration) that recovers an
 unhandled exception in a request and routes it through `report_panic`
-(`panic:http.<name>`). Deferred because it pulls in a web-framework surface
-(WSGI vs ASGI vs Starlette/Django/Flask specifics) that this first cut should
+(`panic:http.<name>`). It is out of scope here: it pulls in a web-framework
+surface (WSGI vs ASGI vs Starlette/Django/Flask specifics) the helper should
 not commit to. `report_panic` is the building block a middleware would call.
 
 ### Other choices made
@@ -238,7 +235,7 @@ not commit to. `report_panic` is the building block a middleware would call.
   so this helper cannot detect a delivery timeout the same way. `verify` ships
   the `report.startup` healthcheck and flushes, raising only when called before
   a successful `init`. Detecting delivery failure would need transport
-  introspection -- deferred.
+  introspection.
 - **`**sentry_options` passthrough.** `init` forwards unknown kwargs to
   `sentry_sdk.init` (`before_send`, `transport`, `sample_rate`, and so on). This
   is the Pythonic escape hatch (Go's `Options` is a fixed struct) and is what

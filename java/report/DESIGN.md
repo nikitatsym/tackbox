@@ -107,7 +107,7 @@ own fingerprint, all keys present once, no bleed.
 
 ## Installers (executor / thread world)
 
-The deferred goSafe surface, now built:
+The goSafe installer surface:
 
 - `installUncaughtHandler()` sets a `Thread` default uncaught handler that
   routes any thread's uncaught throwable through
@@ -225,8 +225,7 @@ tag. The published version comes from the pom. Release runbook:
   again. A caller that must observe the exception should not wrap - it
   should catch and call `error()` at its own single capture site.
 - `installUncaughtHandler()` / `uninstallUncaughtHandler()` and
-  `wrap(name, ExecutorService)` IMPLEMENTED - see "Installers". This is the
-  deferred surface the first cut listed; it is now built.
+  `wrap(name, ExecutorService)` IMPLEMENTED - see "Installers".
 
 ### 3. Local-log sink: System.Logger vs slf4j
 
@@ -243,7 +242,7 @@ tag. The published version comes from the pom. Release runbook:
 
 ### 4. WrapHandler / servlet-filter analog
 
-- DEFERRED (noted, as required). go/report's `WrapHandler` wraps an
+- DEFERRED. go/report's `WrapHandler` wraps an
   `http.Handler`; the Java analog is a `jakarta.servlet.Filter` (or a
   Spring `OncePerRequestFilter`) that recovers, captures under
   `panic:http.<name>`, and returns 500. It needs a servlet API dependency

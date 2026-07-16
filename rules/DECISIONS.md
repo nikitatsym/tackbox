@@ -8,8 +8,11 @@ decision home.
 
 Entry format: Rules affected / Decision (present tense) / short
 rationale / named gaps. No history, no examples, no plan or session
-references. Runtime-helper library contracts live in
-docs/report-contracts.md (D002/D003/D005 moved there, ids kept).
+references. Amending an entry rewrites it to the present state and
+bumps the date in its heading - git keeps the old text; appended
+amendment paragraphs are not a form. Runtime-helper library contracts
+live in docs/report-contracts.md (D002/D003/D005 moved there, ids
+kept).
 
 ## Scope
 
@@ -95,62 +98,47 @@ lint rule; its boundary with ERC006 arm 3 is recorded there.
 
 Library contract, moved to docs/report-contracts.md (id kept).
 
-## D004 - runtime helper capture APIs are tier-1 reporters (2026-07-13)
+## D004 - runtime helper capture APIs are tier-1 reporters (2026-07-15)
 
-Rules affected: TBX001 (python-swallowed-exception), JV001 (java
-swallow), and the java rules that share the same capture recognition -
-JV005 (exit) and JV006 (double capture).
+Rules affected: TBX001 (python swallow), JV001 (java swallow), JV005
+(exit), JV006 (double capture), and every rule sharing capture
+recognition.
 
-Decision: the runtime capture helpers' PUBLIC capture APIs are
-recognized as tier-1 reporters, per language, so a consumer's catch
-that hands the caught error to one is credited with no `# no-report:` /
-`// no-report:` marker and no `.tackbox-reporters` entry. The helpers
-are the blessed reporting path, so adopting them costs zero linter
-ceremony.
+Decision: the runtime capture helpers' public capture APIs are
+recognized as tier-1 reporters: a consumer's catch that hands the
+caught error to one is credited with no `no-report` marker and no
+`.tackbox-reporters` entry - adopting the blessed path costs zero
+lint ceremony. The capture set is error / warn / quiet / panic in
+each language's naming; quiet skips only the user lane, so it is a
+capture and carries the dedupKey-shape validation where the engine
+has it. notify is never a capture - whether notify terminates a
+failure path is D006's separately gated decision.
 
-- Go: `go/report` by import origin (already shipped).
-- JS: `tackbox/report` by import origin (already shipped).
-- Python: `tackbox_report`'s `report_error` / `report_warn` /
-  `report_quiet` / `report_panic` by function NAME - a built-in set in
-  pyrules.
-  pyrules has no cross-module type info, so recognition is name-based,
-  not origin-based. Inherent limitation: a same-named function from
-  ANY module is credited too - the engine cannot prove the origin
-  source-only. Argument-flow is still required (the caught must reach
-  the call), the same gate as the tier-2 declared-reporter path.
-- Java: the `nl.tsym.tackbox.report.Report` methods `error` / `warn` /
-  `quiet` / `panic` by origin (package + class), through the same source-only
-  origin machinery javalint already uses for slf4j, System.Logger, and
-  tier-2 declared reporters. A same-named Report from another package,
-  or one declared in the consumer's own file, resolves to a different
-  origin and is not credited. Report's methods are static, so unlike
-  slf4j's instance-only error/warn a fully-qualified static call is a
-  real capture too; tier1-eligibility is not required.
+Recognition per language:
 
-Recognition only LOOSENS - it credits more capture sites - so it
-cannot introduce a swallow finding on existing code. JV006 does count
-a recognized Report capture as a capture (report + rethrow is a double
-capture), matching how it already counts slf4j and declared reporters.
+- Go: `go/report` by import origin.
+- JS: `tackbox/report` by import origin.
+- Python: `tackbox_report` by file-local import origin; mechanics and
+  kill semantics in D010.
+- Java: `nl.tsym.tackbox.report.Report` by source-only origin
+  (package + class), the same machinery javalint uses for slf4j,
+  System.Logger, and tier-2 declared reporters. A same-named Report
+  from another package or the consumer's own file resolves to a
+  different origin and is not credited. Report's methods are static,
+  so a fully-qualified static call is a real capture;
+  tier1-eligibility is not required.
 
-The Python helper's background-task wrappers route their internal
-except through `report_error`, so that boundary is a recognized
-capture and carries no markers.
+Argument-flow is required everywhere: the caught error must reach the
+call. Recognition only loosens - it credits more capture sites - so
+it cannot introduce a swallow finding. JV006 counts a recognized
+Report capture as a capture (report + rethrow is a double capture),
+as it counts slf4j and declared reporters. The helpers' own
+background-task wrappers route their internal except through the
+capture core, so that boundary is a recognized capture and carries no
+markers.
 
-Amendment (2026-07-15): the `quiet` verb (Go `Quiet`, JS `reportQuiet`,
-Python `report_quiet`, Java `quiet`) is a capture - it skips only the
-user lane - so it joins each language's capture set above, including
-the dedupKey-shape validation where the engine has it. `notify` is NOT
-a capture and is never credited by these sets; whether notify
-terminates an err-branch is a separate, gated decision.
-
-Scope unchanged (D001): this is capture-shape recognition, decidable
-from the AST and imports, not value or content analysis. See the
-tackbox runtime-helpers plan (Python + Java capture helpers) for the
-full helper design.
-
-Amendment (2026-07-15): Python tier-1 and notify recognition moved
-from bare name to file-local import origin (D010); the name-model
-caveat above now applies only to tier-2 declared reporters.
+Scope unchanged (D001): capture-shape recognition, decidable from the
+AST and imports, not value or content analysis.
 
 ## D005 - dedup rate-limits telemetry, never the user lane (2026-07-14)
 
@@ -202,24 +190,23 @@ telemetry-only, panic takes a name, not a msg.
 
 ## D008 - literal dedupKey validation goes cross-language (2026-07-15)
 
-Rules affected: ERC006 arm 3 (Go, already enforced), valid-dedup-key
-(JS, already enforced); new rules in javalint and pyrules.
+Rules affected: ERC006 arm 3 (Go), valid-dedup-key (JS), TBX011
+(Python), JV010 (Java).
 
 Decision: every tier-1 verb call - error / warn / quiet / notify -
 must carry a static string-literal dedupKey of the form
 `area.suffix[:identifier]`, in all four engines. The key is the
 Sentry fingerprint, the rate-limit bucket, and the user-lane
 coalescing key (D005) - dedup stands on it in every lane, so its
-validation cannot stay a Go/JS privilege. Python validates on the
-recognized names (the D004 name-model caveat applies).
+validation cannot stay a Go/JS privilege. Python validates on
+origin-resolved calls (D010).
 
-Amendment (2026-07-15): the notify gate (D006) and the argument
-contracts (D007/D008) exempt test files in every engine - Go
-`_test.go`, Java `src/test/`, JS `*.test.* / *.spec.* / __tests__ /
-tests/`, Python `test_* / *_test.py / tests/ / conftest.py` - tests
-legitimately use dynamic keys (e.g. per-worker keys in concurrency
-tests). The test-skip rules are unaffected and keep running in tests
-everywhere.
+The notify gate (D006) and the argument contracts (D007/D008) exempt
+test files in every engine - Go `_test.go`, Java `src/test/`, JS
+`*.test.* / *.spec.* / __tests__ / tests/`, Python `test_* /
+*_test.py / tests/ / conftest.py` - tests legitimately use dynamic
+keys (per-worker keys in concurrency tests). The test-skip rules keep
+running in tests everywhere.
 
 ## D009 - suppression-marker reasons have a minimum length (2026-07-15)
 
