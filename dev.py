@@ -21,7 +21,9 @@ _ROOT = Path(__file__).resolve().parent
 # Dirs never walked for suites: VCS, virtualenvs, vendored deps, build output,
 # and engines/ (bundled third-party runtimes, not our tests). egg-info is pruned
 # by suffix in _discover.
-_PRUNE = {".git", ".venv", "venv", "node_modules", "build", "dist", "target", "engines", "__pycache__"}
+# .claude holds agent git worktrees (nested checkouts) that would otherwise be
+# discovered as bogus duplicate suites.
+_PRUNE = {".git", ".claude", ".venv", "venv", "node_modules", "build", "dist", "target", "engines", "__pycache__"}
 
 
 def _run(cmd: list[str]) -> int:
