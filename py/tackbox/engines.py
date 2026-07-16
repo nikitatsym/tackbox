@@ -179,20 +179,54 @@ def _fetch_and_install(data: dict, root: Path, fetcher: "Fetcher") -> None:
         shutil.rmtree(work, ignore_errors=True)
 
 
+def _contained_target(dest_root: Path, name: str, prefix: str, wheel: Path) -> Path:
+    """Resolve a payload member's dest path, refusing any that escapes dest_root.
+
+    Closes zip-slip: the manual zf.open + write below bypasses ZipFile.extract's
+    `..` sanitizing, and the store_sha256 tree pin runs only AFTER extraction
+    over what landed inside dest - a file planted outside is invisible to it. A
+    member whose stripped path is absolute, or whose `..` components resolve
+    outside dest_root, is rejected here, before its own write."""
+    rel = name[len(prefix):]
+    if os.path.isabs(rel):
+        raise EnginesStoreError(
+            f"fat wheel {wheel.name} member {name!r} has an absolute path "
+            f"(refused before write)"
+        )
+    target = (dest_root / rel).resolve()
+    try:
+        target.relative_to(dest_root)
+    except ValueError:
+        raise EnginesStoreError(
+            f"fat wheel {wheel.name} member {name!r} escapes the engine store "
+            f"(refused before write)"
+        ) from None
+    return target
+
+
 def _unpack_tackbox_engines(wheel: Path, dest: Path) -> None:
     """Extract the wheel's `tackbox_engines/` subtree into dest, restoring the
-    executable bit the wheel recorded (node / opengrep must stay runnable)."""
+    executable bit the wheel recorded (node / opengrep must stay runnable).
+
+    Every member is containment-checked against dest before the first byte is
+    written, so a hostile wheel (absolute or `..`-escaping member) fails without
+    touching disk - see _contained_target for why an escaped file would slip
+    past the post-unpack tree-sha pin."""
     prefix = "tackbox_engines/"
     dest.mkdir(parents=True, exist_ok=True)
+    dest_root = dest.resolve()
     with zipfile.ZipFile(wheel) as zf:
         members = [
             n for n in zf.namelist() if n.startswith(prefix) and not n.endswith("/")
         ]
         if not members:
             raise EnginesStoreError(f"fat wheel {wheel.name} has no {prefix} payload")
-        for name in members:
-            info = zf.getinfo(name)
-            target = dest / name[len(prefix):]
+        # Pre-scan: validate all members before any write.
+        planned = [
+            (zf.getinfo(name), _contained_target(dest_root, name, prefix, wheel))
+            for name in members
+        ]
+        for info, target in planned:
             target.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(info) as src, target.open("wb") as out:
                 shutil.copyfileobj(src, out)
