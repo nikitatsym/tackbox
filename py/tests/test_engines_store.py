@@ -376,3 +376,84 @@ def test_default_fetcher_rejects_download_mismatching_index_digest(store_env, mo
     with pytest.raises(engines.EnginesStoreError) as ei:
         engines._download_fat_wheel(store_env.data, workdir)
     assert "cc" * 32 in str(ei.value)
+
+
+# -- unpack: zip-slip containment (A4) ------------------------------------
+
+# The manual `zf.open` + `target.open("wb")` unpack bypasses ZipFile.extract's
+# `..` sanitizing, and the store_sha256 tree pin is verified only after
+# extraction over the files that landed inside dest - a member written outside
+# dest is invisible to it. So an escaping member must be refused BEFORE any
+# write, not after. These build wheels whose member names are written verbatim
+# (an escaping name cannot be produced by the prefix-forcing _build_fat_wheel).
+
+
+def _build_wheel_with_members(
+    dest_dir: Path, name: str, members: dict[str, bytes]
+) -> Path:
+    wheel = dest_dir / name
+    with zipfile.ZipFile(wheel, "w") as zf:
+        for member, content in members.items():
+            zf.writestr(member, content)
+    return wheel
+
+
+def test_unpack_rejects_dotdot_member_and_writes_nothing_outside_dest(tmp_path):
+    # `tackbox_engines/../escaped.txt` lexically passes the prefix filter but
+    # resolves one level above dest. It must be refused, and the pre-scan must
+    # fail before writing even the legit member.
+    outer = tmp_path / "outer"
+    outer.mkdir()
+    dest = outer / "store"
+    wheel = _build_wheel_with_members(
+        tmp_path,
+        "malicious-dotdot.whl",
+        {
+            "tackbox_engines/bin/node": b"#!/bin/sh\n",
+            "tackbox_engines/../escaped.txt": b"pwned\n",
+        },
+    )
+    with pytest.raises(engines.EnginesStoreError) as ei:
+        engines._unpack_tackbox_engines(wheel, dest)
+    assert "escape" in str(ei.value).lower()
+    # The escaping member resolves to outer/escaped.txt: it must not exist, and
+    # nothing may have been planted alongside dest.
+    assert not (outer / "escaped.txt").exists()
+    assert {p.name for p in outer.iterdir()} <= {"store"}
+
+
+def test_unpack_rejects_absolute_member_and_writes_nothing_outside_dest(tmp_path):
+    # `tackbox_engines/<absolute>` strips to an absolute path; joined to dest it
+    # replaces dest entirely (pathlib), writing at the absolute location. Must be
+    # refused before that write.
+    outer = tmp_path / "outer"
+    outer.mkdir()
+    dest = outer / "store"
+    abs_target = tmp_path / "abs_escaped.txt"  # absolute path outside dest
+    wheel = _build_wheel_with_members(
+        tmp_path,
+        "malicious-abs.whl",
+        {
+            "tackbox_engines/bin/node": b"#!/bin/sh\n",
+            f"tackbox_engines/{abs_target}": b"pwned\n",
+        },
+    )
+    with pytest.raises(engines.EnginesStoreError) as ei:
+        engines._unpack_tackbox_engines(wheel, dest)
+    assert "absolute" in str(ei.value).lower()
+    assert not abs_target.exists()
+
+
+def test_unpack_valid_payload_lands_entirely_inside_dest(tmp_path):
+    # The containment guard must not disturb a normal all-inside payload.
+    dest = tmp_path / "store"
+    payload = {
+        "tackbox_engines/bin/node": b"#!/bin/sh\necho node\n",
+        "tackbox_engines/vendor/node_modules/eslint/index.js": b"module.exports={}\n",
+    }
+    wheel = _build_wheel_with_members(tmp_path, "clean.whl", payload)
+    engines._unpack_tackbox_engines(wheel, dest)
+    assert (dest / "bin" / "node").read_bytes() == b"#!/bin/sh\necho node\n"
+    assert (
+        dest / "vendor" / "node_modules" / "eslint" / "index.js"
+    ).read_bytes() == b"module.exports={}\n"
