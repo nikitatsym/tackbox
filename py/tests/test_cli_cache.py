@@ -649,3 +649,136 @@ def test_test_go_change_invalidates_erclint_cache(tmp_path):
         f"{warm.stdout}\n{warm.stderr}"
     )
     assert "ERC008" in warm.stdout, warm.stdout
+
+
+# -- Test-file findings must not write a false-clean marker ------------------
+#
+# erclint keys a _test.go finding under a `.test` package variant - `pkg
+# [pkg.test]` for an in-package test, `pkg_test [pkg.test]` for an external
+# one - while the cache maps args to bare import paths (`pkg`). The base key
+# never matched the suffixed finding key, so _clean_args judged the package
+# clean and the reporting run wrote a false-clean marker; the next warm run
+# served it. A1(c) above missed this because its single warm run is the
+# digest-invalidated cold run, not a run served from the poisoned marker.
+# These drive repeated runs off ONE unchanged tree: the finding is present
+# from the start, so the very first (priming) run reports it, and both warm
+# runs must keep reporting - none may write a false clean.
+
+GO_MOD_SKIPNOW = "module skipnowfixture\n\ngo 1.24\n"
+
+GO_SRC_TRIVIAL = """package pkg
+
+func Add(a, b int) int { return a + b }
+"""
+
+# In-package test -> erclint keys the ERC008 finding under `pkg [pkg.test]`.
+GO_TEST_SKIPNOW_INPKG = """package pkg
+
+import "testing"
+
+func TestAdd(t *testing.T) {
+\tt.SkipNow()
+}
+"""
+
+# External test package -> erclint keys the finding under `pkg_test [pkg.test]`
+# (the pre-bracket text is `pkg_test`, not the base; only the bracket content
+# recovers `pkg`).
+GO_TEST_SKIPNOW_EXT = """package pkg_test
+
+import "testing"
+
+func TestExt(t *testing.T) {
+\tt.SkipNow()
+}
+"""
+
+
+def _make_skipnow_repo(tmp_path: Path, test_file: str, test_src: str) -> tuple[Path, Path]:
+    """A one-package Go repo (trivial source + one `_test.go`) and its cache
+    home. `test_file`/`test_src` pick the test-file variant under test."""
+    repo = tmp_path / "repo"
+    (repo / "pkg").mkdir(parents=True)
+    (repo / "go.mod").write_text(GO_MOD_SKIPNOW)
+    (repo / "pkg" / "mod.go").write_text(GO_SRC_TRIVIAL)
+    (repo / "pkg" / test_file).write_text(test_src)
+    init_repo(repo)
+    commit_all(repo)
+    return repo, tmp_path / "cache"
+
+
+def _assert_reports_across_runs(repo: Path, cache_home: Path, needle: str) -> None:
+    # cold prime reports (and must not poison the cache); both warm runs must
+    # still report off the unchanged, cached tree.
+    for label in ("cold-prime", "warm-1", "warm-2"):
+        r = _run_tackbox(repo, cache_home)
+        assert r.returncode != 0, (
+            f"{label}: finding must report, not serve a false clean:\n"
+            f"{r.stdout}\n{r.stderr}"
+        )
+        assert needle in r.stdout, f"{label}: {needle} missing:\n{r.stdout}"
+
+
+def test_inpackage_test_finding_survives_warm_runs(tmp_path):
+    """In-package `_test.go` ERC008 (keyed `pkg [pkg.test]`): the priming run
+    must not write a false-clean marker, so both warm runs still report."""
+    _needs_go()
+    repo, cache_home = _make_skipnow_repo(tmp_path, "mod_test.go", GO_TEST_SKIPNOW_INPKG)
+    _assert_reports_across_runs(repo, cache_home, "ERC008")
+
+
+def test_external_test_finding_survives_warm_runs(tmp_path):
+    """External `package pkg_test` `_test.go` ERC008 (keyed `pkg_test
+    [pkg.test]`): the bracket-content normalization is what attributes it to
+    `pkg`; without it the priming run false-cleans and warm runs stay silent."""
+    _needs_go()
+    repo, cache_home = _make_skipnow_repo(tmp_path, "mod_ext_test.go", GO_TEST_SKIPNOW_EXT)
+    _assert_reports_across_runs(repo, cache_home, "ERC008")
+
+
+def test_clean_go_package_still_caches_after_warm_run(tmp_path):
+    """No over-broadening: a genuinely clean Go package (with a clean _test.go)
+    must still cache - the warm run skips erclint entirely."""
+    _needs_go()
+    repo, cache_home = _make_skipnow_repo(tmp_path, "mod_test.go", GO_TEST_CLEAN)
+
+    prime = _run_tackbox(repo, cache_home)
+    assert prime.returncode == 0, f"clean package must prime clean:\n{prime.stdout}\n{prime.stderr}"
+    warm = _run_tackbox(repo, cache_home)
+    assert warm.returncode == 0, f"{warm.stdout}\n{warm.stderr}"
+    assert "== erclint ==" not in warm.stdout, (
+        f"a clean package must stay cached on the warm run:\n{warm.stdout}"
+    )
+
+
+# -- _clean_args: test-variant attribution (unit, no go toolchain) -----------
+
+
+def test_clean_args_erclint_test_variant_marks_package_dirty():
+    """Both `.test` finding-key variants must attribute back to the base
+    package, so a _test.go finding never caches clean."""
+    for key in ("m/foo [m/foo.test]", "m/foo_test [m/foo.test]"):
+        r = EngineResult(
+            engine_id="erclint",
+            exit_code=0,
+            stdout='{"%s": {"skiptest": [{"posn": "x:1:1"}]}}' % key,
+            stderr="",
+        )
+        info = {"arg_digest": [("foo", "d1")], "arg_ip": {"foo": "m/foo"}}
+        assert cli._clean_args(r, info) == [], key
+
+
+def test_clean_args_erclint_nontest_finding_attributes_per_package():
+    """A normal (non-test) finding marks only its own package dirty; a clean
+    sibling package must still be cached (the fix must not over-broaden)."""
+    r = EngineResult(
+        engine_id="erclint",
+        exit_code=0,
+        stdout='{"m/foo": {"errcheck": [{"posn": "x:1:1"}]}}',
+        stderr="",
+    )
+    info = {
+        "arg_digest": [("foo", "d1"), ("bar", "d2")],
+        "arg_ip": {"foo": "m/foo", "bar": "m/bar"},
+    }
+    assert cli._clean_args(r, info) == ["bar"]
