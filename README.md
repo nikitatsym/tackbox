@@ -187,9 +187,8 @@ test-skip rules (via the `pyrules` flake8 plugin), frontend swallow,
 notify, and test-skip rules (JS, TS, Svelte, via ESLint), and Markdown
 (MD001-060 + ASCII).
 
-See `go/README.md` for the Go ruleset. The specs these rules implement
-(`error-reporting-and-coverage`, `error-handling-frontend`) live
-outside this repo (private notes); the public summary:
+See `go/README.md` for the complete Go ruleset. Across supported
+languages, the core policy is:
 
 - Every `err != nil` branch must propagate, capture, or carry an
   explicit `// no-report: <reason>` marker.
