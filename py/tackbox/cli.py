@@ -171,6 +171,7 @@ def _lint_results(
     propagate to the caller.
     """
     reporter_pairs = reporters.pairs(reporters.load(repo_root))
+    policy = cache.policy_digest(reporter_pairs)
     files, warnings = collect_source_set(repo_root, scope, changed_scope)
     if not files:
         return None, warnings, []
@@ -197,7 +198,7 @@ def _lint_results(
         engines_hash = engines_hash_hermetic() if is_hermetic() else cache.engines_hash_dev(tackbox_root)
         cache.gc_stale_engines(engines_hash, cache_root)
 
-        filtered_plan, pending = _apply_cache(plan, repo_root, engines_hash, cache_root)
+        filtered_plan, pending = _apply_cache(plan, repo_root, engines_hash, cache_root, policy)
         results = run_engines(filtered_plan, repo_root, tackbox_root, reporter_pairs, machine)
         _mark_clean_units(results, pending, engines_hash, cache_root)
         cache.gc_soft_cap(engines_hash, cache.SOFT_CAP, cache_root)
@@ -316,6 +317,7 @@ def _apply_cache(
     repo_root: Path,
     engines_hash: str,
     cache_root: Path,
+    policy: str,
 ) -> tuple[list[tuple[EngineSpec, list[str]]], dict[str, dict]]:
     """Filter cached units out of each engine's args.
 
@@ -336,7 +338,7 @@ def _apply_cache(
             # pending so _mark_clean_units never writes a clean marker for it.
             filtered_plan.append((engine, args))
             continue
-        arg_digest, extras = _digests_for_engine(engine, args, repo_root)
+        arg_digest, extras = _digests_for_engine(engine, args, repo_root, policy)
         uncached: list[tuple[str, str]] = []
         for arg, digest in arg_digest:
             if digest is None:
@@ -352,16 +354,19 @@ def _apply_cache(
 
 
 def _digests_for_engine(
-    engine: EngineSpec, args: list[str], repo_root: Path
+    engine: EngineSpec, args: list[str], repo_root: Path, policy: str
 ) -> tuple[list[tuple[str, str]], dict]:
     if engine.id == "erclint":
-        digest_map = cache.erclint_package_digests(repo_root, args)
+        digest_map = cache.erclint_package_digests(repo_root, args, policy)
         ip_map = cache.erclint_import_paths(repo_root, args)
         # digest None = lint always, cache never; dropping the arg instead
         # would silently skip linting the package.
         arg_digest = [(a, digest_map.get(a)) for a in args]
         return arg_digest, {"arg_ip": ip_map}
-    arg_digest = [(a, cache.sha256_file(repo_root / a)) for a in args]
+    arg_digest = [
+        (a, cache.non_go_unit_digest(a, cache.sha256_file(repo_root / a), policy))
+        for a in args
+    ]
     return arg_digest, {}
 
 

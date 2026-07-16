@@ -101,14 +101,14 @@ def _dev_hash() -> str:
 
 
 def _marker_count(cache_home: Path, engine_id: str) -> int:
-    root = cache_home / "v1" / _dev_hash()
+    root = cache_home / tackbox_cache.CACHE_VERSION / _dev_hash()
     if not root.is_dir():
         return 0
     return sum(1 for p in root.iterdir() if p.name.endswith(f".{engine_id}"))
 
 
 def _all_markers(cache_home: Path) -> list[Path]:
-    root = cache_home / "v1" / _dev_hash()
+    root = cache_home / tackbox_cache.CACHE_VERSION / _dev_hash()
     if not root.is_dir():
         return []
     return sorted(p for p in root.iterdir() if p.is_file())
@@ -266,7 +266,7 @@ def test_corrupt_marker_does_not_fail(clean_js_repo, tmp_path):
     """
     cache_home = tmp_path / "cache"
     # Simulate a corrupt marker by putting a directory where any marker would go.
-    corrupt = cache_home / "v1" / _dev_hash() / "corrupt.tackbox-eslint"
+    corrupt = cache_home / tackbox_cache.CACHE_VERSION / _dev_hash() / "corrupt.tackbox-eslint"
     corrupt.mkdir(parents=True)
 
     r = _run_tackbox(clean_js_repo, cache_home)
@@ -305,12 +305,12 @@ def test_no_cache_flag_ignores_existing_markers(go_repo, tmp_path):
 
 def test_stale_engines_hash_dir_pruned_on_run(clean_js_repo, tmp_path):
     cache_home = tmp_path / "cache"
-    stale = cache_home / "v1" / "old-engines-hash"
+    stale = cache_home / tackbox_cache.CACHE_VERSION / "old-engines-hash"
     stale.mkdir(parents=True)
     (stale / "some.eng").touch()
     assert _run_tackbox(clean_js_repo, cache_home).returncode == 0
     assert not stale.exists()
-    assert (cache_home / "v1" / _dev_hash()).is_dir()
+    assert (cache_home / tackbox_cache.CACHE_VERSION / _dev_hash()).is_dir()
 
 
 # -- Units without a digest are linted, never cached ------------------------
@@ -323,7 +323,7 @@ def test_missing_digest_still_lints_and_never_caches(monkeypatch, tmp_path):
     failure class tackbox exists to prevent.
     """
     monkeypatch.setattr(
-        tackbox_cache, "erclint_package_digests", lambda root, dirs: {"pkg_a": "d1"}
+        tackbox_cache, "erclint_package_digests", lambda root, dirs, policy: {"pkg_a": "d1"}
     )
     monkeypatch.setattr(
         tackbox_cache, "erclint_import_paths", lambda root, dirs: {"pkg_a": "m/pkg_a"}
@@ -332,7 +332,7 @@ def test_missing_digest_still_lints_and_never_caches(monkeypatch, tmp_path):
     cache_root = tmp_path / "cacheroot"
 
     filtered, pending = cli._apply_cache(
-        [(erclint, ["pkg_a", "pkg_b"])], tmp_path, "h", cache_root
+        [(erclint, ["pkg_a", "pkg_b"])], tmp_path, "h", cache_root, "p"
     )
     assert [(e.id, args) for e, args in filtered] == [
         ("erclint", ["pkg_a", "pkg_b"])
@@ -486,3 +486,166 @@ def test_reporters_typo_crash_does_not_hide_swallow_after_fix(java_swallow_repo,
     )
     assert "JV001" in result.stdout
     assert "Handler.java" in result.stdout
+
+
+# -- A1: cache-key soundness regressions ----------------------------------
+#
+# Each primes a clean warm cache, then changes an input the old (unit, engine)
+# key ignored - reporter policy, unit path, or a _test.go file - and asserts the
+# warm run now reports. Before the v2 key these three returned stale-clean.
+
+
+def _run_scope(
+    repo: Path, cache_home: Path, scope: str, *extra: str
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "-m", "tackbox.cli", "lint", scope, *extra],
+        cwd=repo,
+        env=tackbox_env(TACKBOX_CACHE_HOME=str(cache_home)),
+        capture_output=True,
+        text=True,
+    )
+
+
+PY_SWALLOW_WITH_REPORTER = '''def report_it(msg, e):
+    print(msg, e)
+
+
+def handler():
+    try:
+        work()
+    except ValueError as e:
+        report_it("handled the failure", e)
+
+
+def work():
+    pass
+'''
+
+
+def test_reporters_removal_invalidates_warm_cache(tmp_path):
+    """A1(a): a swallow credited by .tackbox-reporters is primed clean; deleting
+    the declaration must make the warm run report TBX001, not serve a stale clean
+    marker keyed without the reporter policy."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "mod.py").write_text(PY_SWALLOW_WITH_REPORTER)
+    (repo / ".tackbox-reporters").write_text(
+        "mod.py#report_it: local py swallow sink\n"
+    )
+    init_repo(repo)
+    commit_all(repo)
+    cache_home = tmp_path / "cache"
+
+    prime = _run_tackbox(repo, cache_home)
+    assert prime.returncode == 0, (
+        f"declared reporter should make the swallow clean:\n"
+        f"{prime.stdout}\n{prime.stderr}"
+    )
+
+    (repo / ".tackbox-reporters").unlink()
+    warm = _run_tackbox(repo, cache_home)
+    assert warm.returncode != 0, (
+        f"deleting the reporter must surface the swallow, not a stale clean:\n"
+        f"{warm.stdout}\n{warm.stderr}"
+    )
+    assert "TBX001" in warm.stdout, warm.stdout
+
+
+PY_BROAD_NOTIFY = '''from tackbox_report import notify
+
+
+def handle():
+    try:
+        work()
+    except Exception as e:
+        notify("the user lost connectivity here", e, {"area": "net"}, "net.conn")
+
+
+def work():
+    pass
+'''
+
+
+def test_test_exemption_does_not_leak_to_prod_path(tmp_path):
+    """A1(b): byte-identical content is test-exempt at a tests/ path but a TBX010
+    finding at a production path. Priming on the test file must not serve its
+    clean marker for the identical-content production file - the old key omitted
+    the unit path."""
+    repo = tmp_path / "repo"
+    (repo / "tests").mkdir(parents=True)
+    (repo / "src").mkdir()
+    (repo / "tests" / "test_app.py").write_text(PY_BROAD_NOTIFY)
+    (repo / "src" / "app.py").write_text(PY_BROAD_NOTIFY)
+    init_repo(repo)
+    commit_all(repo)
+    cache_home = tmp_path / "cache"
+
+    prime = _run_scope(repo, cache_home, "tests/test_app.py")
+    assert prime.returncode == 0, (
+        f"the notify is test-exempt, so the test file primes clean:\n"
+        f"{prime.stdout}\n{prime.stderr}"
+    )
+
+    warm = _run_scope(repo, cache_home, "src/app.py")
+    assert warm.returncode != 0, (
+        f"identical content at a production path must report, not inherit the "
+        f"test file's clean marker:\n{warm.stdout}\n{warm.stderr}"
+    )
+    assert "TBX010" in warm.stdout, warm.stdout
+
+
+GO_MOD_SKIP = "module skipfixture\n\ngo 1.24\n"
+
+GO_SKIP_SRC = """package pkg
+
+func Add(a, b int) int { return a + b }
+"""
+
+GO_TEST_CLEAN = """package pkg
+
+import "testing"
+
+func TestAdd(t *testing.T) {
+\tif Add(1, 1) != 2 {
+\t\tt.Fatal("bad sum")
+\t}
+}
+"""
+
+GO_TEST_SKIP = """package pkg
+
+import "testing"
+
+func TestAdd(t *testing.T) {
+\tt.Skip()
+}
+"""
+
+
+def test_test_go_change_invalidates_erclint_cache(tmp_path):
+    """A1(c): a bare t.Skip() added to a _test.go must surface ERC008 on the warm
+    run. The old package digest hashed only GoFiles, so a _test.go edit was
+    invisible and the warm run stayed stale-clean."""
+    _needs_go()
+    repo = tmp_path / "repo"
+    (repo / "pkg").mkdir(parents=True)
+    (repo / "go.mod").write_text(GO_MOD_SKIP)
+    (repo / "pkg" / "mod.go").write_text(GO_SKIP_SRC)
+    (repo / "pkg" / "mod_test.go").write_text(GO_TEST_CLEAN)
+    init_repo(repo)
+    commit_all(repo)
+    cache_home = tmp_path / "cache"
+
+    prime = _run_tackbox(repo, cache_home)
+    assert prime.returncode == 0, (
+        f"clean go package should prime clean:\n{prime.stdout}\n{prime.stderr}"
+    )
+
+    (repo / "pkg" / "mod_test.go").write_text(GO_TEST_SKIP)
+    warm = _run_tackbox(repo, cache_home)
+    assert warm.returncode != 0, (
+        f"a skip added to a _test.go must report, not serve a stale clean:\n"
+        f"{warm.stdout}\n{warm.stderr}"
+    )
+    assert "ERC008" in warm.stdout, warm.stdout

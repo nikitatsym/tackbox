@@ -1,6 +1,6 @@
 """(unit, engine) cache: layout, digests, marker ops, GC.
 
-Layout: `<TACKBOX_CACHE_HOME>/v1/<engines-hash>/<unit-digest>.<engine-id>`.
+Layout: `<TACKBOX_CACHE_HOME>/<CACHE_VERSION>/<engines-hash>/<unit-digest>.<engine-id>`.
 Marker is an empty file. `TACKBOX_CACHE_HOME` defaults to `~/.cache/tackbox`;
 tests point it at a tmp dir.
 
@@ -11,10 +11,15 @@ Semantics per plan:
 - `mark_clean` is best-effort; cache is an optimisation, never a hard error.
 
 Unit granularity:
-- eslint / mdlint / opengrep -> unit = file, digest = sha256(content).
-- erclint -> unit = Go package, digest = sha256(import path + own .go files +
-  transitive in-module deps' .go files + go.mod + go.sum). A signature change
-  in package B invalidates every in-module package that depends on B.
+- eslint / mdlint / opengrep -> unit = file, digest = sha256(repo-relative path +
+  file content + reporter policy). Path folds in so identical content at two
+  paths digests apart (a test-exempt path vs a production path); policy folds in
+  so a `.tackbox-reporters` change invalidates.
+- erclint -> unit = Go package, digest = sha256(import path + own .go files
+  (GoFiles + CgoFiles + TestGoFiles + XTestGoFiles) + transitive in-module deps'
+  .go files + go.mod + go.sum + reporter policy). A signature change in package B
+  invalidates every in-module package that depends on B; a _test.go edit or a
+  policy change invalidates the package.
 
 engines-hash:
 - Dev mode digests the engine payload sources (go/, js/, bin/, the eslint
@@ -39,12 +44,14 @@ from .source_set import group_go_packages_by_module, module_relative
 
 
 CACHE_ROOT_ENV = "TACKBOX_CACHE_HOME"
-CACHE_VERSION = "v1"
+# v2: the digest scheme changed (non-Go path+policy, Go test/cgo files + policy);
+# the version namespace cleanly discards the stale v1 tree.
+CACHE_VERSION = "v2"
 SOFT_CAP = 20000
 
 
 def default_cache_root() -> Path:
-    """Root under which the `v1/<engines-hash>/...` tree lives."""
+    """Root under which the `<CACHE_VERSION>/<engines-hash>/...` tree lives."""
     override = os.environ.get(CACHE_ROOT_ENV)
     if override:
         return Path(override) / CACHE_VERSION
@@ -96,6 +103,36 @@ def _hash_payload_file(h, rel: str, path: Path) -> None:
     h.update(b"\t")
     h.update(sha256_file(path).encode())
     h.update(b"\n")
+
+
+def policy_digest(reporter_pairs: tuple[tuple[str, str, str], ...]) -> str:
+    """Hex sha256 over the sorted (file, function, kind) reporter declarations.
+
+    Reason text is not in the pairs, so a reason-only edit does not churn the
+    cache. Deterministic and well-defined for an empty policy (no pairs)."""
+    h = hashlib.sha256()
+    h.update(b"policy-v2\n")
+    for file, function, kind in sorted(reporter_pairs):
+        h.update(file.encode())
+        h.update(b"\t")
+        h.update(function.encode())
+        h.update(b"\t")
+        h.update(kind.encode())
+        h.update(b"\n")
+    return h.hexdigest()
+
+
+def non_go_unit_digest(rel_path: str, content_sha: str, policy: str) -> str:
+    """Unit digest for a non-Go file: repo-relative path + content sha + policy,
+    joined with a separator. Path and policy fold in so identical content at two
+    paths, or under a changed `.tackbox-reporters`, never share a marker."""
+    h = hashlib.sha256()
+    h.update(rel_path.encode())
+    h.update(b"\0")
+    h.update(content_sha.encode())
+    h.update(b"\0")
+    h.update(policy.encode())
+    return h.hexdigest()
 
 
 def is_cached(key: CacheKey, root: Path) -> bool:
@@ -170,7 +207,7 @@ class GoListError(RuntimeError):
 
 
 def erclint_package_digests(
-    repo_root: Path, package_dirs: list[str]
+    repo_root: Path, package_dirs: list[str], policy: str
 ) -> dict[str, str]:
     """Compute {package_dir: unit_digest} for erclint units.
 
@@ -179,6 +216,9 @@ def erclint_package_digests(
     and the module's own go.mod / go.sum enter the digest, so invalidation
     never crosses a module boundary. Each package's own .go files hash
     together with the .go files of its transitive in-module deps.
+
+    `policy` (the reporter-policy digest) folds into every package digest, so a
+    `.tackbox-reporters` change invalidates the packages it can affect.
 
     Missing / not-a-package / no-enclosing-module entries are dropped from
     the returned map; the caller decides what to do (usually: skip caching
@@ -191,12 +231,12 @@ def erclint_package_digests(
     )
     result: dict[str, str] = {}
     for module in sorted(groups):
-        result.update(_module_digests(repo_root, module, groups[module]))
+        result.update(_module_digests(repo_root, module, groups[module], policy))
     return result
 
 
 def _module_digests(
-    repo_root: Path, module: str, package_dirs: list[str]
+    repo_root: Path, module: str, package_dirs: list[str], policy: str
 ) -> dict[str, str]:
     module_dir = repo_root / module
     args = [f"./{module_relative(module, p)}" for p in package_dirs]
@@ -225,7 +265,15 @@ def _module_digests(
             continue
         import_path = p["ImportPath"]
         dir_ = Path(p["Dir"])
-        go_files = list(p.get("GoFiles") or [])
+        # skiptest/ERC008 runs on _test.go (EachTestFile); cgo/xtest belong to
+        # the package's analyzed set too. Over-inclusion is safe; under-inclusion
+        # was the bug (a _test.go edit left the digest unchanged).
+        go_files = (
+            list(p.get("GoFiles") or [])
+            + list(p.get("CgoFiles") or [])
+            + list(p.get("TestGoFiles") or [])
+            + list(p.get("XTestGoFiles") or [])
+        )
         # Deps is the transitive closure per `go list -json`; filter later.
         deps = set(p.get("Deps") or [])
         in_module[import_path] = {
@@ -262,7 +310,7 @@ def _module_digests(
         if import_path is None:
             continue
         result[pkg_dir] = _package_digest(
-            import_path, in_module, file_digest, go_mod_digest, go_sum_digest
+            import_path, in_module, file_digest, go_mod_digest, go_sum_digest, policy
         )
     return result
 
@@ -309,6 +357,7 @@ def _package_digest(
     file_digest: dict[Path, str],
     go_mod_digest: str,
     go_sum_digest: str,
+    policy: str,
 ) -> str:
     h = hashlib.sha256()
     h.update(import_path.encode())
@@ -323,6 +372,8 @@ def _package_digest(
     h.update(go_mod_digest.encode())
     h.update(b"\n---go.sum---\n")
     h.update(go_sum_digest.encode())
+    h.update(b"\n---policy---\n")
+    h.update(policy.encode())
     return h.hexdigest()
 
 

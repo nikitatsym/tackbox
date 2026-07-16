@@ -2,7 +2,7 @@
 
 These pin the plan's cache semantics before implementation:
 
-- Layout: `<root>/v1/<engines-hash>/<unit-digest>.<engine-id>`.
+- Layout: `<root>/<CACHE_VERSION>/<engines-hash>/<unit-digest>.<engine-id>`.
 - Marker is an empty file; `is_cached` re-touches on hit for LRU.
 - `mark_clean` never raises; corruption -> rerun, not fail.
 - `gc_stale_engines` drops non-current engines-hash dirs.
@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from tackbox import cache
+from tackbox import cache, reporters
 
 
 # -- Layout ----------------------------------------------------------------
@@ -268,8 +268,8 @@ def _make_go_repo(root: Path) -> None:
 def test_erclint_digest_deterministic(tmp_path):
     _needs_go()
     _make_go_repo(tmp_path)
-    d1 = cache.erclint_package_digests(tmp_path, ["pkg_a", "pkg_b"])
-    d2 = cache.erclint_package_digests(tmp_path, ["pkg_a", "pkg_b"])
+    d1 = cache.erclint_package_digests(tmp_path, ["pkg_a", "pkg_b"], "")
+    d2 = cache.erclint_package_digests(tmp_path, ["pkg_a", "pkg_b"], "")
     assert d1 == d2
     assert set(d1) == {"pkg_a", "pkg_b"}
 
@@ -277,9 +277,9 @@ def test_erclint_digest_deterministic(tmp_path):
 def test_erclint_digest_changes_when_own_files_change(tmp_path):
     _needs_go()
     _make_go_repo(tmp_path)
-    before = cache.erclint_package_digests(tmp_path, ["pkg_b"])["pkg_b"]
+    before = cache.erclint_package_digests(tmp_path, ["pkg_b"], "")["pkg_b"]
     (tmp_path / "pkg_b" / "b.go").write_text(_PKG_B_ADD2 + "\n// tail\n")
-    after = cache.erclint_package_digests(tmp_path, ["pkg_b"])["pkg_b"]
+    after = cache.erclint_package_digests(tmp_path, ["pkg_b"], "")["pkg_b"]
     assert before != after
 
 
@@ -287,10 +287,10 @@ def test_erclint_digest_of_dependent_changes_when_dep_changes(tmp_path):
     """Plan acceptance: signature change in B invalidates A (which imports B)."""
     _needs_go()
     _make_go_repo(tmp_path)
-    before = cache.erclint_package_digests(tmp_path, ["pkg_a", "pkg_b"])
+    before = cache.erclint_package_digests(tmp_path, ["pkg_a", "pkg_b"], "")
     (tmp_path / "pkg_b" / "b.go").write_text(_PKG_B_ADD3)
     (tmp_path / "pkg_a" / "a.go").write_text(_PKG_A_USES_B_ADD3)
-    after = cache.erclint_package_digests(tmp_path, ["pkg_a", "pkg_b"])
+    after = cache.erclint_package_digests(tmp_path, ["pkg_a", "pkg_b"], "")
     assert before["pkg_b"] != after["pkg_b"]
     assert before["pkg_a"] != after["pkg_a"], (
         "pkg_a depends on pkg_b - a signature change in B must invalidate A's digest"
@@ -300,18 +300,18 @@ def test_erclint_digest_of_dependent_changes_when_dep_changes(tmp_path):
 def test_erclint_digest_of_dependent_stable_when_unrelated_pkg_changes(tmp_path):
     _needs_go()
     _make_go_repo(tmp_path)
-    before = cache.erclint_package_digests(tmp_path, ["pkg_a"])["pkg_a"]
+    before = cache.erclint_package_digests(tmp_path, ["pkg_a"], "")["pkg_a"]
     (tmp_path / "pkg_c" / "c.go").write_text(_PKG_C_UNRELATED + "\n// unrelated\n")
-    after = cache.erclint_package_digests(tmp_path, ["pkg_a"])["pkg_a"]
+    after = cache.erclint_package_digests(tmp_path, ["pkg_a"], "")["pkg_a"]
     assert before == after, "unrelated pkg change must not touch pkg_a's digest"
 
 
 def test_erclint_digest_changes_when_go_mod_changes(tmp_path):
     _needs_go()
     _make_go_repo(tmp_path)
-    before = cache.erclint_package_digests(tmp_path, ["pkg_a"])["pkg_a"]
+    before = cache.erclint_package_digests(tmp_path, ["pkg_a"], "")["pkg_a"]
     (tmp_path / "go.mod").write_text(_GO_MOD_DIGEST + "\n// tail\n")
-    after = cache.erclint_package_digests(tmp_path, ["pkg_a"])["pkg_a"]
+    after = cache.erclint_package_digests(tmp_path, ["pkg_a"], "")["pkg_a"]
     assert before != after
 
 
@@ -354,7 +354,7 @@ def test_erclint_digest_nested_modules_all_packages_digested(tmp_path):
     _needs_go()
     _make_nested_go_repo(tmp_path)
     digests = cache.erclint_package_digests(
-        tmp_path, ["gomod/pkg_a", "gomod/pkg_b", "other/pkg_c"]
+        tmp_path, ["gomod/pkg_a", "gomod/pkg_b", "other/pkg_c"], ""
     )
     assert set(digests) == {"gomod/pkg_a", "gomod/pkg_b", "other/pkg_c"}
 
@@ -363,11 +363,11 @@ def test_erclint_digest_does_not_cross_module_boundary(tmp_path):
     _needs_go()
     _make_nested_go_repo(tmp_path)
     args = ["gomod/pkg_a", "gomod/pkg_b", "other/pkg_c"]
-    before = cache.erclint_package_digests(tmp_path, args)
+    before = cache.erclint_package_digests(tmp_path, args, "")
     (tmp_path / "other" / "pkg_c" / "c.go").write_text(
         _PKG_C_OTHER + "\n// tail\n"
     )
-    after = cache.erclint_package_digests(tmp_path, args)
+    after = cache.erclint_package_digests(tmp_path, args, "")
     assert before["other/pkg_c"] != after["other/pkg_c"]
     assert before["gomod/pkg_a"] == after["gomod/pkg_a"]
     assert before["gomod/pkg_b"] == after["gomod/pkg_b"]
@@ -377,9 +377,9 @@ def test_erclint_digest_module_go_mod_scoped_to_its_module(tmp_path):
     _needs_go()
     _make_nested_go_repo(tmp_path)
     args = ["gomod/pkg_a", "other/pkg_c"]
-    before = cache.erclint_package_digests(tmp_path, args)
+    before = cache.erclint_package_digests(tmp_path, args, "")
     (tmp_path / "gomod" / "go.mod").write_text(_GOMOD_NESTED + "\n// tail\n")
-    after = cache.erclint_package_digests(tmp_path, args)
+    after = cache.erclint_package_digests(tmp_path, args, "")
     assert before["gomod/pkg_a"] != after["gomod/pkg_a"]
     assert before["other/pkg_c"] == after["other/pkg_c"]
 
@@ -401,5 +401,92 @@ def test_erclint_digest_broken_go_mod_raises_clean_error(tmp_path):
     _make_nested_go_repo(tmp_path)
     (tmp_path / "gomod" / "go.mod").write_text("garbage directive\n")
     with pytest.raises(cache.GoListError) as exc:
-        cache.erclint_package_digests(tmp_path, ["gomod/pkg_a"])
+        cache.erclint_package_digests(tmp_path, ["gomod/pkg_a"], "")
     assert "gomod" in str(exc.value)
+
+
+# -- A1: policy digest + non-Go path/policy folding + _test.go inclusion ----
+
+_PKG_WITH_TEST_SRC = """package pkg_a
+
+func Add(a, b int) int { return a + b }
+"""
+
+_PKG_WITH_TEST_CLEAN = """package pkg_a
+
+import "testing"
+
+func TestAdd(t *testing.T) {
+\tif Add(1, 1) != 2 {
+\t\tt.Fatal("bad sum")
+\t}
+}
+"""
+
+
+def _make_go_repo_with_test(root: Path) -> None:
+    (root / "go.mod").write_text(_GO_MOD_DIGEST)
+    (root / "pkg_a").mkdir()
+    (root / "pkg_a" / "a.go").write_text(_PKG_WITH_TEST_SRC)
+    (root / "pkg_a" / "a_test.go").write_text(_PKG_WITH_TEST_CLEAN)
+    _init_repo(root)
+
+
+def test_erclint_digest_changes_when_test_go_changes(tmp_path):
+    """ERC008/skiptest runs on _test.go, so a _test.go edit must move the package
+    digest (TestGoFiles are in the analyzed set)."""
+    _needs_go()
+    _make_go_repo_with_test(tmp_path)
+    before = cache.erclint_package_digests(tmp_path, ["pkg_a"], "")["pkg_a"]
+    (tmp_path / "pkg_a" / "a_test.go").write_text(
+        _PKG_WITH_TEST_CLEAN + "\n// tail\n"
+    )
+    after = cache.erclint_package_digests(tmp_path, ["pkg_a"], "")["pkg_a"]
+    assert before != after, "a _test.go edit must invalidate the package digest"
+
+
+def test_non_go_unit_digest_differs_by_path():
+    sha, policy = "deadbeef", cache.policy_digest(())
+    assert cache.non_go_unit_digest(
+        "src/app.py", sha, policy
+    ) != cache.non_go_unit_digest("tests/app.py", sha, policy), (
+        "identical content at two paths must digest apart"
+    )
+
+
+def test_non_go_unit_digest_stable_for_same_inputs():
+    assert cache.non_go_unit_digest("a.py", "s", "p") == cache.non_go_unit_digest(
+        "a.py", "s", "p"
+    )
+
+
+def test_policy_digest_stable_with_no_pairs():
+    d = cache.policy_digest(())
+    assert d == cache.policy_digest(())
+    assert isinstance(d, str) and len(d) == 64
+
+
+def test_policy_digest_ignores_reason_text():
+    """reporters.pairs drops the reason, so a reason-only .tackbox-reporters edit
+    yields the same policy digest and never churns the cache."""
+    a = reporters.pairs(reporters.parse("rep.py#f: original reason text\n"))
+    b = reporters.pairs(reporters.parse("rep.py#f: reworded reason entirely\n"))
+    assert cache.policy_digest(a) == cache.policy_digest(b)
+
+
+def test_policy_change_moves_non_go_digest():
+    p0 = cache.policy_digest(())
+    p1 = cache.policy_digest((("a.py", "f", "capture"),))
+    assert cache.non_go_unit_digest("a.py", "s", p0) != cache.non_go_unit_digest(
+        "a.py", "s", p1
+    )
+
+
+def test_policy_change_moves_erclint_digest(tmp_path):
+    _needs_go()
+    _make_go_repo_with_test(tmp_path)
+    p0 = cache.policy_digest(())
+    p1 = cache.policy_digest((("pkg_a/a.go", "Add", "capture"),))
+    d0 = cache.erclint_package_digests(tmp_path, ["pkg_a"], p0)["pkg_a"]
+    d1 = cache.erclint_package_digests(tmp_path, ["pkg_a"], p1)["pkg_a"]
+    assert d0 != d1, "a reporter-policy change must invalidate the package digest"
