@@ -37,6 +37,12 @@ jobs:
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: GPG_PASSPHRASE
 
+      # Deliberate test gate: run the suite explicitly before deploy so a red
+      # test blocks the release. `deploy` re-runs tests as a lifecycle side
+      # effect; that re-run is acceptable, this step makes the gate intentional.
+      - name: Test report (Java)
+        run: mvn -B -f java/report/pom.xml verify
+
       # Version comes from the pom (0.1.0); the tag is only the trigger. The
       # `release` profile adds sources+javadoc jars, GPG signing, and the
       # Central Portal deploy (default `package`/`test` needs none of these).

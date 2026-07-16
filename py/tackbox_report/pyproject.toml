@@ -40,7 +40,9 @@ classifiers = [
 Homepage = "https://github.com/nikitatsym/tackbox"
 Repository = "https://github.com/nikitatsym/tackbox"
 
-[project.optional-dependencies]
+# PEP 735 dev group (local-only, not published metadata): test deps pulled by
+# `uv run --group dev` in dev.py and the publish gate.
+[dependency-groups]
 dev = ["pytest>=8"]
 
 [tool.setuptools.packages.find]
