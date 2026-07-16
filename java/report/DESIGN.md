@@ -116,15 +116,16 @@ The goSafe installer surface:
   install while installed is a no-op, never a double-wrap) and restorable
   (`uninstallUncaughtHandler()` puts the prior handler back).
 - `wrap(name, ExecutorService)` returns an `ExecutorService` whose
-  `execute` / `submit` run every task report-and-swallow under
-  `task:<name>` (like `safeRunnable`). `invokeAll` / `invokeAny` delegate
-  unwrapped: they hand results and exceptions straight back to the caller,
-  who captures at their own single site, so wrapping them would
-  double-capture (JV006). The `submit(Callable)` path must keep the
-  `Future<T>` contract, so a captured failure yields `null` (not the
-  `Optional.empty()` that public `safeCallable` returns). Double-wrapping a
-  `safeRunnable` is safe: the inner catch fires first, so the outer never
-  re-captures.
+  fire-and-forget `execute(Runnable)` runs report-and-swallow under
+  `task:<name>` (like `safeRunnable`) - a void `execute` failure would
+  otherwise vanish into the thread's uncaught handler. The result-bearing
+  paths - `submit` (all three overloads), `invokeAll`, `invokeAny` -
+  delegate unwrapped: each returns an observable `Future` (or result), so a
+  failed task surfaces through `Future.get()` per contract and the caller
+  captures at their own single site. Wrapping `submit` would swallow that
+  failure to `null`; wrapping `invokeAll` / `invokeAny` would double-capture
+  (JV006). Double-wrapping a `safeRunnable` on `execute` is safe: the inner
+  catch fires first, so the outer never re-captures.
 
 `init` disables sentry's own default uncaught handler
 (`setEnableUncaughtExceptionHandler(false)`). The helper owns the uncaught
@@ -287,8 +288,12 @@ intercept events without shipping).
   keys present once (validates the per-capture local-scope isolation).
 - `wrappedExecutorCapturesThrowingTask`: `wrap(...).execute(throwing)` ->
   one `task:<name>` event.
-- `wrappedExecutorCallableSwallowsToNull`: `wrap(...).submit(throwing
-  Callable)` -> `future.get()` is `null`, one `task:<name>` event.
+- `submitCallableFailureSurfacesViaFuture` /
+  `submitRunnableFailureSurfacesViaFuture` /
+  `submitRunnableWithResultFailureSurfacesViaFuture`:
+  `wrap(...).submit(throwing task)` -> `Future.get()` throws
+  `ExecutionException` (cause is the task's own exception) and the wrapper
+  captures nothing (the result-bearing path is unwrapped).
 - `uncaughtHandlerCapturesUnderPanicFingerprint`: an installed handler on a
   thread that throws -> one FATAL `panic:<threadName>` event.
 - `uncaughtHandlerInstallIsIdempotentAndRestorable`: second install is a

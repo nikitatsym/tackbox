@@ -208,7 +208,8 @@ def test_run_task_async_raised_exception_task_fingerprint(events):
         raise ValueError("in task")
 
     async def main():
-        await report.run_task_async("importer", boom())
+        with pytest.raises(ValueError, match="in task"):
+            await report.run_task_async("importer", boom())
 
     asyncio.run(main())
     assert len(events) == 1
@@ -217,12 +218,14 @@ def test_run_task_async_raised_exception_task_fingerprint(events):
 
 
 def test_run_task_async_returned_exception_task_fingerprint(events):
-    # mirrors Go func() error: a returned error is captured, not raised.
+    # mirrors Go func() error: a returned error is captured, then re-raised so
+    # the awaiter observes it (an asyncio.Task carries its outcome).
     async def syncer():
         return RuntimeError("returned")
 
     async def main():
-        await report.run_task_async("syncer", syncer())
+        with pytest.raises(RuntimeError, match="returned"):
+            await report.run_task_async("syncer", syncer())
 
     asyncio.run(main())
     assert len(events) == 1
@@ -245,21 +248,25 @@ def test_run_task_async_per_name_independent_fingerprints(events):
         raise RuntimeError(msg)
 
     async def main():
-        await report.run_task_async("alpha", fail("a"))
-        await report.run_task_async("beta", fail("b"))
+        with pytest.raises(RuntimeError, match="a"):
+            await report.run_task_async("alpha", fail("a"))
+        with pytest.raises(RuntimeError, match="b"):
+            await report.run_task_async("beta", fail("b"))
 
     asyncio.run(main())
     fps = sorted(e["fingerprint"][0] for e in events)
     assert fps == ["task:alpha", "task:beta"]
 
 
-def test_run_task_async_awaited_failure_does_not_reraise(events):
-    # await mirrors run_task(join=True): the failure is captured, not propagated.
+def test_run_task_async_awaited_failure_reraises(events):
+    # await surfaces the failure (the Task carries its outcome); the failure is
+    # still captured exactly once.
     async def boom():
-        raise ValueError("swallowed")
+        raise ValueError("surfaced")
 
     async def main():
-        await report.run_task_async("t", boom())  # must not raise
+        with pytest.raises(ValueError, match="surfaced"):
+            await report.run_task_async("t", boom())
 
     asyncio.run(main())
     assert len(events) == 1
@@ -280,9 +287,12 @@ def test_concurrent_run_tasks_async_no_scope_bleed(events):
 
     async def main():
         tasks = [report.run_task_async(f"task{i}", failing(i)) for i in range(n)]
-        await asyncio.gather(*tasks)
+        # Each task re-raises its failure now; return_exceptions collects them
+        # instead of the first one cancelling the gather.
+        return await asyncio.gather(*tasks, return_exceptions=True)
 
-    asyncio.run(main())
+    results = asyncio.run(main())
+    assert all(isinstance(r, RuntimeError) for r in results)  # each surfaced
     assert len(events) == n
     fps = sorted(e["fingerprint"][0] for e in events)
     assert fps == sorted(f"task:task{i}" for i in range(n))  # distinct, no bleed
@@ -375,7 +385,8 @@ def test_run_task_async_quiet_opt_out(events, notices):
         raise ValueError("in task")
 
     async def main():
-        await report.run_task_async("indexer", boom(), quiet=True)
+        with pytest.raises(ValueError, match="in task"):
+            await report.run_task_async("indexer", boom(), quiet=True)
 
     asyncio.run(main())
     assert len(events) == 1

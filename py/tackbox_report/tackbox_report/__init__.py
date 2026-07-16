@@ -447,10 +447,15 @@ def run_task_async(
     tasks cannot bleed scope/fingerprint into one another.
 
     Scheduled fire-and-forget via ``asyncio.create_task``; the returned
-    ``asyncio.Task`` is the join analog (``await`` it to wait). A failure is
-    captured, never re-raised, so awaiting mirrors ``run_task(..., join=True)``.
-    An ``asyncio.CancelledError`` propagates (it is not a task failure). Must be
-    called from within a running event loop.
+    ``asyncio.Task`` carries the outcome. A failure is captured once and then
+    re-raised inside the task, so ``await``-ing the task surfaces the exception
+    to the awaiter -- the single caller that observes it. This diverges from
+    ``run_task``, whose ``Thread.join()`` returns nothing (a joined thread cannot
+    hand its exception back); the ``asyncio.Task`` can, so the await path does not
+    swallow. An unobserved (never-awaited) task still captured its failure exactly
+    once. An ``asyncio.CancelledError`` propagates uncaptured (it is not a task
+    failure, and it must reach the awaiter). Must be called from within a running
+    event loop.
     """
 
     async def _run() -> None:
@@ -462,6 +467,7 @@ def run_task_async(
                     report_quiet("background task failed", exc, {"task": name}, f"task:{name}")
                 else:
                     report_error("background task failed", exc, {"task": name}, f"task:{name}")
+                raise  # re-raise so the Task carries the failure; awaiting surfaces it
 
     return asyncio.create_task(_run(), name=f"tackbox-task:{name}")
 
