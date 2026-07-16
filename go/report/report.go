@@ -340,7 +340,20 @@ func reportTaskErr(name string, err error, silent bool) {
 // minimal recover when Init was not called.
 func WrapHandler(name string, h http.Handler) http.Handler {
 	if httpMW != nil {
-		return httpMW(h)
+		// sentryhttp captures the panic (enriched with request context) then
+		// re-panics (Repanic:true) without writing a response; the outer recover
+		// turns that re-panic into the documented 500.
+		wrapped := httpMW(h)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				// no-report: sentryhttp already captured this panic; this recover
+				// exists only to fulfill the documented 500 contract, not to report
+				if rec := recover(); rec != nil {
+					http.Error(w, "internal server error", http.StatusInternalServerError)
+				}
+			}()
+			wrapped.ServeHTTP(w, r)
+		})
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {

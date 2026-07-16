@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"sync"
@@ -410,4 +412,61 @@ func TestGoSafeGoroutineCapturesPerName(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("fingerprint multiset mismatch under concurrency (scope bleed?):\n got  %v\n want %v", got, want)
 	}
+}
+
+// WrapHandler must honor the documented "panic -> 500" contract in BOTH modes.
+// After Init, sentryhttp captures the panic and re-panics (Repanic:true), so
+// the outer recover must turn that into a 500; before Init, the hand-rolled
+// fallback recover writes it. Either way the client sees 500, never a dropped
+// connection. The in-test recover only keeps a pre-fix escaped panic from
+// crashing the binary so the recorder can be read as the audit read it (it
+// observed the default 200/empty when the panic flew past WrapHandler).
+func TestWrapHandler500Contract(t *testing.T) {
+	prevReady, prevMW, prevWindow, prevLogger := ready, httpMW, rateWindow, logger
+	t.Cleanup(func() {
+		ready, httpMW, rateWindow, logger = prevReady, prevMW, prevWindow, prevLogger
+		resetRateLimit()
+	})
+	logger = newJSONLogger(io.Discard)
+
+	assert500 := func(t *testing.T, name string) {
+		t.Helper()
+		h := WrapHandler(name, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			panic("boom in " + name)
+		}))
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+
+		var escaped any
+		func() {
+			defer func() { escaped = recover() }()
+			h.ServeHTTP(rec, req)
+		}()
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500 (panic escaped WrapHandler = %v)", rec.Code, escaped)
+		}
+		if !strings.Contains(rec.Body.String(), "internal server error") {
+			t.Fatalf("body = %q, want to contain %q", rec.Body.String(), "internal server error")
+		}
+	}
+
+	t.Run("after Init sentryhttp path", func(t *testing.T) {
+		ready, httpMW = false, nil
+		resetRateLimit()
+		// Valid dummy DSN; Verify:false so Init never dials out, yet it still
+		// installs the sentryhttp middleware and takes the post-Init branch.
+		if err := Init(Options{DSN: "https://public@localhost/1", Logger: newJSONLogger(io.Discard), SilentMissing: true}); err != nil {
+			t.Fatalf("init: %v", err)
+		}
+		if !Ready() || httpMW == nil {
+			t.Fatalf("Init must enable capture and install middleware (ready=%v, mw!=nil=%v)", Ready(), httpMW != nil)
+		}
+		assert500(t, "api-post")
+	})
+
+	t.Run("pre-Init fallback path", func(t *testing.T) {
+		ready, httpMW = false, nil
+		assert500(t, "api-pre")
+	})
 }
