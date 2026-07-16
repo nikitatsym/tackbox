@@ -203,16 +203,21 @@ test('tier-2 $lib alias: aliased .svelte.ts reporter is recognized; bare/undecla
   assert.equal(badErrs.length, 2, 'bare swallow + undeclared reporter must both flag: ' + badErrs.join(', '))
 })
 
-// report.js self-lints clean under imports-only: its catches carry no-report
-// markers and its reportError calls sit in event callbacks, not catches. This
+// report.js self-lints clean when the repo-root .tackbox-reporters declares
+// reportPanic as the fatal-lane console sink (matching the real self-lint): the
+// declaration exempts that one console.error, the catches carry no-report
+// markers, and the reportError calls sit in event callbacks, not catches. This
 // is an acceptance assert, not a resolution branch.
-test('report.js self-lint is clean under imports-only', async () => {
+test('report.js self-lint is clean with reportPanic declared', async () => {
   const { ESLint } = require('eslint')
+  const root = path.join(__dirname, '..', '..')
   const eslint = new ESLint({
-    overrideConfigFile: path.join(__dirname, '..', '..', 'eslint.config.preset.js'),
+    cwd: root,
+    overrideConfigFile: path.join(root, 'eslint.config.preset.js'),
+    overrideConfig: [{ settings: { tackbox: { reporters: ['js/report.js#reportPanic'] } } }],
   })
   const results = await eslint.lintFiles([path.join(__dirname, '..', 'report.js')])
   const errs = results.reduce((a, r) => a + r.errorCount + r.fatalErrorCount, 0)
   const msgs = results.flatMap(r => r.messages.map(m => `${m.ruleId}:${m.line} ${m.message}`))
-  assert.equal(errs, 0, 'report.js not clean under imports-only:\n' + msgs.join('\n'))
+  assert.equal(errs, 0, 'report.js not clean with reportPanic declared:\n' + msgs.join('\n'))
 })

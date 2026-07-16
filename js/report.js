@@ -117,7 +117,6 @@ function notify(msg, cause, tags, dedupKey) {
 
 function reportPanic(name, recovered) {
   const key = 'panic:' + name
-  // eslint-disable-next-line tackbox/no-console-error
   console.error(`[FATAL] panic in ${name}:`, recovered)
   dispatchEventSafely('tackbox:error', { msg: 'panic in ' + name, cause: recovered, tags: { source: name }, dedupKey: key, level: 'fatal' })
   if (!ready || shouldDrop(key)) return
