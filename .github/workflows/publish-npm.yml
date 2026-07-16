@@ -1,0 +1,96 @@
+name: publish-npm
+
+# Publishes the `tackbox` npm package (ESLint plugin + markdownlint rules +
+# browser report helper + the tackbox-eslint / tackbox-mdlint bin wrappers) to
+# the public npm registry. Fires on the same `v*` release tags that ci.yml
+# auto-bumps for the PyPI wheels, so the npm package and the linter wheel move
+# in lockstep - `js/README.md`'s `npm install --save-dev tackbox` resolves the
+# same version a `uvx tackbox@<tag>` consumer gets.
+#
+# Auth is npm Trusted Publishing (OIDC), NOT a stored token: with a Trusted
+# Publisher configured on npmjs.com, `npm publish` exchanges this job's
+# short-lived GitHub OIDC token (id-token: write) for a scoped npm credential
+# at publish time. That is why there is no NODE_AUTH_TOKEN / NPM_TOKEN secret
+# anywhere below - avoiding a long-lived token is the whole point of OIDC, and
+# it mirrors the repo's PyPI Trusted Publisher setup in publish.yml.
+#
+# ONE-TIME npmjs.com setup the maintainer must do out-of-band before the first
+# tag (it cannot be automated from here):
+#   1. Own the `tackbox` package name on npmjs.com - it is currently unclaimed
+#      (registry.npmjs.org/tackbox is 404). Reserve it or do one bootstrap
+#      publish so the name exists to attach a publisher to.
+#   2. On the package Settings -> "Trusted Publishing", add a GitHub Actions
+#      trusted publisher: organization/user `nikitatsym`, repository
+#      `nikitatsym/tackbox`, workflow file `publish-npm.yml` (this file).
+#      Leave the environment blank (this job declares none); if one is ever
+#      added here it must match the publisher entry.
+# Until that Trusted Publisher exists, the `npm publish` step fails auth by
+# design - it never falls back to a token.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions: {}
+
+# Serialize rapid tag pushes: npm OIDC issuance is per-run (like PyPI's) and a
+# second publish of an already-published version 403s - never abort a live
+# upload, so cancel-in-progress stays false.
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: build + publish tackbox to npm
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # OIDC token for npm Trusted Publishing + provenance
+      contents: read    # checkout
+    steps:
+      - uses: actions/checkout@v7
+
+      # Node 24 is current, but the npm it bundles is not guaranteed to be
+      # >= 11.5.1 - the first npm release that speaks Trusted Publishing (OIDC).
+      # registry-url pins the public registry (also the target provenance
+      # records); the explicit npm upgrade below removes any dependence on the
+      # runner image's bundled npm version.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Force a Trusted-Publishing-capable npm (>= 11.5.1) regardless of what
+      # the image ships. Deterministic beats guessing which Node minor bundles
+      # which npm; @latest also carries the newest OIDC/provenance fixes.
+      - name: Upgrade npm to a Trusted-Publishing-capable version
+        run: |
+          set -euo pipefail
+          npm install -g npm@latest
+          npm --version
+
+      - name: Resolve version from tag
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "npm version=$version"
+
+      # `npm pkg set` is idempotent - it writes the tag version even when it
+      # already equals the committed package.json value, unlike `npm version`,
+      # which errors on an unchanged version. The pushed tag is the sole source
+      # of truth for the published version.
+      - name: Set package version from tag
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: npm pkg set version="${VERSION}"
+
+      # --provenance attaches a signed build-provenance attestation (requires
+      # id-token: write); --access public publishes the unscoped name publicly.
+      # No NODE_AUTH_TOKEN env: Trusted Publishing supplies the credential over
+      # OIDC. Fails loudly if the publisher is unconfigured - never a silent skip.
+      - name: Publish to npm via Trusted Publishing (OIDC) with provenance
+        run: npm publish --provenance --access public

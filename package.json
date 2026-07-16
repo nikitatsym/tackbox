@@ -13,7 +13,11 @@
     "tackbox-mdlint": "./bin/tackbox-mdlint.js"
   },
   "files": [
-    "js/",
+    "js/eslint-plugin.js",
+    "js/report.js",
+    "js/rules/",
+    "js/markdownlint-rules/",
+    "js/README.md",
     "bin/",
     "eslint.config.preset.js"
   ],
