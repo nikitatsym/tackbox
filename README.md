@@ -366,9 +366,11 @@ contract.
 Dedup lives at two levels with different owners
 (`docs/report-contracts.md` D005):
 
-- The capture helpers rate-limit telemetry: repeat captures with the
-  same dedupKey inside the rate window (default 60s) are not re-sent.
-  Lossless - the server groups by fingerprint and counts repeats.
+- The capture helpers rate-limit telemetry: a repeat capture with the
+  same dedupKey inside the rate window (default 60s) is dropped
+  client-side, so the server never sees it. Lossy for in-window repeats
+  (their occurrence count and any changed context are lost); captures
+  that pass the window reach the server, which groups by fingerprint.
 - The user lane is never suppressed by the helpers. Every user-facing
   event is delivered carrying its dedupKey; collapsing a storm into
   one live banner or a counter is presentation policy and belongs to
