@@ -2,8 +2,8 @@ package nl.tsym.tackbox.report;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.sentry.SentryEvent;
@@ -14,10 +14,12 @@ import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterEach;
@@ -135,17 +137,42 @@ class ReportTest {
     }
 
     @Test
-    void wrappedExecutorCallableSwallowsToNull() throws Exception {
+    void submitCallableFailureSurfacesViaFuture() {
+        assertSubmitFailureSurfaces(pool ->
+                pool.submit((Callable<String>) () -> {
+                    throw new IllegalStateException("boom");
+                }));
+    }
+
+    @Test
+    void submitRunnableFailureSurfacesViaFuture() {
+        assertSubmitFailureSurfaces(pool ->
+                pool.submit((Runnable) () -> {
+                    throw new IllegalStateException("boom");
+                }));
+    }
+
+    @Test
+    void submitRunnableWithResultFailureSurfacesViaFuture() {
+        assertSubmitFailureSurfaces(pool ->
+                pool.submit(() -> {
+                    throw new IllegalStateException("boom");
+                }, "done"));
+    }
+
+    // A failed task on a result-bearing submit surfaces through Future.get()
+    // (ExecutionException wrapping the task's own exception), NOT a swallowed
+    // null, and the unwrapped path captures nothing - the caller owns the site.
+    private void assertSubmitFailureSurfaces(Function<ExecutorService, Future<?>> submit) {
         Report.init(recordingOptions());
         ExecutorService pool = Report.wrap("compute", Executors.newSingleThreadExecutor());
-        Callable<String> task = () -> {
-            throw new IllegalStateException("boom");
-        };
-        Future<String> f = pool.submit(task);
-        assertNull(f.get(5, TimeUnit.SECONDS), "a captured Callable failure yields null, not a thrown ExecutionException");
+        Future<?> f = submit.apply(pool);
+        ExecutionException ex = assertThrows(ExecutionException.class,
+                () -> f.get(5, TimeUnit.SECONDS),
+                "a failed submit surfaces via Future.get, not a swallowed null");
+        assertTrue(ex.getCause() instanceof IllegalStateException, "Future.get cause is the task's own exception");
+        assertTrue(events.isEmpty(), "submit delegates unwrapped: the result-bearing path never captures");
         pool.shutdown();
-        assertEquals(1, events.size());
-        assertEquals(List.of("task:compute"), events.get(0).getFingerprints());
     }
 
     @Test

@@ -382,30 +382,24 @@ public final class Report {
         }
     }
 
-    /** Wrap an ExecutorService so every task it runs is captured under
-     *  task:&lt;name&gt; (report-and-swallow, like safeRunnable) instead of
-     *  vanishing into an unobserved Future. execute + submit are wrapped;
-     *  invokeAll / invokeAny delegate unwrapped - they hand results (and
-     *  exceptions) straight back to the caller, who captures at their own single
-     *  site, so wrapping them would double-capture (JV006). Double-wrapping a
-     *  safeRunnable is safe: the inner catch fires first, so the outer never
-     *  re-captures. */
+    /** Wrap an ExecutorService so a fire-and-forget {@code execute(Runnable)} runs
+     *  report-and-swallow under task:&lt;name&gt; (like safeRunnable) - a void
+     *  execute failure would otherwise vanish into the thread's uncaught handler.
+     *  The result-bearing paths - {@code submit} (all three overloads),
+     *  {@code invokeAll}, {@code invokeAny} - delegate UNWRAPPED: each returns an
+     *  observable {@code Future} (or result), so a failed task surfaces through
+     *  {@code Future.get()} per contract and the caller captures at their own single
+     *  site. Wrapping submit would swallow that failure to null; wrapping invokeAll /
+     *  invokeAny would double-capture (JV006). Double-wrapping a safeRunnable on
+     *  execute is safe: the inner catch fires first, so the outer never re-captures. */
     public static ExecutorService wrap(String name, ExecutorService delegate) {
         return wrap(name, delegate, TaskMode.USER_LANE);
     }
 
-    /** As {@link #wrap(String, ExecutorService)}; TaskMode.QUIET routes every
-     *  wrapped task's failure through the quiet lane (captured, no user lane). */
+    /** As {@link #wrap(String, ExecutorService)}; TaskMode.QUIET routes the wrapped
+     *  execute path's failure through the quiet lane (captured, no user lane). */
     public static ExecutorService wrap(String name, ExecutorService delegate, TaskMode mode) {
         return new CapturingExecutorService(name, delegate, mode);
-    }
-
-    // The Callable path for the executor wrapper: unlike public safeCallable
-    // (Callable<Optional<T>>), it must keep the ExecutorService contract's
-    // Future<T>, so a captured failure yields null rather than Optional.empty().
-    // Same report-and-swallow core (guard).
-    private static <T> Callable<T> guardedCallable(String name, Callable<T> body, TaskMode mode) {
-        return () -> guard(name, mode, body, null);
     }
 
     private static final class CapturingExecutorService implements ExecutorService {
@@ -424,19 +418,23 @@ public final class Report {
             delegate.execute(safeRunnable(name, command, mode));
         }
 
+        // submit returns an observable Future, so a failed task surfaces through
+        // Future.get() per contract - the caller captures at their own single site.
+        // Delegating unwrapped avoids swallowing that failure to null (submit) and
+        // the double-capture wrapping the result-bearing paths would cause (JV006).
         @Override
         public Future<?> submit(Runnable task) {
-            return delegate.submit(safeRunnable(name, task, mode));
+            return delegate.submit(task);
         }
 
         @Override
         public <T> Future<T> submit(Runnable task, T result) {
-            return delegate.submit(safeRunnable(name, task, mode), result);
+            return delegate.submit(task, result);
         }
 
         @Override
         public <T> Future<T> submit(Callable<T> task) {
-            return delegate.submit(guardedCallable(name, task, mode));
+            return delegate.submit(task);
         }
 
         @Override

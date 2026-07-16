@@ -134,16 +134,20 @@ Two sub-forks inside this:
   fingerprint, rate limit, and log-before-drop are identical across the two.
   - **Schedule vs await (asyncio).** `run_task_async` schedules
     **fire-and-forget** via `asyncio.create_task` and returns the
-    `asyncio.Task` -- the same shape as `run_task` returning its `Thread`.
-    `await`-ing the returned task is the join analog (mirror of
-    `run_task(..., join=True)`); a failure is captured, never re-raised, so the
-    await completes rather than propagating. There is no separate await-inline
-    entry point: `await report.run_task_async(...)` already is the inline path,
-    so one function covers both. An `asyncio.CancelledError`
-    (a `BaseException`, not caught by the wrapper's `except Exception`)
-    propagates and is not reported -- cancellation is not a task failure, and it
-    must reach the awaiter. Must be called from within a running event loop;
-    outside one `create_task` raises `RuntimeError` (fail loud, no fallback).
+    `asyncio.Task`. A failure is captured once (per-name `task:<name>`,
+    log-before-drop, rate limit) and then re-raised inside the task, so the
+    `asyncio.Task` carries the exception: `await`-ing it surfaces the failure to
+    the awaiter, who is the single caller that observes it. This diverges from
+    `run_task`, whose `Thread.join()` returns nothing -- a joined thread cannot
+    hand its exception back, but an `asyncio.Task` can, so the async wrapper does
+    not swallow on the await path. An unobserved (never-awaited) task still
+    captured its failure exactly once. There is no separate await-inline entry
+    point: `await report.run_task_async(...)` already is the inline path, so one
+    function covers both. An `asyncio.CancelledError` (a `BaseException`, not
+    caught by the wrapper's `except Exception`) propagates and is not reported --
+    cancellation is not a task failure, and it must reach the awaiter. Must be
+    called from within a running event loop; outside one `create_task` raises
+    `RuntimeError` (fail loud, no fallback).
   - **daemon default (threads).** `run_task` defaults to `daemon=False` (the
     task and its capture/flush complete) rather than `daemon=True` (the thread
     dies with the process), to avoid losing an in-flight capture.
