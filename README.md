@@ -174,7 +174,7 @@ fetched separately and cached per version:
 
 After the first fetch tackbox runs fully offline until the engine
 version changes. Platform wheels cover Linux x86_64/arm64 (manylinux),
-macOS x86_64/arm64, and Windows x86_64. `engines.json` in the thin
+macOS arm64, and Windows x86_64. `engines.json` in the thin
 wheel records the source, version, sha256, and license of every
 bundled binary and dependency; `tackbox doctor` fetches the store if
 absent and verifies the payload against it.
@@ -201,8 +201,9 @@ outside this repo (private notes); the public summary:
 - Bare `return nil` from a single-result function must carry
   `// nil-return: <reason>` or use `(val, ok)` / `(val, err)`.
 - A single err-branch may not both capture and `return err`.
-- Capture-call arguments must not carry raw user input, and the
-  dedupKey must be a well-formed literal.
+- The dedupKey must be a well-formed literal; in Go, capture-call
+  arguments must additionally not carry raw user input (a
+  `*http.Request` field).
 - A `notify` (user lane only, no capture) may terminate a failure path
   only when it is narrowed: a narrow catch type (Java/Python) or an
   additional condition inside the branch (Go/JS). An unconditional
