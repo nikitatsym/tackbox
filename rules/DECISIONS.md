@@ -30,6 +30,30 @@ Out of scope, by design: secret detection, PII scanning, business
 correctness. Those are a dedicated tool's job (a secret scanner on
 values, a type checker, business tests), not tackbox's.
 
+## Design principles
+
+Every mechanism (rule, gate, helper contract, tooling) is judged
+against these; a decision that trades one away must name the trade.
+
+- The paved road is self-service; stepping off it costs human
+  attention. Adopting a blessed verb needs no ceremony (D004, D010);
+  a marker, a tier-2 declaration, or a lane opt-out draws a reason
+  and an approval question (D009, D011).
+- The paved road is cheaper than the bypass. If evading a rule is
+  less work than following it, the rule is broken - fix the road, not
+  the fine.
+- The bypass surface is enumerable. Everything off the road is
+  greppable and lands in one inventory command (D013); a bypass that
+  cannot be listed does not exist as a sanctioned mechanism.
+- Gate strength is proportional to observability loss. notify drops
+  telemetry, so it is hard-gated (D006); quiet keeps telemetry and
+  needs no gate (D004 amendment); a marker no engine reads is dead
+  and draws no question (D012).
+- Inclusion test for a new mechanism: it must not make the bypass
+  cheaper. A config flag, a bulk suppression, an unrecorded approval
+  cache all lower the cost of stepping off the road - out, unless the
+  lost attention or observability is priced back in elsewhere.
+
 ## D001 - secret-name fingerprint removed (2026-07-13)
 
 Rules affected: ERC006 secret-arm (Go), JV008 (Java),
@@ -349,3 +373,26 @@ can turn dead markers live without a mutation event - that is our own
 release review's job; files generated at runtime by tests are outside
 a static gate's model - escape-inventory tooling, not the gate, is
 the net for both.
+
+## D013 - tackbox escapes: the bypass surface in one command (2026-07-16)
+
+Rules affected: none. This is the escapes-command contract; rules and
+gates are unchanged.
+
+Decision: `tackbox escapes` prints the repo's bypass surface as JSON
+on stdout - the harness-agnostic interface. Entries: suppression
+markers with their reasons, `.tackbox-reporters` declarations, and
+notify / quiet call sites, each with file, line, and a context window
+of surrounding source (default 3 lines, `--context N`). The scan
+covers lintable files (the D012 predicate) plus the root
+`.tackbox-reporters`; verb-site detection is textual per language -
+an inventory may over-report, it is observability, not a lint.
+`--since <rev>` prints only entries new against that revision, by
+content identity (kind, file, text): over-reports on moved code,
+never a silent drop. Exit 0 with entries present - the inventory is
+not a gate; nonzero only for infra errors.
+
+Rationale: the paved road is enforced by rules and gates; everything
+that legitimately steps off it (a marker, a tier-2 declaration, a
+quiet or notify lane choice) must be enumerable in one cheap command
+that review tooling of any harness can consume.

@@ -310,6 +310,91 @@ The hook is a no-op unless the edit's `cwd` is a git repo with a
 `uvx tackbox hook` runs the cached tackbox (no `@latest`): the hook is
 fast in-loop feedback, not the authoritative gate.
 
+## Escapes inventory
+
+`tackbox escapes` prints the repo's whole bypass surface as JSON on
+stdout - every place code legitimately steps off the paved road, in one
+cheap command that review tooling of any harness can consume (D013). It
+enumerates:
+
+- **suppression markers** (`// no-report`, `// parse-skip`,
+  `// nil-return`, `// long-comment`, `// test-skip`, `// dup-ok`, plus
+  the markdown `tackbox: lang=` marker), each with its reason;
+- **`.tackbox-reporters` declarations** - the tier-2 sinks;
+- **notify / quiet lane choices** - the call sites of the user-lane-only
+  `notify` and the telemetry-only `quiet` verbs.
+
+It is an **inventory, not a gate**: it exits 0 whenever it runs, entries
+or not, and is not wired into `dev.py check`. The rules and the hook are
+the enforcement; this command is food for a reviewer (human or agent)
+who wants the escapes laid out without re-deriving them. Exit is nonzero
+(1, one stderr line) only for an infra error - a bad `--since` rev.
+
+```bash
+uvx tackbox@latest escapes
+uvx tackbox@latest escapes --since origin/main --context 5
+```
+
+### JSON contract
+
+```json
+{
+  "version": 1,
+  "since": null,
+  "entries": [
+    {"kind": "marker", "file": "a/b.py", "line": 12,
+     "text": "no-report: central boundary already captures it",
+     "reason": "central boundary already captures it",
+     "context": ["...", "...", "..."]},
+    {"kind": "reporter-decl", "file": ".tackbox-reporters", "line": 2,
+     "text": "src/app/errors.py#report_api_error: the API sink",
+     "context": ["..."]},
+    {"kind": "notify-site", "file": "js/foo.js", "line": 40,
+     "text": "notify('offline', err, {}, 'net.offline')",
+     "context": ["..."]},
+    {"kind": "quiet-site", "file": "go/x.go", "line": 9,
+     "text": "report.Quiet(ctx, ...)", "context": ["..."]}
+  ],
+  "counts": {"marker": 1, "reporter-decl": 1, "notify-site": 1, "quiet-site": 1}
+}
+```
+
+- `version` is the schema version (`1`); `counts` always carries all four
+  kinds, even at zero, so consumers see a stable shape.
+- `since` echoes the `--since` rev, or `null`.
+- `text` is the trimmed source line; for a marker it runs from the marker
+  keyword to end of line (the hook's own `_markers` extraction).
+- `reason` (markers only) is what follows the keyword's colon, trimmed -
+  possibly empty (the `tackbox: lang=` marker carries none).
+- `context` is the surrounding source, `--context N` lines each side
+  (default 3), inclusive of the entry line itself - the window
+  `[line-N, line+N]`, clipped at file edges, each line trimmed of trailing
+  whitespace. It is plain source; the entry line is not marked.
+- `entries` are sorted by `(file, line)` for stable output.
+
+### Scope and detection
+
+The scan covers the same lintable source set the linter would scan (the
+D012 predicate: extension match plus each engine's path filter, so a Go
+`testdata/` file is out), plus the root `.tackbox-reporters` (every
+non-empty line is one declaration - the file has no comment syntax).
+notify / quiet call sites are detected **textually per language**
+(`report_quiet` / `notify` in Python, `reportQuiet` / `notify` in the JS
+family, `.Quiet(` / `.Notify(` in Go, `.quiet(` / `.notify(` in Java),
+word-boundaried so `notifyAll(` does not match. Textual detection can
+over-report (a match inside a comment or string counts) - that is fine:
+this is observability, not a lint.
+
+### `--since <rev>`
+
+`--since <rev>` prints only entries **new against `<rev>`**, compared by
+content identity `(kind, file, text)` - the same extraction run against
+the tree at `<rev>` (via `git ls-tree` + `git show`) subtracted, count
+aware, from the current tree's entries. It over-reports on moved code (a
+new file path is a new identity) but never silently drops an entry - the
+conservative direction for a review aid. A bad rev is the one infra error:
+one stderr line, exit 1.
+
 ## Layout
 
 ```text

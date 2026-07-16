@@ -11,7 +11,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from . import __version__, cache, codequality, doctor, reporters
+from . import __version__, cache, codequality, doctor, escapes, reporters
 from .engines import (
     EngineResult,
     EnginesStoreError,
@@ -79,6 +79,18 @@ def _dispatch(argv: list[str] | None) -> int:
             # no-report: CLI boundary: surface as message + exit 2; a traceback here is the bug
             print(f"tackbox: {e}", file=sys.stderr)
             return 2
+    if args.command == "escapes":
+        # Inventory, not a gate (D013): exit 0 with entries or not; a bad --since
+        # rev is exit 1 + one stderr line (handled inside run). _MARKER_RE is
+        # injected so escapes stays a leaf (no cli<->escapes import cycle).
+        return escapes.run(
+            _find_repo_root(),
+            since=args.since,
+            context=args.context,
+            marker_re=_MARKER_RE,
+            out=sys.stdout,
+            err=sys.stderr,
+        )
     if args.command == "doctor":
         _print_banner(_tackbox_root())
         return doctor.run(sys.stdout)
@@ -114,6 +126,22 @@ def _parse_argv(argv: list[str]) -> argparse.Namespace:
         metavar="<path>",
         default=None,
         help="also write a CodeClimate JSON report of all findings to <path>",
+    )
+    esc = sub.add_parser(
+        "escapes", help="print the repo's bypass surface (markers, decls, lanes) as JSON"
+    )
+    esc.add_argument(
+        "--since",
+        metavar="<rev>",
+        default=None,
+        help="only entries new against <rev> by content identity (kind, file, text)",
+    )
+    esc.add_argument(
+        "--context",
+        metavar="N",
+        type=int,
+        default=3,
+        help="source lines of context each side of an entry (default 3)",
     )
     sub.add_parser("doctor", help="verify the hermetic install is functional")
     sub.add_parser(
