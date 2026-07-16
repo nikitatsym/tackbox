@@ -201,7 +201,7 @@ def init(
 
     if verify:
         _verify(verify_timeout)
-        _logger.info("capture verified, DSN=%s", _mask_dsn(dsn))
+        _logger.info("capture flushed (delivery unconfirmed), DSN=%s", _mask_dsn(dsn))
         return
     _logger.info("capture enabled (unverified), DSN=%s", _mask_dsn(dsn))
 

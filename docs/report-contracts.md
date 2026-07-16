@@ -40,15 +40,20 @@ D002's per-name fingerprints hold under real concurrency.
 
 Named gap: breadcrumbs still write to the global hub; the packages
 are not request-scoped, so breadcrumb isolation stays out of scope.
-The rate limit is concurrency-safe independently of scope isolation.
+The rate limit is memory-safe under concurrency (independently of
+scope isolation); the check-then-set is not atomic, so a rare race may
+let one extra in-window repeat ship - benign for a rate limit.
 
 ## D005 - dedup rate-limits telemetry, never the user lane
 
 Deduplication lives at two levels with different owners:
 
 - Telemetry: the helper rate-limits captures per dedupKey (default
-  60s window) before they ship. Lossless - the server already groups
-  by fingerprint and counts repeats.
+  60s window) - a repeat with the same dedupKey inside the window is
+  dropped client-side, so the server never sees it. Lossy for in-window
+  repeats (their occurrence count and any changed context are lost);
+  only captures that pass the window reach the server, which groups
+  by fingerprint.
 - The user lane is never suppressed by the helper. Every user-facing
   event is delivered, carrying its dedupKey; collapsing a storm into
   one live banner, a counter, or a per-click toast is presentation

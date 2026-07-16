@@ -104,7 +104,7 @@ public final class Report {
         }
         if (opts.verify) {
             verify(opts.verifyTimeoutMillis > 0 ? opts.verifyTimeoutMillis : 3_000);
-            log.log(Level.INFO, "report: capture verified, DSN=" + maskDsn(opts.dsn));
+            log.log(Level.INFO, "report: capture flushed (delivery unconfirmed), DSN=" + maskDsn(opts.dsn));
             return;
         }
         log.log(Level.INFO, "report: capture enabled, unverified, DSN=" + maskDsn(opts.dsn));
