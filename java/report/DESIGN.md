@@ -33,19 +33,6 @@ and javalint tier-1 recognizes it as a capture sink at ERROR / WARNING.
 Overridable via `Options.logger`. `System.Logger` has no FATAL level, so
 `panic` logs locally at ERROR while the shipped event carries level FATAL.
 
-## Uncaught-exception handler
-
-`init` disables sentry-java's own default uncaught handler
-(`setEnableUncaughtExceptionHandler(false)`); leaving it on would double-capture
-once our handler chains to it. `installUncaughtHandler()` sets a `Thread`
-default handler that routes any thread's uncaught throwable through
-`panic(thread.getName(), throwable)` (fingerprint `panic:<threadName>`), then
-chains the handler present at install time. It is idempotent (a second install
-while installed is a no-op) and restorable (`uninstallUncaughtHandler()` puts
-the prior handler back). It does not flush, so an uncaught exception that kills
-the JVM may exit before delivery; register `flush()` in a shutdown hook for
-guaranteed delivery on process death.
-
 ## OSGi packaging
 
 `mvn package` builds an OSGi bundle via `maven-bundle-plugin` (packaging

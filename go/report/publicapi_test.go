@@ -15,7 +15,7 @@ type apiField struct {
 }
 
 // TestPublicAPIIsReportingOnly pins the exported surface of go/report to the
-// reporting-only set: two types and thirteen functions, each with an exact
+// reporting-only set: two types and twelve functions, each with an exact
 // signature. Signatures and field types use the golang.org/x/tools loader with
 // a package-relative qualifier, so cross-package names render by import path.
 func TestPublicAPIIsReportingOnly(t *testing.T) {
@@ -34,7 +34,6 @@ func TestPublicAPIIsReportingOnly(t *testing.T) {
 		"Notify":      "func Notify(ctx context.Context, msg string, err error, tags map[string]string, dedupKey string)",
 		"Panic":       "func Panic(name string, recovered any)",
 		"Crumb":       "func Crumb(category string, message string, data map[string]any)",
-		"WrapHandler": "func WrapHandler(name string, h net/http.Handler) net/http.Handler",
 	}
 
 	wantFields := map[string][]apiField{

@@ -89,8 +89,6 @@ type Notice struct {
     DedupKey string
     Cause    error
 }
-
-func WrapHandler(name string, h http.Handler) http.Handler
 ```
 
 - `Error` - level error; an unrecoverable failure you handle here.
@@ -160,16 +158,6 @@ routes the Sentry event, it is not diagnostics. `Panic` logs at a
 custom `FATAL` level with `recovered` and `stack` attributes. `Crumb`
 is capture-only: it records a breadcrumb when ready and emits no local
 line.
-
-## WrapHandler
-
-`WrapHandler(name, h)` wraps an `http.Handler` so a panic in `h` is
-recovered and turned into a 500 plus a capture. With `Init` never called
-it still installs a minimal recover.
-
-```go
-handler = report.WrapHandler("api", handler)
-```
 
 ## See also
 

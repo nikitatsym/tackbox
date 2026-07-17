@@ -59,12 +59,6 @@ public final class Report {
             sentry.setRelease(opts.release);
             sentry.setEnvironment(opts.environment);
             sentry.setDebug(opts.debug);
-            // sentry-java 8.x installs its own default uncaught handler on init
-            // (fatal, default grouping, no rate limit). This helper owns the
-            // uncaught story via installUncaughtHandler() - opt-in, per-name
-            // panic:<name> fingerprint, log-before-drop, rate-limited. Leaving
-            // sentry's on would double-capture once our handler chains to it.
-            sentry.setEnableUncaughtExceptionHandler(false);
             if (opts.beforeSend != null) {
                 sentry.setBeforeSend(opts.beforeSend);
             }
@@ -219,49 +213,6 @@ public final class Report {
         Sentry.addBreadcrumb(b);
     }
 
-    private static final Object installLock = new Object();
-    private static volatile Thread.UncaughtExceptionHandler ourUncaughtHandler;
-    private static volatile Thread.UncaughtExceptionHandler priorUncaughtHandler;
-
-    /** Route every thread's uncaught throwable through panic(threadName, t),
-     *  fingerprint panic:&lt;threadName&gt; (D002). Idempotent: a second call
-     *  while installed is a no-op, never a double-wrap. Restorable: the handler
-     *  present at install time is chained after our capture and restored by
-     *  uninstallUncaughtHandler(), so a pre-existing handler is never lost. */
-    public static void installUncaughtHandler() {
-        synchronized (installLock) {
-            Thread.UncaughtExceptionHandler current = Thread.getDefaultUncaughtExceptionHandler();
-            if (ourUncaughtHandler != null && current == ourUncaughtHandler) {
-                return;
-            }
-            Thread.UncaughtExceptionHandler prior = current;
-            priorUncaughtHandler = prior;
-            Thread.UncaughtExceptionHandler handler = (thread, throwable) -> {
-                panic(thread.getName(), throwable);
-                if (prior != null) {
-                    prior.uncaughtException(thread, throwable);
-                }
-            };
-            ourUncaughtHandler = handler;
-            Thread.setDefaultUncaughtExceptionHandler(handler);
-        }
-    }
-
-    /** Restore the default uncaught handler present before installUncaughtHandler().
-     *  No-op when ours is not the current default. */
-    public static void uninstallUncaughtHandler() {
-        synchronized (installLock) {
-            if (ourUncaughtHandler == null) {
-                return;
-            }
-            if (Thread.getDefaultUncaughtExceptionHandler() == ourUncaughtHandler) {
-                Thread.setDefaultUncaughtExceptionHandler(priorUncaughtHandler);
-            }
-            ourUncaughtHandler = null;
-            priorUncaughtHandler = null;
-        }
-    }
-
     private static void capture(String msg, Throwable cause, Map<String, String> tags,
             String dedupKey, SentryLevel level) {
         // Preserve the original throwable's type/stack; synthesize when null.
@@ -330,7 +281,6 @@ public final class Report {
 
     /** Test-only: reset process-wide capture state between tests. */
     static void resetForTest() {
-        uninstallUncaughtHandler();
         Sentry.close();
         ready = false;
         rateWindow = 60_000;

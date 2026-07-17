@@ -2,7 +2,6 @@ package nl.tsym.tackbox.report;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.sentry.SentryEvent;
@@ -105,36 +104,6 @@ class ReportTest {
     }
 
     @Test
-    void uncaughtHandlerCapturesUnderPanicFingerprint() throws InterruptedException {
-        Report.init(recordingOptions());
-        Report.installUncaughtHandler();
-        Thread t = new Thread(() -> {
-            throw new IllegalStateException("boom");
-        }, "worker-7");
-        t.start();
-        t.join(); // the JVM runs the handler before the thread terminates
-        assertEquals(1, events.size());
-        SentryEvent e = events.get(0);
-        assertEquals(List.of("panic:worker-7"), e.getFingerprints());
-        assertEquals(SentryLevel.FATAL, e.getLevel());
-        assertEquals("worker-7", e.getTag("source"));
-    }
-
-    @Test
-    void uncaughtHandlerInstallIsIdempotentAndRestorable() {
-        Report.init(recordingOptions());
-        Thread.UncaughtExceptionHandler beforeInstall = Thread.getDefaultUncaughtExceptionHandler();
-        Report.installUncaughtHandler();
-        Thread.UncaughtExceptionHandler installed = Thread.getDefaultUncaughtExceptionHandler();
-        Report.installUncaughtHandler(); // second install must not double-wrap
-        assertSame(installed, Thread.getDefaultUncaughtExceptionHandler(),
-                "a second install while installed must be a no-op");
-        Report.uninstallUncaughtHandler();
-        assertSame(beforeInstall, Thread.getDefaultUncaughtExceptionHandler(),
-                "uninstall must restore the handler present before install");
-    }
-
-    @Test
     void errorDispatchesUserLaneEvenWhenNotReady() {
         Report.init(new Options().dsn("").silentMissing(true));
         Report.setNotifier(notices::add);
@@ -229,9 +198,7 @@ class ReportTest {
                         List.<Class<?>>of(String.class, Throwable.class, Map.class, String.class), ps),
                 new Sig("panic", void.class, List.<Class<?>>of(String.class, Object.class), ps),
                 new Sig("crumb", void.class,
-                        List.<Class<?>>of(String.class, String.class, Map.class), ps),
-                new Sig("installUncaughtHandler", void.class, List.<Class<?>>of(), ps),
-                new Sig("uninstallUncaughtHandler", void.class, List.<Class<?>>of(), ps));
+                        List.<Class<?>>of(String.class, String.class, Map.class), ps));
         Set<Sig> actual = Arrays.stream(Report.class.getDeclaredMethods())
                 .filter(m -> !m.isSynthetic())
                 .filter(m -> Modifier.isPublic(m.getModifiers()) && Modifier.isStatic(m.getModifiers()))
