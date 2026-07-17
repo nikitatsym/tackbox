@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tackbox"
-description = "Error-handling lint + capture helpers for Go, Python, Java, JS, TS, and Svelte: every failure must report, propagate, or explain itself."
+description = "Cross-language static analysis for explicit error handling and code-quality guardrails."
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dynamic = ["version", "dependencies", "readme"]

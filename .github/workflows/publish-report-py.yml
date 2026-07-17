@@ -41,8 +41,8 @@ jobs:
       - name: Test tackbox-report
         run: uv run --directory py/tackbox_report --group dev pytest -q
 
-      # Version is taken from pyproject.toml (0.1.0). The tag is only the
-      # trigger; it is not injected into the build.
+      # Version is taken from pyproject.toml. The tag is only the trigger; it is
+      # not injected into the build.
       - name: Build sdist + wheel
         working-directory: py/tackbox_report
         run: |

@@ -8,6 +8,15 @@
 
 **Every failure must report, propagate, or explain itself.**
 
+tackbox is a guardrail for developers and coding agents. It catches common
+local ways failures are hidden by accident, haste, or expediency and
+requires an explicit outcome: propagate, report, or explain. It is not a
+whole-program proof or a security boundary.
+
+tackbox's lint contract recognizes direct reporting helpers as an explicit
+report outcome. Execution policy, control flow, result ownership, and runtime
+integration remain application decisions.
+
 Coding agents write error handling that looks right and silently
 isn't: a swallowed exception, a fatal exit with nothing logged, a
 report with the cause stripped out. tackbox catches it the moment
@@ -15,9 +24,9 @@ it's written: hooked into the agent's edit loop it flags the finding
 before the turn ends, and the same rules gate pre-commit and CI -
 one coverage bar for hand-written and agent-written code.
 
-And there is no quiet way around any of it: no flags, no config. The
-only escape is an explicit `// no-report: <reason>` at the site - and
-the agent hook asks for your approval before a new suppression lands.
+There are no per-rule disable flags. A local exception stays visible as
+a reasoned `// no-report: <reason>` marker at the site, and the agent
+hook asks for your approval before a new suppression lands.
 
 ```go
 resp, err := client.Do(req)
@@ -361,22 +370,11 @@ on a non-Go file is rejected - a dead line would be silent. The format
 is language-uniform; the restriction lifts as other engines adopt the
 contract.
 
-## Deduplication: telemetry, never the user
+## Runtime reporting helpers
 
-Dedup lives at two levels with different owners
-(`docs/report-contracts.md` D005):
-
-- The capture helpers rate-limit telemetry: a repeat capture with the
-  same dedupKey inside the rate window (default 60s) is dropped
-  client-side, so the server never sees it. Lossy for in-window repeats
-  (their occurrence count and any changed context are lost); captures
-  that pass the window reach the server, which groups by fingerprint.
-- The user lane is never suppressed by the helpers. Every user-facing
-  event is delivered carrying its dedupKey; collapsing a storm into
-  one live banner or a counter is presentation policy and belongs to
-  the app's listener, keyed on that dedupKey. A notification dropped
-  inside the helper would be a swallowed error at the UI level - the
-  exact failure mode tackbox exists to prevent.
+Direct reporting helpers ship per language; their shared runtime behavior -
+lane routing, telemetry dedup, panic grouping, and capture isolation - is
+specified in [docs/report-contracts.md](docs/report-contracts.md).
 
 ## Agent hook (Claude Code)
 

@@ -1,47 +1,16 @@
-"""tackbox_report: Python runtime capture helper.
+"""Direct error-reporting helpers for Python applications using Sentry or GlitchTip.
 
-A thin wrapper over ``sentry-sdk`` that mirrors the Go ``go/report`` and JS
-``js/report.js`` helpers and the error-reporting spec. An empty DSN makes every
-call a log-only no-op, so a repo can adopt the API (and satisfy the linter)
-before any Glitchtip endpoint exists.
-
-Three lanes - local log (always), user lane (``set_notifier``), Sentry capture
-(gated by readiness + a per-key rate window). ``report_error`` / ``report_warn``
-feed all three; ``report_quiet`` skips the user lane; ``notify`` feeds only the
-user lane (no capture, no rate-limit state touched); ``report_panic`` feeds all
-three by default. Each verb reaches at least one lane, so a failure can never be
-lost entirely.
-
-Semantics carried over from go/report:
-
-* Log-before-drop invariant: every capture writes one structured local line
-  *before* the readiness and rate-limit checks, so nothing is lost in log-only
-  mode. The user lane is dispatched before the same gate and is never
-  rate-limited (docs/report-contracts.md D005).
-* In-memory 60s rate limit keyed by ``dedup_key`` (``_should_drop``); the same
-  key is the Sentry fingerprint (grouping).
-* Per-name fingerprints (docs/report-contracts.md D002): ``panic:<name>`` for the panic
-  analog, ``task:<name>`` for the background-task wrapper. Built directly from
-  the name so differently-named failures group and rate-limit independently.
-* Concurrency-isolated capture (docs/report-contracts.md D003): every capture site runs
-  inside ``sentry_sdk.new_scope()`` (forks the current scope), and the
-  background-task wrapper additionally forks a per-thread
-  ``sentry_sdk.isolation_scope()`` -- the sentry-sdk 2.x analog of Go's
-  ``sentry.CurrentHub().Clone()`` per goroutine. Concurrent captures cannot
-  bleed fingerprint/tags into one another.
-
-See DESIGN.md for the load-bearing design choices.
+Shared runtime contract: https://github.com/nikitatsym/tackbox/blob/main/docs/report-contracts.md
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Coroutine, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 from urllib.parse import urlparse
 
 import sentry_sdk
@@ -61,13 +30,11 @@ __all__ = [
     "report_panic",
     "set_notifier",
     "crumb",
-    "run_task",
-    "run_task_async",
 ]
 
 # ---------------------------------------------------------------------------
-# Levels: a FATAL level above CRITICAL, mirroring Go's levelFatal = ERROR+4.
-# addLevelName only *adds* a name for 60; it does not rename CRITICAL.
+# A FATAL level above CRITICAL for panic logs. addLevelName only adds a name
+# for 60; it does not rename CRITICAL.
 # ---------------------------------------------------------------------------
 _LEVEL_FATAL = logging.CRITICAL + 10  # 60
 logging.addLevelName(_LEVEL_FATAL, "FATAL")
@@ -82,14 +49,14 @@ _NOTICE_NOTICE = "notice"
 
 
 class ReportError(Exception):
-    """An ``init`` / ``verify`` failure (Pythonic analog of Go's returned error)."""
+    """Raised when ``init`` or ``verify`` cannot start capture."""
 
 
 @dataclass(frozen=True)
 class Notice:
     """One user-lane event handed to the registered notifier. The app owns
-    rendering and any coalescing (keyed on ``dedup_key``); the helper never
-    suppresses the user lane (docs/report-contracts.md D005)."""
+    rendering and any coalescing keyed on ``dedup_key``; the helper never
+    suppresses the user lane."""
 
     msg: str
     level: str
@@ -113,7 +80,7 @@ _notifier: Optional[Callable[[Notice], None]] = None
 class _StructFormatter(logging.Formatter):
     """Renders the local sink line as ``<level> <msg>`` plus err/tags, so the
     full context survives in log-only mode. dedup_key is deliberately absent:
-    it routes the Sentry event, it is not diagnostics (parity with go/report)."""
+    it routes the Sentry event, it is not diagnostics."""
 
     def format(self, record: logging.LogRecord) -> str:
         base = super().format(record)
@@ -162,10 +129,10 @@ def init(
 ) -> None:
     """Initialize capture. Empty ``dsn`` -> log-only no-op (safe before init).
 
-    Mirrors ``report.Init``. Raises ``ReportError`` when ``verify`` is set and
-    the healthcheck cannot be shipped. Extra ``**sentry_options`` are forwarded
-    verbatim to ``sentry_sdk.init`` (e.g. ``before_send``, ``transport``,
-    ``sample_rate``) -- the Pythonic escape hatch, also used by the tests.
+    Raises ``ReportError`` when ``verify`` is set and the healthcheck cannot be
+    shipped. Extra ``**sentry_options`` are forwarded verbatim to
+    ``sentry_sdk.init`` (e.g. ``before_send``, ``transport``, ``sample_rate``)
+    -- the Pythonic escape hatch, also used by the tests.
     """
     global _ready, _rate_window, _flush_timeout, _logger
 
@@ -181,9 +148,9 @@ def init(
         _ready = False
         return
 
-    # default_integrations=False mirrors js/report.js: this helper owns capture
-    # and grouping, so the LoggingIntegration must not turn our own
-    # log-before-drop lines into a second, un-rate-limited event.
+    # default_integrations=False: this helper owns capture and grouping, so the
+    # LoggingIntegration must not turn our own log-before-drop lines into a
+    # second, un-rate-limited event.
     sentry_sdk.init(
         dsn=dsn,
         release=release,
@@ -218,9 +185,8 @@ def is_ready() -> bool:
 def verify(timeout: float = 3.0) -> None:
     """Ship one healthcheck event (fingerprint ``report.startup``) and flush.
 
-    Best-effort: the Python ``sentry_sdk.flush`` returns ``None`` (unlike Go's
-    bool), so this cannot detect a delivery timeout the way ``report.Verify``
-    does. It raises only when called before a successful ``init``.
+    Best-effort: ``sentry_sdk.flush`` returns ``None``, so this cannot detect a
+    delivery timeout. It raises only when called before a successful ``init``.
     """
     _verify(timeout)
 
@@ -350,8 +316,8 @@ def _notice(
 
 
 def report_panic(name: str, recovered: Any) -> None:
-    """Level fatal panic analog. Fingerprint ``panic:<name>`` (D002). Pass the
-    caught exception (or any recovered value)."""
+    """Level fatal. Fingerprint ``panic:<name>``. Pass the caught exception
+    (or any recovered value)."""
     key = f"panic:{name}"
     exc = recovered if isinstance(recovered, BaseException) else None
     _log_at(
@@ -377,7 +343,7 @@ def crumb(
     category: str, message: str, data: Optional[Mapping[str, Any]] = None
 ) -> None:
     """A breadcrumb toward the next capture; not itself an event and no local
-    line (parity with go/report Crumb)."""
+    line."""
     if not _ready:
         return
     sentry_sdk.add_breadcrumb(
@@ -386,97 +352,6 @@ def crumb(
         data=dict(data) if data else {},
         level=_SENTRY_INFO,
     )
-
-
-# ---------------------------------------------------------------------------
-# Background-task wrapper (GoSafe analog): threading + asyncio (see DESIGN.md #1)
-# ---------------------------------------------------------------------------
-def run_task(
-    name: str,
-    fn: Callable[[], Optional[BaseException]],
-    *,
-    daemon: bool = False,
-    join: bool = False,
-    quiet: bool = False,
-) -> threading.Thread:
-    """Run ``fn`` in a background thread under capture (GoSafe analog).
-
-    A raised exception OR a returned exception (mirroring Go's ``func() error``)
-    is captured under the per-name fingerprint ``task:<name>`` (mirror of Go's
-    ``go.task:<name>``), rate-limited per name. By default a failure also
-    surfaces to the user lane (error level); ``quiet=True`` routes it
-    telemetry-only at warning (capture yes, user lane no). The whole run is
-    wrapped in a per-thread ``sentry_sdk.isolation_scope()`` -- the D003 analog
-    of Go's per-goroutine hub clone. Returns the ``Thread`` so the caller may
-    ``join``.
-    """
-
-    def _run() -> None:
-        with sentry_sdk.isolation_scope():
-            try:
-                _raise_if_returned(fn())
-            except Exception as exc:
-                if quiet:
-                    report_quiet("background task failed", exc, {"task": name}, f"task:{name}")
-                else:
-                    report_error("background task failed", exc, {"task": name}, f"task:{name}")
-
-    t = threading.Thread(target=_run, name=f"tackbox-task:{name}", daemon=daemon)
-    t.start()
-    if join:
-        t.join()
-    return t
-
-
-def run_task_async(
-    name: str,
-    coro: Coroutine[Any, Any, Optional[BaseException]],
-    *,
-    quiet: bool = False,
-) -> asyncio.Task[None]:
-    """Run ``coro`` as a background asyncio task under capture (asyncio analog of
-    run_task; the async arm of Go's GoSafe intent).
-
-    A raised exception OR a returned exception (mirroring Go's ``func() error``)
-    is captured under the per-name fingerprint ``task:<name>``, rate-limited per
-    name, log-before-drop preserved -- identical routing to run_task, including
-    the ``quiet`` opt-out (telemetry-only at warning, no user lane). The
-    coroutine runs inside a per-task ``sentry_sdk.isolation_scope()`` fork: each
-    asyncio task runs in its own copied context, so this fork isolates the task's
-    scope (D003) the way the per-thread fork does for run_task -- concurrent
-    tasks cannot bleed scope/fingerprint into one another.
-
-    Scheduled fire-and-forget via ``asyncio.create_task``; the returned
-    ``asyncio.Task`` carries the outcome. A failure is captured once and then
-    re-raised inside the task, so ``await``-ing the task surfaces the exception
-    to the awaiter -- the single caller that observes it. This diverges from
-    ``run_task``, whose ``Thread.join()`` returns nothing (a joined thread cannot
-    hand its exception back); the ``asyncio.Task`` can, so the await path does not
-    swallow. An unobserved (never-awaited) task still captured its failure exactly
-    once. An ``asyncio.CancelledError`` propagates uncaptured (it is not a task
-    failure, and it must reach the awaiter). Must be called from within a running
-    event loop.
-    """
-
-    async def _run() -> None:
-        with sentry_sdk.isolation_scope():
-            try:
-                _raise_if_returned(await coro)
-            except Exception as exc:
-                if quiet:
-                    report_quiet("background task failed", exc, {"task": name}, f"task:{name}")
-                else:
-                    report_error("background task failed", exc, {"task": name}, f"task:{name}")
-                raise  # re-raise so the Task carries the failure; awaiting surfaces it
-
-    return asyncio.create_task(_run(), name=f"tackbox-task:{name}")
-
-
-def _raise_if_returned(result: Optional[BaseException]) -> None:
-    """Turn a returned exception (Go's ``func() error`` analog) into a raised one
-    so both failure modes share the wrapper's single ``except`` capture path."""
-    if isinstance(result, BaseException):
-        raise result
 
 
 # ---------------------------------------------------------------------------
@@ -520,7 +395,7 @@ def _log_at(
 
 def _should_drop(key: str) -> bool:
     """In-memory 60s rate limit keyed by dedup_key. Empty key is never limited
-    (lets Sentry auto-group). Thread-safe (parity with Go's sync.Map)."""
+    (lets Sentry auto-group). Thread-safe."""
     if not key:
         return False
     now = time.monotonic()

@@ -1,7 +1,7 @@
 {
   "name": "tackbox",
   "version": "0.1.0",
-  "description": "ESLint plugin + browser report helper: every failure must report, propagate, or explain itself.",
+  "description": "ESLint and Markdown lint plugins plus direct error-reporting helpers for JavaScript and TypeScript.",
   "license": "MIT",
   "main": "./js/eslint-plugin.js",
   "exports": {

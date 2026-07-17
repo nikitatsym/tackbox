@@ -726,13 +726,13 @@ def test_broad_notify_in_test_file_clean(tmp_path):
 def test_owner_package_self_credits_and_skips_arg_checks(tmp_path):
     # Owner package (a tackbox_report/ path segment, D010): its own top-level verb
     # defs ARE the origin, so an internal broad-except calling report_error with a
-    # computed dedup_key self-credits (no TBX001) and TBX010/TBX011 do not bind the
-    # owner - zero findings, no marker.
+    # computed panic:<name> dedup_key self-credits (no TBX001) and TBX010/TBX011 do
+    # not bind the owner - zero findings, no marker.
     src = (
         "def report_error(msg, cause=None, tags=None, dedup_key=''):\n    pass\n\n\n"
-        "def run_task(name):\n    try:\n        work()\n"
+        "def report_panic(name):\n    try:\n        work()\n"
         "    except Exception as e:\n"
-        "        report_error('background task failed', cause=e, dedup_key=f'task:{name}')\n"
+        "        report_error('capture failed', cause=e, dedup_key=f'panic:{name}')\n"
     )
     pkg = tmp_path / "tackbox_report"
     pkg.mkdir()
