@@ -25,24 +25,23 @@ D005 below owns sink ordering and rate-limit behavior; this table only maps
 direct verbs to lanes. Breadcrumbs are readiness-gated, do not consume D005
 rate-limit state, and are not reporting events.
 
-## D002 - per-name fingerprints for background tasks and panics
+## D002 - per-name fingerprints for direct panic
 
-The panic primitive and Go's background-task primitive fingerprint and
-rate-limit per name, not per class: panic keys `panic:<name>` in every
-helper, and Go's background-task error path keys `go.task:<name>`. Two
-differently named sources failing inside one rate window each surface as
-their own issue instead of collapsing.
+The panic primitive fingerprints and rate-limits per name, not per
+class: panic keys `panic:<name>` in every helper. Two differently named
+sources panicking inside one rate window each surface as their own
+issue instead of collapsing.
 
-Why: a background failure needs individual telemetry visibility; a
-shared constant key means one fingerprint and one rate bucket for
-every task, so the second failure inside the window is silently
-dropped.
+Why: a panic needs individual telemetry visibility; a shared constant
+key means one fingerprint and one rate bucket for every panic source,
+so the second failure inside the window is silently dropped.
 
 Boundary with the literal-dedupKey rules (ERC006 arm 3 and analogs):
 those target application call sites, where a computed key means
-unbounded cardinality from untrusted input. The blessed helper builds
-these keys through its package-internal capture core by design - it
-owns a small closed set of task names - not via an escape marker.
+unbounded cardinality from untrusted input. The helper owns
+construction of the `panic:<name>` key through its package-internal
+capture core; callers own keeping the source name stable and bounded.
+No escape marker is involved.
 
 ## D003 - concurrency-isolated direct capture
 

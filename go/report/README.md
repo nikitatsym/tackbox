@@ -6,9 +6,10 @@ Capture helper for Go: a thin wrapper over `sentry-go` that emits the
 so a repo can adopt the API (and satisfy the linter) before any Glitchtip
 endpoint exists.
 
-This is the runtime half of tackbox. The static half - the analyzer
-that forces you to call these helpers - is `erclint`; see
-`../README.md`.
+This is the runtime half of tackbox. The static half is `erclint`, which
+recognizes a direct helper call as one valid outcome for a failure branch -
+propagating the error or taking an explained local exception stays valid
+too; see `../README.md`.
 
 ## Import
 
@@ -50,8 +51,8 @@ disables transmission.
 - `Release` / `Environment` (`string`) - tags stamped on every event.
 - `FlushTimeout` (`time.Duration`, default `2s`) - wait budget for
   `Flush`.
-- `RateWindow` (`time.Duration`, default `60s`) - per-`dedupKey`
-  suppression window (telemetry only; see "Lanes").
+- `RateWindow` (`time.Duration`, default `60s`) - per-`dedupKey` capture
+  suppression window.
 - `Debug` (`bool`) - pipe sentry transport diagnostics to stderr.
 - `Verify` (`bool`) - send a startup healthcheck and block on flush.
 - `VerifyTimeout` (`time.Duration`, default `3s`) - timeout for
@@ -77,7 +78,7 @@ func Quiet(ctx context.Context, msg string, err error,
     tags map[string]string, dedupKey string)
 func Notify(ctx context.Context, msg string, err error,
     tags map[string]string, dedupKey string)
-func Panic(name string, recovered any, opts ...Option)
+func Panic(name string, recovered any)
 func Crumb(category, message string, data map[string]any)
 
 func SetNotifier(fn func(Notice))
@@ -89,9 +90,7 @@ type Notice struct {
     Cause    error
 }
 
-func GoSafe(name string, fn func() error, opts ...Option)
 func WrapHandler(name string, h http.Handler) http.Handler
-func Silent() Option
 ```
 
 - `Error` - level error; an unrecoverable failure you handle here.
@@ -118,45 +117,17 @@ if err := writeCache(v); err != nil {
 }
 ```
 
-## Lanes
+## Runtime contract
 
-Every verb writes to a subset of three lanes:
-
-| verb     | local log | user lane        | capture (gated) |
-|----------|-----------|------------------|-----------------|
-| `Error`  | error     | notice `error`   | error           |
-| `Warn`   | warn      | notice `warning` | warning         |
-| `Quiet`  | warn      | -                | warning         |
-| `Notify` | warn      | notice `notice`  | -               |
-| `Panic`  | fatal     | notice `fatal`   | fatal           |
-
-Ordering per call: the local log always runs; the user lane is
-dispatched unconditionally, before the init and rate-limit gate; capture
-runs last, behind that gate. So a failure never loses both telemetry and
-user visibility, and the user lane is never suppressed by the helper
-(tackbox `rules/DECISIONS.md` D005).
-
-## User lane
-
-`SetNotifier` registers a `func(Notice)` sink; passing `nil` clears it.
-With no notifier the user lane is a no-op (the local log and capture
-still run). The callback runs on the caller's goroutine - the app bridges
-to its UI thread itself - and registration is concurrency-safe. The app
-owns rendering and any coalescing (a storm of identical `Notice`s keyed
-on the same `DedupKey` becomes one banner, a counter, or a per-click
-toast - presentation policy the helper does not impose). A notifier that
-panics never breaks the caller's path and never recurses into the user
-lane: it is caught and captured telemetry-only.
+Sink ordering, the never-suppressed user lane, and the telemetry
+rate-limit window are the cross-language runtime contract:
+[`../../docs/report-contracts.md`](../../docs/report-contracts.md).
 
 ## dedupKey
 
-`dedupKey` becomes the event fingerprint (Sentry grouping) and the
-rate-limit key: repeat captures with the same key inside `RateWindow`
-(60s) are dropped. The rate limit applies to capture only - the user
-lane is never rate-limited, and `Notify` touches no rate-limit state, so
-a `Notify` never consumes the next capture's slot for the same key.
-Convention: `area.suffix`, e.g. `vault.save`, `agent.list`. An empty key
-is never rate-limited and lets Sentry auto-group.
+`dedupKey` is the event fingerprint (Sentry grouping) and the capture
+rate-limit key. Convention: `area.suffix`, e.g. `vault.save`,
+`agent.list`. An empty key lets Sentry auto-group.
 
 Capture arguments (message, tags, dedupKey) must not carry raw user
 input, and the dedupKey must be a well-formed literal - erclint ERC006
@@ -190,28 +161,17 @@ custom `FATAL` level with `recovered` and `stack` attributes. `Crumb`
 is capture-only: it records a breadcrumb when ready and emits no local
 line.
 
-## Coverage primitives
+## WrapHandler
 
-Use these instead of raw goroutines and handlers so failures in
-background work are captured, not swallowed:
+`WrapHandler(name, h)` wraps an `http.Handler` so a panic in `h` is
+recovered and turned into a 500 plus a capture. With `Init` never called
+it still installs a minimal recover.
 
 ```go
-report.GoSafe("ipc-accept", func() error { return srv.Accept() })
-report.GoSafe("indexer", buildIndex, report.Silent()) // telemetry only
 handler = report.WrapHandler("api", handler)
 ```
 
-- `GoSafe(name, fn, opts...)` runs `fn` in a goroutine under `recover`; a
-  panic goes through `Panic`, a returned error through the error lane,
-  each under a per-name fingerprint (`panic:<name>`, `go.task:<name>`).
-  A failure surfaces to the user lane by default; `Silent()` routes it
-  telemetry-only (capture yes, user lane no). `Panic` accepts the same
-  `Silent()` opt.
-- `WrapHandler(name, h)` recovers panics in `h` and turns them into a
-  500 plus a capture. With `Init` never called it still installs a
-  minimal recover.
-
 ## See also
 
-- `../README.md` - the `erclint` ruleset that enforces these calls.
+- `../README.md` - the `erclint` ruleset that recognizes these helpers.
 - `../../README.md` - tackbox overview and wiring into `dev.py lint`.

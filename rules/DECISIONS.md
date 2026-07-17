@@ -89,7 +89,7 @@ Privacy still holds as a principle (no secret values in
 message/tags/dedupKey) but is enforced by scrubbing and review, not by
 a name lint.
 
-## D002 - per-name fingerprints for GoSafe and Panic (2026-07-13)
+## D002 - per-name fingerprints for direct panic (2026-07-17)
 
 Library contract, moved to docs/report-contracts.md (id kept). Not a
 lint rule; its boundary with ERC006 arm 3 is recorded there.

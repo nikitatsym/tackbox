@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -284,44 +283,41 @@ func TestNotifyUserLaneOnlyDoesNotConsumeRateSlot(t *testing.T) {
 	}
 }
 
-// Panic feeds the user lane at fatal by default; Silent() (the quiet task
-// opt-out) captures the panic but skips the user lane.
-func TestPanicDefaultUserLaneAndSilentOptOut(t *testing.T) {
+// Panic feeds the user lane at fatal and captures per name (D002): distinct
+// names never share a fingerprint bucket, and the same name inside the rate
+// window collapses to one event.
+func TestPanicFeedsUserLaneAndCaptures(t *testing.T) {
 	rec := initRecorder(t)
 	nr := useNotifier(t)
 
 	Panic("tray-loop", "boom")
-	Panic("indexer", "boom", Silent())
+	Panic("indexer", "boom")
 
-	if nr.count() != 1 {
-		t.Fatalf("only the default panic feeds the user lane: got %d notices, want 1", nr.count())
+	if nr.count() != 2 {
+		t.Fatalf("each panic feeds the user lane: got %d notices, want 2", nr.count())
 	}
 	if got := nr.at(0); got.Level != "fatal" || got.DedupKey != "panic:tray-loop" || got.Msg != "panic in tray-loop" {
 		t.Errorf("panic notice = %+v, want fatal panic:tray-loop 'panic in tray-loop'", got)
 	}
 	if rec.count() != 2 {
-		t.Errorf("both panics capture (per-name): got %d events, want 2", rec.count())
+		t.Fatalf("distinct names capture per name: got %d events, want 2", rec.count())
 	}
-}
-
-// A quiet background task captures at warning with no user lane; a loud one
-// captures at error and feeds the user lane. Asserted through reportTaskErr,
-// the synchronous core GoSafe (with/without Silent) drives.
-func TestReportTaskErrSilentRoutesQuiet(t *testing.T) {
-	rec := initRecorder(t)
-	nr := useNotifier(t)
-
-	reportTaskErr("quiet-task", errors.New("boom"), true)
-	reportTaskErr("loud-task", errors.New("boom"), false)
-
-	if nr.count() != 1 || nr.at(0).DedupKey != "go.task:loud-task" {
-		t.Errorf("only the loud task feeds the user lane: got %d notices", nr.count())
+	fps := rec.fingerprints()
+	for _, want := range []string{"panic:tray-loop", "panic:indexer"} {
+		if !fps[want] {
+			t.Errorf("missing per-name fingerprint %q; got %v", want, fps)
+		}
 	}
-	if lv, _ := rec.levelOf("go.task:quiet-task"); lv != sentry.LevelWarning {
-		t.Errorf("quiet task capture level = %v, want warning", lv)
+	if lv, _ := rec.levelOf("panic:tray-loop"); lv != sentry.LevelFatal {
+		t.Errorf("panic capture level = %v, want fatal", lv)
 	}
-	if lv, _ := rec.levelOf("go.task:loud-task"); lv != sentry.LevelError {
-		t.Errorf("loud task capture level = %v, want error", lv)
+
+	resetRateLimit()
+	rec.reset()
+	Panic("tray-loop", "first")
+	Panic("tray-loop", "second")
+	if rec.count() != 1 {
+		t.Fatalf("same name within window: got %d events, want 1 (second dropped)", rec.count())
 	}
 }
 
@@ -348,66 +344,48 @@ func TestNotifierPanicDoesNotBreakCaller(t *testing.T) {
 	}
 }
 
-// GoSafe's error path fingerprints and rate-limits per task name: distinct
-// names never share a bucket, the same name within the window collapses to one
-// event. Asserted through the synchronous core reportTaskErr.
-func TestGoSafeErrPathPerNameFingerprint(t *testing.T) {
+// A concurrent storm of direct Error captures keeps each event under its own
+// fingerprint (D003): the hub is cloned per capture, so no goroutine can bleed
+// another's fingerprint and the recorded multiset must be exactly one event per
+// key. Each site is a fixed closure whose msg and dedupKey are literals in the
+// Error call itself (ERC006 wants the literal in the AST). The raw goroutines
+// are application-owned test concurrency, not a tackbox launcher.
+func TestConcurrentDirectCapturesStayPerFingerprint(t *testing.T) {
 	rec := initRecorder(t)
-
-	reportTaskErr("alpha", errors.New("boom"), false)
-	reportTaskErr("beta", errors.New("boom"), false)
-	if rec.count() != 2 {
-		t.Fatalf("distinct names: got %d events, want 2 (neither dropped)", rec.count())
-	}
-	fps := rec.fingerprints()
-	for _, want := range []string{"go.task:alpha", "go.task:beta"} {
-		if !fps[want] {
-			t.Errorf("missing per-name fingerprint %q; got %v", want, fps)
-		}
-	}
-	first := rec.events[0]
-	if first.Level != sentry.LevelError {
-		t.Errorf("level = %v, want error", first.Level)
-	}
-	if first.Tags["task"] != "alpha" {
-		t.Errorf("tag task = %q, want alpha", first.Tags["task"])
-	}
-
-	resetRateLimit()
-	rec.reset()
-	reportTaskErr("gamma", errors.New("first"), false)
-	reportTaskErr("gamma", errors.New("second"), false)
-	if rec.count() != 1 {
-		t.Fatalf("same name within window: got %d events, want 1 (second dropped)", rec.count())
-	}
-}
-
-// End-to-end through the exported goroutine wrapper under real concurrency:
-// many distinctly-named GoSafe tasks fail at once, released together by a gate
-// to maximize overlap. Because each capture clones the hub (D003), no goroutine
-// can bleed another's fingerprint, so the recorded fingerprint multiset must
-// equal exactly {go.task:<name>: 1} for every launched name - each once, none
-// wrong. Pre-D003 (captures on the shared global hub) this bled under overlap.
-func TestGoSafeGoroutineCapturesPerName(t *testing.T) {
-	rec := initRecorder(t)
-
-	const n = 40
-	want := make(map[string]int, n)
+	ctx := context.Background()
 	gate := make(chan struct{})
-	for i := 0; i < n; i++ {
-		name := fmt.Sprintf("worker-%02d", i)
-		want["go.task:"+name] = 1
-		GoSafe(name, func() error {
-			<-gate // hold every goroutine until all are launched, then storm
-			return errors.New("boom")
-		})
-	}
-	close(gate)
 
-	deadline := time.Now().Add(5 * time.Second)
-	for rec.count() < n && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
+	sites := []func(){
+		func() { <-gate; Error(ctx, "concurrent capture", errors.New("boom"), nil, "storm.00") },
+		func() { <-gate; Error(ctx, "concurrent capture", errors.New("boom"), nil, "storm.01") },
+		func() { <-gate; Error(ctx, "concurrent capture", errors.New("boom"), nil, "storm.02") },
+		func() { <-gate; Error(ctx, "concurrent capture", errors.New("boom"), nil, "storm.03") },
+		func() { <-gate; Error(ctx, "concurrent capture", errors.New("boom"), nil, "storm.04") },
+		func() { <-gate; Error(ctx, "concurrent capture", errors.New("boom"), nil, "storm.05") },
+		func() { <-gate; Error(ctx, "concurrent capture", errors.New("boom"), nil, "storm.06") },
+		func() { <-gate; Error(ctx, "concurrent capture", errors.New("boom"), nil, "storm.07") },
+		func() { <-gate; Error(ctx, "concurrent capture", errors.New("boom"), nil, "storm.08") },
+		func() { <-gate; Error(ctx, "concurrent capture", errors.New("boom"), nil, "storm.09") },
+		func() { <-gate; Error(ctx, "concurrent capture", errors.New("boom"), nil, "storm.10") },
+		func() { <-gate; Error(ctx, "concurrent capture", errors.New("boom"), nil, "storm.11") },
 	}
+	want := map[string]int{
+		"storm.00": 1, "storm.01": 1, "storm.02": 1, "storm.03": 1,
+		"storm.04": 1, "storm.05": 1, "storm.06": 1, "storm.07": 1,
+		"storm.08": 1, "storm.09": 1, "storm.10": 1, "storm.11": 1,
+	}
+
+	var wg sync.WaitGroup
+	for _, site := range sites {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			site()
+		}()
+	}
+	close(gate) // release every parked goroutine to storm together
+	wg.Wait()
+
 	got := rec.fingerprintCounts()
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("fingerprint multiset mismatch under concurrency (scope bleed?):\n got  %v\n want %v", got, want)
