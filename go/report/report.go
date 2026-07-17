@@ -1,5 +1,8 @@
-// Package report wraps sentry-go with the helper API from the
-// error-reporting-and-coverage spec. Empty DSN = log-only no-op.
+// Package report provides direct error-reporting helpers for Go
+// applications using Sentry or GlitchTip.
+//
+// Shared runtime contract:
+// https://github.com/nikitatsym/tackbox/blob/main/docs/report-contracts.md
 package report
 
 import (
@@ -185,12 +188,11 @@ func Notify(ctx context.Context, msg string, err error, tags map[string]string, 
 	dispatchNotice(Notice{Msg: msg, Level: noticeNotice, Tags: tags, DedupKey: dedupKey, Cause: err})
 }
 
-// emit is the shared lane router for Error/Warn/Quiet and the task-failure
-// paths. The local log runs first; the user lane (D005) is dispatched
-// unconditionally before the init+rate gate when noticeLevel is non-empty;
-// capture runs last, behind that gate. key is both the rate-limit bucket and
-// the Sentry fingerprint - the public verbs pass a literal dedupKey, the
-// GoSafe wrapper passes a per-name key it builds directly.
+// emit is the shared lane router for Error/Warn/Quiet. The local log runs
+// first; the user lane (D005) is dispatched unconditionally before the
+// init+rate gate when noticeLevel is non-empty; capture runs last, behind that
+// gate. key is both the rate-limit bucket and the Sentry fingerprint, a literal
+// dedupKey from the public verbs.
 func emit(ctx context.Context, logLevel slog.Level, level sentry.Level, noticeLevel, msg string, err error, tags map[string]string, key string) {
 	logAt(ctx, logLevel, msg, err, tags)
 	if noticeLevel != "" {
@@ -244,14 +246,6 @@ func dispatchNotice(n Notice) {
 	fn(n)
 }
 
-// Option configures a background-task wrapper (GoSafe) or Panic. Silent() opts
-// a task's failure out of the user lane (telemetry only); the default surfaces.
-type Option func(*taskOptions)
-
-type taskOptions struct{ silent bool }
-
-func Silent() Option { return func(o *taskOptions) { o.silent = true } }
-
 func asError(v any) error {
 	if err, ok := v.(error); ok {
 		return err
@@ -260,21 +254,15 @@ func asError(v any) error {
 }
 
 // Panic captures a recovered panic at fatal level under the per-name
-// fingerprint panic:<name>. By default it also feeds the user lane; Silent()
-// (used by a quiet background task) opts out of the notice.
-func Panic(name string, recovered any, opts ...Option) {
-	o := taskOptions{}
-	for _, opt := range opts {
-		opt(&o)
-	}
+// fingerprint panic:<name> (D002) and feeds the user lane unconditionally. Pass
+// the recover() value as recovered.
+func Panic(name string, recovered any) {
 	logger.LogAttrs(context.Background(), levelFatal, "panic in "+name,
 		slog.Any("recovered", recovered),
 		slog.String("stack", string(debug.Stack())))
 	key := "panic:" + name
-	if !o.silent {
-		dispatchNotice(Notice{Msg: "panic in " + name, Level: noticeFatal,
-			Tags: map[string]string{"source": name}, DedupKey: key, Cause: asError(recovered)})
-	}
+	dispatchNotice(Notice{Msg: "panic in " + name, Level: noticeFatal,
+		Tags: map[string]string{"source": name}, DedupKey: key, Cause: asError(recovered)})
 	if !ready || shouldDrop(key) {
 		return
 	}
@@ -298,42 +286,6 @@ func Crumb(category, message string, data map[string]any) {
 		Level:     sentry.LevelInfo,
 		Timestamp: time.Now(),
 	})
-}
-
-// GoSafe runs fn in a goroutine wrapped by recover; panics and returned
-// errors are captured, each under a per-name fingerprint (panic:<name>,
-// go.task:<name>) so goroutines group and rate-limit independently. By default
-// a failure also surfaces to the user lane; Silent() routes it telemetry-only.
-func GoSafe(name string, fn func() error, opts ...Option) {
-	o := taskOptions{}
-	for _, opt := range opts {
-		opt(&o)
-	}
-	go func() {
-		defer func() {
-			if rec := recover(); rec != nil {
-				Panic(name, rec, opts...)
-			}
-		}()
-		reportTaskErr(name, fn(), o.silent)
-	}()
-}
-
-// reportTaskErr captures a background task's returned error under a per-name
-// fingerprint (go.task:<name>), mirroring Panic's per-name grouping. A library
-// primitive builds this key directly; the literal-dedupKey rule governs app
-// call sites, not the wrapper. A silent task captures telemetry-only at warning
-// (the quiet lane); otherwise error-level plus the user lane. No-op on nil.
-func reportTaskErr(name string, err error, silent bool) {
-	if err == nil {
-		return
-	}
-	logLevel, level, notice := slog.LevelError, sentry.LevelError, noticeError
-	if silent {
-		logLevel, level, notice = slog.LevelWarn, sentry.LevelWarning, ""
-	}
-	emit(context.Background(), logLevel, level, notice, "background task failed", err,
-		map[string]string{"task": name}, "go.task:"+name)
 }
 
 // WrapHandler returns h with recover+capture; falls back to a
