@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"net/url"
 	"os"
 	"runtime/debug"
@@ -20,7 +19,6 @@ import (
 	"time"
 
 	"github.com/getsentry/sentry-go"
-	sentryhttp "github.com/getsentry/sentry-go/http"
 )
 
 type Options struct {
@@ -48,7 +46,6 @@ type Options struct {
 
 var (
 	ready        bool
-	httpMW       func(http.Handler) http.Handler
 	rateWindow   = 60 * time.Second
 	flushTimeout = 2 * time.Second
 	lastSent     sync.Map
@@ -100,12 +97,6 @@ func Init(opts Options) error {
 	if opts.FlushTimeout > 0 {
 		flushTimeout = opts.FlushTimeout
 	}
-	httpMW = sentryhttp.New(sentryhttp.Options{
-		Repanic:         true,
-		WaitForDelivery: false,
-		Timeout:         2 * time.Second,
-	}).Handle
-
 	if opts.Verify {
 		timeout := opts.VerifyTimeout
 		if timeout <= 0 {
@@ -285,36 +276,6 @@ func Crumb(category, message string, data map[string]any) {
 		Data:      data,
 		Level:     sentry.LevelInfo,
 		Timestamp: time.Now(),
-	})
-}
-
-// WrapHandler returns h with recover+capture; falls back to a
-// minimal recover when Init was not called.
-func WrapHandler(name string, h http.Handler) http.Handler {
-	if httpMW != nil {
-		// sentryhttp captures the panic (enriched with request context) then
-		// re-panics (Repanic:true) without writing a response; the outer recover
-		// turns that re-panic into the documented 500.
-		wrapped := httpMW(h)
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			defer func() {
-				// no-report: sentryhttp already captured this panic; this recover
-				// exists only to fulfill the documented 500 contract, not to report
-				if rec := recover(); rec != nil {
-					http.Error(w, "internal server error", http.StatusInternalServerError)
-				}
-			}()
-			wrapped.ServeHTTP(w, r)
-		})
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if rec := recover(); rec != nil {
-				Panic("http."+name, rec)
-				http.Error(w, "internal server error", http.StatusInternalServerError)
-			}
-		}()
-		h.ServeHTTP(w, r)
 	})
 }
 

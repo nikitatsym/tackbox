@@ -128,16 +128,6 @@ function reportPanic(name, recovered) {
   })
 }
 
-function setupGlobalHandlers() {
-  if (typeof window === 'undefined') return
-  window.addEventListener('error', e => {
-    reportError('uncaught global error from window', e.error || e.message, { source: 'window.error' }, 'global.uncaught')
-  })
-  window.addEventListener('unhandledrejection', e => {
-    reportError('unhandled promise rejection from window', e.reason, { source: 'window.unhandledrejection' }, 'global.unhandled')
-  })
-}
-
 function maskDSN(dsn) {
   // no-report: malformed user DSN, opaque marker is the recovery
   try {
@@ -154,9 +144,9 @@ function dispatchEventSafely(name, detail) {
   if (typeof window === 'undefined' || typeof CustomEvent === 'undefined') return
   // Re-entrancy guard: a throwing `tackbox:error` listener surfaces via
   // window.onerror (the DOM routes listener failures there, not to dispatchEvent),
-  // which setupGlobalHandlers turns back into reportError -> dispatch on the same
-  // stack. Skip the nested dispatch so that cannot loop; sequential dispatches
-  // are unaffected (D005 deliver-always intact).
+  // which an app-owned global handler can turn back into reportError -> dispatch
+  // on the same stack. Skip the nested dispatch so that cannot loop; sequential
+  // dispatches are unaffected (D005 deliver-always intact).
   if (dispatching) {
     console.warn('[tackbox] report: nested tackbox:error dispatch skipped (listener-failure re-entry)')
     return
@@ -183,5 +173,4 @@ module.exports = {
   reportSynthError,
   notify,
   reportPanic,
-  setupGlobalHandlers,
 }

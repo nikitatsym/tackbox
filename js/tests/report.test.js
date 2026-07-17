@@ -61,6 +61,15 @@ function load() {
   return require(REPORT_PATH)
 }
 
+// module.exports pins the exact ordered reporting-only key list.
+test('module.exports is the exact ordered reporting-only key list', () => {
+  const report = load()
+  assert.deepEqual(Object.keys(report), [
+    'init', 'flush', 'isReady', 'verify', 'reportError', 'reportWarn',
+    'reportQuiet', 'reportSynthError', 'notify', 'reportPanic',
+  ])
+})
+
 // (a) DSN unset -> not ready -> capture disabled, but the user lane still fires.
 test('report dispatches to the user lane even when not ready (DSN unset)', () => {
   const report = load()
@@ -85,7 +94,7 @@ test('rate window drops the second capture but never the dispatch', () => {
 })
 
 // (D-5) re-entrancy guard: a throwing tackbox:error listener surfaces via
-// window.onerror, which setupGlobalHandlers turns back into reportError ->
+// window.onerror, which an app-owned global handler turns back into reportError ->
 // dispatch on the same stack. The guard skips the nested dispatch so it cannot
 // loop; sequential dispatches are unaffected.
 test('a re-entering dispatch is skipped (no infinite loop, one outer dispatch)', () => {

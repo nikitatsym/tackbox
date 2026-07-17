@@ -151,7 +151,7 @@ mode.
 ## Report helper
 
 ```js
-import { init, reportError, reportWarn, setupGlobalHandlers, flush } from 'tackbox/report'
+import { init, reportError, reportWarn, flush } from 'tackbox/report'
 
 init({
   dsn: import.meta.env.VITE_SENTRY_DSN || '',
@@ -159,7 +159,6 @@ init({
   verify: true,         // confirm connectivity at startup
   debug: false,
 })
-setupGlobalHandlers()
 // ... on shutdown:
 await flush(2000)
 
@@ -176,6 +175,22 @@ and stays log-only. `init({ verify: true })` sends one healthcheck
 event with `fingerprint: ["report.startup"]` and flushes; glitchtip
 groups all startups under one issue, no spam.
 
+### Global handlers
+
+The helper installs no process-global hook. To route uncaught errors and
+promise rejections into the report lane, the app owns the listeners:
+
+```js
+window.addEventListener('error', e => {
+  reportError('uncaught global error', e.error || e.message,
+    { source: 'window.error' }, 'global.uncaught')
+})
+window.addEventListener('unhandledrejection', e => {
+  reportError('unhandled promise rejection', e.reason,
+    { source: 'window.unhandledrejection' }, 'global.unhandled')
+})
+```
+
 ## Bundled API
 
 - `init(opts)`, `flush(timeout)`, `verify(timeout)`, `isReady()`
@@ -188,22 +203,20 @@ groups all startups under one issue, no spam.
   the user lost connectivity)
 - `reportSynthError(msg, tags, dedupKey)`
 - `reportPanic(name, recovered)`
-- `setupGlobalHandlers()` wires `window.error` and
-  `window.unhandledrejection` to `reportError`
 
-The `tackbox:error` custom event is the user lane: it is dispatched on the
-window before the init + rate-window gate (and is never rate-limited) after
-each `reportError` / `reportWarn` / `notify` / `reportPanic` call, so a
-single top-level component can render a toast. `reportQuiet` does not
-dispatch it. The event `detail` carries `{ msg, cause, tags, dedupKey,
-level }`; the listener coalesces on `dedupKey`. Capture is gated behind init
-and the per-`dedupKey` rate window; the user lane is not.
+Sink ordering, the never-suppressed user lane, and the per-`dedupKey` capture
+rate window are the cross-language runtime contract:
+[`../docs/report-contracts.md`](../docs/report-contracts.md). JS-specific: the
+user lane is the `tackbox:error` custom event, dispatched on the window after
+each `reportError` / `reportWarn` / `notify` / `reportPanic` call (`reportQuiet`
+does not dispatch it). The event `detail` carries `{ msg, cause, tags, dedupKey,
+level }`; the listener coalesces on `dedupKey`.
 
 Platform limit: a `tackbox:error` listener that throws is not observable from
 `dispatchEvent` - the browser routes a listener failure to `window.onerror` by
 design. So the JS user lane cannot capture its own listener's failure the way
 Go, Python, and Java capture a throwing `report.notifier`. A module-level
 re-entrancy guard stops the one loop this opens (a throwing listener reaching
-`window.onerror`, which `setupGlobalHandlers` turns back into
+`window.onerror`, which an app-owned global handler turns back into
 `reportError` -> dispatch): a dispatch already in progress on the stack skips
 the nested one and logs locally instead. Sequential dispatches are unaffected.
