@@ -18,10 +18,7 @@
   <packaging>bundle</packaging>
 
   <name>tackbox report (Java)</name>
-  <description>Runtime error-capture helper wrapping sentry-java with the
-    tackbox error-reporting API (error/warn/quiet/notify/panic/crumb, per-name fingerprints,
-    log-before-drop, concurrency-isolated capture). Empty DSN = log-only no-op.
-    Java mirror of go/report and js/report.js.</description>
+  <description>Direct error-reporting helpers for Java applications using Sentry or GlitchTip.</description>
   <url>https://github.com/nikitatsym/tackbox</url>
 
   <licenses>
@@ -83,12 +80,11 @@
       </plugin>
 
       <!-- OSGi bundle: emit MANIFEST.MF with Bundle-SymbolicName /
-           Export-Package / Import-Package for the Eclipse/Equinox (sts)
-           stack. sentry-java 8.x ships NO OSGi manifest, so it is imported here
-           and the consumer supplies it as a bundle (see DESIGN.md "OSGi + the
-           sentry-java dependency"); the Embed-Dependency alternative is
-           documented there. java.* (System.Logger) is boot-delegated and never
-           an OSGi import, so it needs no Import-Package entry. -->
+           Export-Package / Import-Package for the Eclipse/Equinox stack.
+           sentry-java 8.x ships no OSGi manifest, so it is imported here and the
+           consumer supplies it as a bundle (see DESIGN.md "OSGi packaging").
+           java.* (System.Logger) is boot-delegated, never an OSGi import, so it
+           needs no Import-Package entry. -->
       <plugin>
         <groupId>org.apache.felix</groupId>
         <artifactId>maven-bundle-plugin</artifactId>
@@ -109,9 +105,9 @@
 
   <profiles>
     <!-- Release-only: GPG signing, the sources/javadoc jars Central requires,
-         and the Central Portal deploy. Kept OUT of the default build so the
-         dev/CI flow (`mvn -f java/report/pom.xml package`/`test`) needs no GPG
-         key and no Central credentials. Activate with `-Prelease`. -->
+         and the Central Portal deploy, kept OUT of the default build so the
+         dev/CI flow needs no GPG key and no Central credentials. Release
+         runbook: ../../docs/publishing-helpers.md. -->
     <profile>
       <id>release</id>
       <build>
@@ -171,8 +167,7 @@
 
           <!-- Sonatype Central Portal publisher. extensions=true rebinds the
                `deploy` goal to upload the signed bundle to the portal.
-               publishingServerId must match the <server><id> in settings.xml
-               that carries the Central Portal user token. -->
+               publishingServerId must match the <server><id> in settings.xml. -->
           <plugin>
             <groupId>org.sonatype.central</groupId>
             <artifactId>central-publishing-maven-plugin</artifactId>
@@ -180,9 +175,8 @@
             <extensions>true</extensions>
             <configuration>
               <publishingServerId>central</publishingServerId>
-              <!-- Upload to the portal but wait for a manual "Publish" click in
-                   the Central UI (safer for a first release). Flip to true to
-                   release automatically once validation passes. -->
+              <!-- false uploads to the portal and holds; finish the release per
+                   ../../docs/publishing-helpers.md. -->
               <autoPublish>false</autoPublish>
             </configuration>
           </plugin>

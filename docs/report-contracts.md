@@ -27,11 +27,11 @@ rate-limit state, and are not reporting events.
 
 ## D002 - per-name fingerprints for background tasks and panics
 
-The background-task and panic primitives fingerprint and rate-limit
-per task name, not per class: the task error path keys
-`go.task:<name>` (Go) / `task:<name>` (Java), panic keys
-`panic:<name>`. Two differently named tasks failing inside one rate
-window each surface as their own issue instead of collapsing.
+The panic primitive and Go's background-task primitive fingerprint and
+rate-limit per name, not per class: panic keys `panic:<name>` in every
+helper, and Go's background-task error path keys `go.task:<name>`. Two
+differently named sources failing inside one rate window each surface as
+their own issue instead of collapsing.
 
 Why: a background failure needs individual telemetry visibility; a
 shared constant key means one fingerprint and one rate bucket for

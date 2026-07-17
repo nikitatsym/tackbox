@@ -3,8 +3,8 @@ package nl.tsym.tackbox.report;
 import io.sentry.SentryOptions;
 import java.lang.System.Logger;
 
-/** Init config, mirroring go/report's Options struct. Fluent setters return
- *  this for one-liner construction; every field has a working default. */
+/** Init config. Fluent setters return this for one-liner construction; every
+ *  field has a working default. */
 public final class Options {
 
     /** Empty DSN makes every capture a log-only no-op. */
@@ -32,14 +32,12 @@ public final class Options {
     /** Suppress the WARN log emitted on an empty DSN. */
     public boolean silentMissing = false;
 
-    /** Local log sink. Null uses System.getLogger("nl.tsym.tackbox.report").
-     *  Every capture logs here before it ships, so log-only mode (empty DSN)
-     *  keeps the full msg + tags context. */
+    /** Local log sink. Null uses System.getLogger("nl.tsym.tackbox.report"). */
     public Logger logger;
 
     /** Optional event hook applied to every outgoing event (scope already
-     *  merged): scrub fields here, or return null to drop. Mirrors sentry's
-     *  beforeSend. Left null in production means no transform. */
+     *  merged): scrub fields here, or return null to drop. Left null means no
+     *  transform. */
     public SentryOptions.BeforeSendCallback beforeSend;
 
     public Options dsn(String v) { this.dsn = v; return this; }

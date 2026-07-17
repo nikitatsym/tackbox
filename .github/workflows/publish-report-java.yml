@@ -43,7 +43,7 @@ jobs:
       - name: Test report (Java)
         run: mvn -B -f java/report/pom.xml verify
 
-      # Version comes from the pom (0.1.0); the tag is only the trigger. The
+      # Version comes from the pom; the tag is only the trigger. The
       # `release` profile adds sources+javadoc jars, GPG signing, and the
       # Central Portal deploy (default `package`/`test` needs none of these).
       - name: Deploy signed artifacts to Central Portal
