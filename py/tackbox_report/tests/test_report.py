@@ -1,20 +1,40 @@
-"""Unit tests for the tackbox_report first-cut capture helper.
+"""Unit tests for the tackbox_report capture helper.
 
-Covers the spec-required behaviours: empty-DSN no-op, log-before-drop invariant,
-60s rate-limit drop, per-name task fingerprint, and concurrency isolation.
+Covers empty-DSN no-op, log-before-drop invariant, 60s rate-limit drop, panic
+fingerprints, the user lane, and concurrency isolation.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import threading
 
 import pytest
-import sentry_sdk
 
 import tackbox_report as report
 from conftest import records
+
+
+# --------------------------------------------------------------------------
+# public surface: reporting verbs only
+# --------------------------------------------------------------------------
+def test_public_api_is_reporting_only():
+    assert report.__all__ == [
+        "ReportError",
+        "Notice",
+        "init",
+        "dsn_from_env",
+        "is_ready",
+        "verify",
+        "flush",
+        "report_error",
+        "report_warn",
+        "report_quiet",
+        "notify",
+        "report_panic",
+        "set_notifier",
+        "crumb",
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -131,39 +151,7 @@ def test_rate_limit_reopens_after_window(events, monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# background-task wrapper (GoSafe analog) - per-name fingerprint task:<name>
-# --------------------------------------------------------------------------
-def test_run_task_raised_exception_task_fingerprint(events):
-    def boom():
-        raise ValueError("in task")
-
-    report.run_task("importer", boom, join=True)
-    assert len(events) == 1
-    assert events[0]["fingerprint"] == ["task:importer"]
-    assert events[0]["tags"]["task"] == "importer"
-
-
-def test_run_task_returned_exception_task_fingerprint(events):
-    # mirrors Go func() error: a returned error is captured, not raised.
-    report.run_task("syncer", lambda: RuntimeError("returned"), join=True)
-    assert len(events) == 1
-    assert events[0]["fingerprint"] == ["task:syncer"]
-
-
-def test_run_task_success_captures_nothing(events):
-    report.run_task("ok-task", lambda: None, join=True)
-    assert events == []
-
-
-def test_run_task_per_name_independent_fingerprints(events):
-    report.run_task("alpha", lambda: RuntimeError("a"), join=True)
-    report.run_task("beta", lambda: RuntimeError("b"), join=True)
-    fps = sorted(e["fingerprint"][0] for e in events)
-    assert fps == ["task:alpha", "task:beta"]
-
-
-# --------------------------------------------------------------------------
-# concurrency smoke: no scope/fingerprint bleed across threads (D003 analog)
+# concurrency smoke: no scope/fingerprint bleed across threads (D003)
 # --------------------------------------------------------------------------
 def test_concurrent_captures_no_scope_bleed(events):
     n = 24
@@ -186,120 +174,6 @@ def test_concurrent_captures_no_scope_bleed(events):
     for e in events:
         worker_id = e["tags"]["worker"]  # "w<i>"
         assert e["fingerprint"] == [f"area.k{worker_id[1:]}"]
-
-
-def test_concurrent_run_tasks_per_name_fingerprints(events):
-    n = 16
-    threads = [
-        report.run_task(f"task{i}", lambda: RuntimeError("x"))
-        for i in range(n)
-    ]
-    for t in threads:
-        t.join()
-    fps = sorted(e["fingerprint"][0] for e in events)
-    assert fps == sorted(f"task:task{i}" for i in range(n))
-
-
-# --------------------------------------------------------------------------
-# asyncio background-task wrapper (run_task_async) - GoSafe analog for asyncio
-# --------------------------------------------------------------------------
-def test_run_task_async_raised_exception_task_fingerprint(events):
-    async def boom():
-        raise ValueError("in task")
-
-    async def main():
-        with pytest.raises(ValueError, match="in task"):
-            await report.run_task_async("importer", boom())
-
-    asyncio.run(main())
-    assert len(events) == 1
-    assert events[0]["fingerprint"] == ["task:importer"]
-    assert events[0]["tags"]["task"] == "importer"
-
-
-def test_run_task_async_returned_exception_task_fingerprint(events):
-    # mirrors Go func() error: a returned error is captured, then re-raised so
-    # the awaiter observes it (an asyncio.Task carries its outcome).
-    async def syncer():
-        return RuntimeError("returned")
-
-    async def main():
-        with pytest.raises(RuntimeError, match="returned"):
-            await report.run_task_async("syncer", syncer())
-
-    asyncio.run(main())
-    assert len(events) == 1
-    assert events[0]["fingerprint"] == ["task:syncer"]
-
-
-def test_run_task_async_success_captures_nothing(events):
-    async def ok():
-        return None
-
-    async def main():
-        await report.run_task_async("ok-task", ok())
-
-    asyncio.run(main())
-    assert events == []
-
-
-def test_run_task_async_per_name_independent_fingerprints(events):
-    async def fail(msg):
-        raise RuntimeError(msg)
-
-    async def main():
-        with pytest.raises(RuntimeError, match="a"):
-            await report.run_task_async("alpha", fail("a"))
-        with pytest.raises(RuntimeError, match="b"):
-            await report.run_task_async("beta", fail("b"))
-
-    asyncio.run(main())
-    fps = sorted(e["fingerprint"][0] for e in events)
-    assert fps == ["task:alpha", "task:beta"]
-
-
-def test_run_task_async_awaited_failure_reraises(events):
-    # await surfaces the failure (the Task carries its outcome); the failure is
-    # still captured exactly once.
-    async def boom():
-        raise ValueError("surfaced")
-
-    async def main():
-        with pytest.raises(ValueError, match="surfaced"):
-            await report.run_task_async("t", boom())
-
-    asyncio.run(main())
-    assert len(events) == 1
-
-
-# --------------------------------------------------------------------------
-# asyncio concurrency: no scope/fingerprint bleed across tasks (D003 analog).
-# Each task forks its own isolation_scope(); a tag set inside a task and its
-# task:<name> fingerprint must land only on that task's event.
-# --------------------------------------------------------------------------
-def test_concurrent_run_tasks_async_no_scope_bleed(events):
-    n = 16
-
-    async def failing(i):
-        sentry_sdk.set_tag("iso", f"i{i}")  # on this task's isolation scope
-        await asyncio.sleep(0)  # yield so siblings interleave before capture
-        raise RuntimeError(str(i))
-
-    async def main():
-        tasks = [report.run_task_async(f"task{i}", failing(i)) for i in range(n)]
-        # Each task re-raises its failure now; return_exceptions collects them
-        # instead of the first one cancelling the gather.
-        return await asyncio.gather(*tasks, return_exceptions=True)
-
-    results = asyncio.run(main())
-    assert all(isinstance(r, RuntimeError) for r in results)  # each surfaced
-    assert len(events) == n
-    fps = sorted(e["fingerprint"][0] for e in events)
-    assert fps == sorted(f"task:task{i}" for i in range(n))  # distinct, no bleed
-    for e in events:
-        name = e["tags"]["task"]  # "task<i>"
-        assert e["fingerprint"] == [f"task:{name}"]
-        assert e["tags"]["iso"] == f"i{name[4:]}"  # isolation tag did not bleed
 
 
 # --------------------------------------------------------------------------
@@ -356,42 +230,6 @@ def test_report_panic_dispatches_fatal_notice(events, notices):
     assert notices[0].level == "fatal"
     assert notices[0].dedup_key == "panic:ipc-loop"
     assert notices[0].msg == "panic in ipc-loop"
-
-
-def test_run_task_default_feeds_user_lane(events, notices):
-    def boom():
-        raise ValueError("in task")
-
-    report.run_task("indexer", boom, join=True)
-    assert len(events) == 1
-    assert events[0]["level"] == "error"
-    assert len(notices) == 1
-    assert notices[0].dedup_key == "task:indexer"
-
-
-def test_run_task_quiet_opt_out(events, notices):
-    def boom():
-        raise ValueError("in task")
-
-    report.run_task("indexer", boom, join=True, quiet=True)
-    assert len(events) == 1
-    assert events[0]["level"] == "warning"  # quiet lane
-    assert events[0]["fingerprint"] == ["task:indexer"]
-    assert notices == []  # quiet task: telemetry only
-
-
-def test_run_task_async_quiet_opt_out(events, notices):
-    async def boom():
-        raise ValueError("in task")
-
-    async def main():
-        with pytest.raises(ValueError, match="in task"):
-            await report.run_task_async("indexer", boom(), quiet=True)
-
-    asyncio.run(main())
-    assert len(events) == 1
-    assert events[0]["level"] == "warning"
-    assert notices == []
 
 
 def test_notifier_exception_does_not_break_caller(events):

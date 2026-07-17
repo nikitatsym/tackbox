@@ -1,9 +1,7 @@
-# STANDALONE packaging for the tackbox_report runtime capture helper.
-# Deliberately separate from py/pyproject.toml (the tackbox linter/CLI): a repo
-# depends on the runtime helper without pulling flake8, and on the linter
-# without pulling sentry-sdk. Published to PyPI via Trusted Publishing by
-# .github/workflows/publish-report-py.yml on a `report-py-v*` tag (owner setup:
-# docs/publishing-helpers.md), decoupled from the linter's release.
+# STANDALONE packaging for the tackbox_report runtime helper, deliberately
+# separate from py/pyproject.toml (the tackbox linter/CLI): a repo depends on
+# the runtime helper without pulling flake8, and on the linter without pulling
+# sentry-sdk. Release procedure: docs/publishing-helpers.md.
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
@@ -11,15 +9,15 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tackbox-report"
 version = "0.2.0"
-description = "Runtime error-capture helper mirroring go/report and js/report.js: log-before-drop, per-name fingerprints, rate-limited Sentry/Glitchtip capture."
+description = "Direct error-reporting helpers for Python applications using Sentry or GlitchTip."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Nikita Tsymbal", email = "nikita.tsym@gmail.com" }]
 keywords = ["sentry", "glitchtip", "error-reporting", "capture", "observability"]
-# sentry-sdk 2.x forking scope API (new_scope / isolation_scope) is load-bearing
-# for D003 isolation and changed across the 1.x->2.x major, so the range is
-# capped below 3.x rather than an open-ended floor.
+# sentry-sdk 2.x forking scope API (new_scope) is load-bearing for per-capture
+# D003 isolation, so the range is capped below 3.x rather than an open-ended
+# floor.
 dependencies = ["sentry-sdk>=2.0,<3.0"]
 classifiers = [
     "Development Status :: 3 - Alpha",

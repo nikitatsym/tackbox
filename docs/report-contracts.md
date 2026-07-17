@@ -6,11 +6,30 @@ original rules/DECISIONS.md ids - code comments, DESIGN docs, and the
 specs reference them as D002/D003/D005. Rule decisions stay in
 rules/DECISIONS.md; this file holds library behavior.
 
+## Direct reporting lanes
+
+Language-specific helper names map to these semantic verbs.
+`reportSynthError` follows the `error` row; `crumb` applies where a package
+exposes it.
+
+| semantic verb | local log | user lane | telemetry |
+| --- | --- | --- | --- |
+| `error` | error | error notice | error event |
+| `warn` | warning | warning notice | warning event |
+| `quiet` | warning | none | warning event |
+| `notify` | warning | notice | none |
+| `panic` | fatal-equivalent | fatal notice | fatal event |
+| `crumb` | none | none | breadcrumb, not an event |
+
+D005 below owns sink ordering and rate-limit behavior; this table only maps
+direct verbs to lanes. Breadcrumbs are readiness-gated, do not consume D005
+rate-limit state, and are not reporting events.
+
 ## D002 - per-name fingerprints for background tasks and panics
 
 The background-task and panic primitives fingerprint and rate-limit
 per task name, not per class: the task error path keys
-`go.task:<name>` (Go) / `task:<name>` (Python, Java), panic keys
+`go.task:<name>` (Go) / `task:<name>` (Java), panic keys
 `panic:<name>`. Two differently named tasks failing inside one rate
 window each surface as their own issue instead of collapsing.
 
@@ -25,24 +44,19 @@ unbounded cardinality from untrusted input. The blessed helper builds
 these keys through its package-internal capture core by design - it
 owns a small closed set of task names - not via an escape marker.
 
-## D003 - concurrency-isolated capture
+## D003 - concurrency-isolated direct capture
 
-Every event-capture site owns an isolated scope: go/report clones the
-current hub per capture (`sentry.CurrentHub().Clone()` +
-`hub.WithScope`); the Python and Java helpers hold the same guarantee
-through their SDKs' isolation idioms (see each helper's DESIGN.md).
-Covers the error/warn core, panic, and the Verify healthcheck.
+Each direct event capture owns an isolated event scope. The guarantee covers
+error, warning, quiet, panic, and verify captures in every helper that exposes
+those operations.
 
-Why: background tasks capture concurrently on a process-wide hub, and
-a shared scope stack bleeds fingerprint/tags between concurrent
-captures - memory-safe but grouping-corrupt. Isolation is what makes
-D002's per-name fingerprints hold under real concurrency.
+Concurrent reporter calls must not bleed fingerprints or tags between events.
+Isolation preserves grouping and event context under application concurrency.
 
-Named gap: breadcrumbs still write to the global hub; the packages
-are not request-scoped, so breadcrumb isolation stays out of scope.
-The rate limit is memory-safe under concurrency (independently of
-scope isolation); the check-then-set is not atomic, so a rare race may
-let one extra in-window repeat ship - benign for a rate limit.
+Named gap: breadcrumbs use process-global SDK state and remain outside the
+event-scope guarantee. The rate-limit maps are memory-safe under concurrency;
+the Go and Java check-then-set operations may admit one extra in-window
+capture during a race.
 
 ## D005 - dedup rate-limits telemetry, never the user lane
 

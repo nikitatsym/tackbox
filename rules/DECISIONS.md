@@ -98,7 +98,7 @@ lint rule; its boundary with ERC006 arm 3 is recorded there.
 
 Library contract, moved to docs/report-contracts.md (id kept).
 
-## D004 - runtime helper capture APIs are tier-1 reporters (2026-07-15)
+## D004 - runtime helper capture APIs are tier-1 reporters (2026-07-17)
 
 Rules affected: TBX001 (python swallow), JV001 (java swallow), JV005
 (exit), JV006 (double capture), and every rule sharing capture
@@ -108,11 +108,12 @@ Decision: the runtime capture helpers' public capture APIs are
 recognized as tier-1 reporters: a consumer's catch that hands the
 caught error to one is credited with no `no-report` marker and no
 `.tackbox-reporters` entry - adopting the blessed path costs zero
-lint ceremony. The capture set is error / warn / quiet / panic in
-each language's naming; quiet skips only the user lane, so it is a
-capture and carries the dedupKey-shape validation where the engine
-has it. notify is never a capture - whether notify terminates a
-failure path is D006's separately gated decision.
+lint ceremony. Tier-1 recognition covers direct reporting verbs. The
+capture set is error / warn / quiet / panic in each language's naming;
+quiet skips only the user lane, so it is a capture and carries the
+dedupKey-shape validation where the engine has it. notify is never a
+capture - whether notify terminates a failure path is D006's
+separately gated decision.
 
 Recognition per language:
 
@@ -132,10 +133,7 @@ Argument-flow is required everywhere: the caught error must reach the
 call. Recognition only loosens - it credits more capture sites - so
 it cannot introduce a swallow finding. JV006 counts a recognized
 Report capture as a capture (report + rethrow is a double capture),
-as it counts slf4j and declared reporters. The helpers' own
-background-task wrappers route their internal except through the
-capture core, so that boundary is a recognized capture and carries no
-markers.
+as it counts slf4j and declared reporters.
 
 Scope unchanged (D001): capture-shape recognition, decidable from the
 AST and imports, not value or content analysis.
@@ -222,7 +220,7 @@ and the approval gate. In-call skip reasons (`t.Skip("...")`,
 `{ skip: '...' }`) keep the existing non-empty rule: they are visible
 strings in the test body, not lint escapes.
 
-## D010 - Python tier-1 recognition by import origin (2026-07-15)
+## D010 - Python tier-1 recognition by import origin (2026-07-17)
 
 Rules affected: TBX001 (swallow credit), TBX010 (notify gate,
 double-lane), TBX011 (reporter args) - every pyrules site that
@@ -268,12 +266,17 @@ Consequences:
 - TBX011's local-defs exemption is obsolete (origin resolution makes
   it precise) and is removed.
 
-The tackbox_report package itself (a tackbox_report path segment)
-self-credits: its own top-level defs of the verbs are the origin, so
-internal routing keeps its swallow credit (D004's marker retirement
-stands), while TBX010/TBX011 do not bind the owner - the library
-builds per-name keys by design (D002). Consumer repos never lint the
-installed package, so the segment rule is inert outside this repo.
+The tackbox_report package itself (a tackbox_report path segment,
+`_is_owner_file`) self-credits: its own top-level defs of the verbs are
+the origin, so internal routing keeps its swallow credit (D004's marker
+retirement stands). The tackbox_report package self-credits only its
+direct reporting verbs. TBX010/TBX011 do not bind the tackbox_report
+owner; they constrain consumer call sites, while the package owns its
+internal direct-reporting implementation. It builds its own dedup keys
+by design - report_panic's `panic:<name>` fingerprint (D002) is a
+package-internal construction, not a consumer call site. Consumer repos
+never lint the installed package, so the segment rule is inert outside
+this repo.
 
 Tier-2 stays name-based (declared name + argument flow + dead-symbol
 validation): origin for tier-2 would need module-path-to-file
