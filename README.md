@@ -376,6 +376,11 @@ Direct reporting helpers ship per language; their shared runtime behavior -
 lane routing, telemetry dedup, panic grouping, and capture isolation - is
 specified in [docs/report-contracts.md](docs/report-contracts.md).
 
+- [Go](go/report/README.md)
+- [JavaScript / TypeScript](js/README.md)
+- [Python](py/tackbox_report/README.md)
+- [Java](java/report/README.md)
+
 ## Agent hook (Claude Code)
 
 `tackbox hook` wires the rules into an agent's edit loop. It reads a

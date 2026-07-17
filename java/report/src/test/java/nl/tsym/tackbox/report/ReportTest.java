@@ -3,23 +3,22 @@ package nl.tsym.tackbox.report;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.sentry.SentryEvent;
 import io.sentry.SentryLevel;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Modifier;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterEach;
@@ -75,25 +74,6 @@ class ReportTest {
     }
 
     @Test
-    void taskWrapperUsesPerNameFingerprint() {
-        Report.init(recordingOptions());
-        Report.safeRunnable("ingest", () -> {
-            throw new IllegalStateException("boom");
-        }).run();
-        assertOneTaskEvent("ingest");
-    }
-
-    // Exactly one captured task event: fingerprint task:<name>, level ERROR,
-    // tag task=<name>. The shared shape of every report-and-swallow path.
-    private void assertOneTaskEvent(String name) {
-        assertEquals(1, events.size(), "one captured event (report-and-swallow, no double-capture)");
-        SentryEvent e = events.get(0);
-        assertEquals(List.of("task:" + name), e.getFingerprints());
-        assertEquals(SentryLevel.ERROR, e.getLevel());
-        assertEquals(name, e.getTag("task"));
-    }
-
-    @Test
     void concurrentCapturesDoNotBleedScope() throws InterruptedException {
         Report.init(recordingOptions());
         int n = 32;
@@ -122,57 +102,6 @@ class ReportTest {
                 .mapToObj(i -> "area.k" + i)
                 .collect(Collectors.toSet());
         assertEquals(expected, seen, "fingerprints must not bleed across threads");
-    }
-
-    @Test
-    void wrappedExecutorCapturesThrowingTask() throws InterruptedException {
-        Report.init(recordingOptions());
-        ExecutorService pool = Report.wrap("ingest", Executors.newSingleThreadExecutor());
-        pool.execute(() -> {
-            throw new IllegalStateException("boom");
-        });
-        pool.shutdown();
-        assertTrue(pool.awaitTermination(5, TimeUnit.SECONDS), "task must finish");
-        assertOneTaskEvent("ingest");
-    }
-
-    @Test
-    void submitCallableFailureSurfacesViaFuture() {
-        assertSubmitFailureSurfaces(pool ->
-                pool.submit((Callable<String>) () -> {
-                    throw new IllegalStateException("boom");
-                }));
-    }
-
-    @Test
-    void submitRunnableFailureSurfacesViaFuture() {
-        assertSubmitFailureSurfaces(pool ->
-                pool.submit((Runnable) () -> {
-                    throw new IllegalStateException("boom");
-                }));
-    }
-
-    @Test
-    void submitRunnableWithResultFailureSurfacesViaFuture() {
-        assertSubmitFailureSurfaces(pool ->
-                pool.submit(() -> {
-                    throw new IllegalStateException("boom");
-                }, "done"));
-    }
-
-    // A failed task on a result-bearing submit surfaces through Future.get()
-    // (ExecutionException wrapping the task's own exception), NOT a swallowed
-    // null, and the unwrapped path captures nothing - the caller owns the site.
-    private void assertSubmitFailureSurfaces(Function<ExecutorService, Future<?>> submit) {
-        Report.init(recordingOptions());
-        ExecutorService pool = Report.wrap("compute", Executors.newSingleThreadExecutor());
-        Future<?> f = submit.apply(pool);
-        ExecutionException ex = assertThrows(ExecutionException.class,
-                () -> f.get(5, TimeUnit.SECONDS),
-                "a failed submit surfaces via Future.get, not a swallowed null");
-        assertTrue(ex.getCause() instanceof IllegalStateException, "Future.get cause is the task's own exception");
-        assertTrue(events.isEmpty(), "submit delegates unwrapped: the result-bearing path never captures");
-        pool.shutdown();
     }
 
     @Test
@@ -253,31 +182,16 @@ class ReportTest {
     }
 
     @Test
-    void panicDefaultUserLaneAndQuietOptOut() {
+    void panicFeedsUserLaneAndCaptures() {
         Report.init(recordingOptions());
         Report.setNotifier(notices::add);
         Report.panic("tray-loop", "boom");
-        Report.panic("indexer", "boom", Report.TaskMode.QUIET);
-        assertEquals(1, notices.size(), "only the default panic feeds the user lane");
+        assertEquals(1, notices.size(), "panic feeds the user lane");
         assertEquals("fatal", notices.get(0).level());
         assertEquals("panic:tray-loop", notices.get(0).dedupKey());
-        assertEquals(2, events.size(), "both panics capture (per-name)");
-    }
-
-    @Test
-    void wrappedExecutorQuietTaskSkipsUserLane() throws InterruptedException {
-        Report.init(recordingOptions());
-        Report.setNotifier(notices::add);
-        ExecutorService pool = Report.wrap("ingest", Executors.newSingleThreadExecutor(), Report.TaskMode.QUIET);
-        pool.execute(() -> {
-            throw new IllegalStateException("boom");
-        });
-        pool.shutdown();
-        assertTrue(pool.awaitTermination(5, TimeUnit.SECONDS), "task must finish");
-        assertEquals(1, events.size());
-        assertEquals(SentryLevel.WARNING, events.get(0).getLevel());
-        assertEquals(List.of("task:ingest"), events.get(0).getFingerprints());
-        assertTrue(notices.isEmpty(), "quiet task: telemetry only, no user lane");
+        assertEquals(1, events.size(), "panic captures under its per-name fingerprint");
+        assertEquals(List.of("panic:tray-loop"), events.get(0).getFingerprints());
+        assertEquals(SentryLevel.FATAL, events.get(0).getLevel());
     }
 
     @Test
@@ -293,6 +207,55 @@ class ReportTest {
         assertTrue(fps.contains(List.of("upload.fail")), "original event still captured");
         assertTrue(fps.contains(List.of("report.notifier")), "notifier failure on the quiet lane");
     }
+
+    @Test
+    void publicApiIsReportingOnly() throws NoSuchMethodException {
+        int ps = Modifier.PUBLIC | Modifier.STATIC;
+        Set<Sig> expected = Set.of(
+                new Sig("init", void.class, List.<Class<?>>of(Options.class), ps),
+                new Sig("ready", boolean.class, List.<Class<?>>of(), ps),
+                new Sig("dsnFromEnv", String.class, List.<Class<?>>of(), ps),
+                new Sig("verify", void.class, List.<Class<?>>of(long.class), ps),
+                new Sig("flush", void.class, List.<Class<?>>of(), ps),
+                new Sig("flush", void.class, List.<Class<?>>of(long.class), ps),
+                new Sig("setNotifier", void.class, List.<Class<?>>of(Consumer.class), ps),
+                new Sig("error", void.class,
+                        List.<Class<?>>of(String.class, Throwable.class, Map.class, String.class), ps),
+                new Sig("warn", void.class,
+                        List.<Class<?>>of(String.class, Throwable.class, Map.class, String.class), ps),
+                new Sig("quiet", void.class,
+                        List.<Class<?>>of(String.class, Throwable.class, Map.class, String.class), ps),
+                new Sig("notify", void.class,
+                        List.<Class<?>>of(String.class, Throwable.class, Map.class, String.class), ps),
+                new Sig("panic", void.class, List.<Class<?>>of(String.class, Object.class), ps),
+                new Sig("crumb", void.class,
+                        List.<Class<?>>of(String.class, String.class, Map.class), ps),
+                new Sig("installUncaughtHandler", void.class, List.<Class<?>>of(), ps),
+                new Sig("uninstallUncaughtHandler", void.class, List.<Class<?>>of(), ps));
+        Set<Sig> actual = Arrays.stream(Report.class.getDeclaredMethods())
+                .filter(m -> !m.isSynthetic())
+                .filter(m -> Modifier.isPublic(m.getModifiers()) && Modifier.isStatic(m.getModifiers()))
+                .map(m -> new Sig(m.getName(), m.getReturnType(),
+                        List.of(m.getParameterTypes()), m.getModifiers()))
+                .collect(Collectors.toSet());
+        assertEquals(expected, actual, "Report's public static methods must be reporting-only");
+
+        assertEquals(Set.of(Report.ReportInitException.class),
+                Set.of(Report.class.getDeclaredClasses()),
+                "Report must declare no nested type beyond ReportInitException");
+
+        int m = Report.ReportInitException.class.getModifiers();
+        assertTrue(Modifier.isPublic(m) && Modifier.isStatic(m) && Modifier.isFinal(m),
+                "ReportInitException must be public static final");
+        assertEquals(RuntimeException.class, Report.ReportInitException.class.getSuperclass(),
+                "ReportInitException must extend RuntimeException");
+        Constructor<?> ctor = Report.ReportInitException.class.getConstructor(String.class);
+        assertTrue(Modifier.isPublic(ctor.getModifiers()), "ReportInitException(String) must be public");
+    }
+
+    // Structured public-method signature for the reporting-only surface fixture:
+    // name, return type, ordered parameter types, and modifiers.
+    private record Sig(String name, Class<?> ret, List<Class<?>> params, int modifiers) {}
 
     // Blocks until the test releases the latch; rethrows on interrupt so the
     // catch propagates (never a silent swallow).
