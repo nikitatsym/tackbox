@@ -161,6 +161,28 @@ def test_unresolvable_file_reported_not_orphaned(tmp_path):
     assert report.uncovered == [] and report.orphans == []
 
 
+def test_manifest_named_broken_file_unresolvable(tmp_path):
+    # An entry naming a file that does not parse and no longer carries marker
+    # text: the file reports unresolvable ("...or named in entries"), and the
+    # entry does not double-report as an orphan.
+    broken = (
+        "class C {\n"
+        "  void a() {\n"
+        "    if (true) {\n"
+        "      x();\n"
+        "    // MISSING closing brace\n"
+        "  }\n"
+        "  void b() { y(); }\n"
+        "}\n"
+    )
+    root = build(
+        tmp_path, {"C.java": broken}, manifest="C.java#C.a(): no-report: marker was removed\n"
+    )
+    report = check(root)
+    assert report.unresolvable == ["C.java"]
+    assert report.uncovered == [] and report.orphans == []
+
+
 def test_deterministic_order(tmp_path):
     files = {
         "b.py": "y = 1 # no-report: b-file\n",

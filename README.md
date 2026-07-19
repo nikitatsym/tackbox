@@ -24,9 +24,12 @@ it's written: hooked into the agent's edit loop it flags the finding
 before the turn ends, and the same rules gate pre-commit and CI -
 one coverage bar for hand-written and agent-written code.
 
-There are no per-rule disable flags. A local exception stays visible as
-a reasoned `// no-report: <reason>` marker at the site, and the agent
-hook asks for your approval before a new suppression lands.
+There are no per-rule disable flags. A local exception stays visible
+as a reasoned `// no-report: <reason>` marker at the site, and every
+marker must be covered by a line in the committed approval manifest
+(`.tackbox/approvals`). Adding that line is the act that draws the
+approval ask in an agent session; an uncovered marker keeps lint,
+`dev.py check`, and CI red until it is approved or reverted.
 
 ```go
 resp, err := client.Do(req)
@@ -138,6 +141,11 @@ The `path` scope and the change filters compose:
 This scope filter is unrelated to the `escapes` command's `--since`
 `<rev>`, which selects inventory entries new against a revision.
 
+The approvals consistency check (see Approval manifest) is exempt
+from all scope filters: it always covers the whole tree and reports
+under an `approvals (whole tree):` header, scoped runs included - a
+scoped CI lint cannot scope the wall away.
+
 ## Exit codes
 
 Across commands, `2` is a usage or setup error the command cannot run
@@ -150,11 +158,17 @@ past (argparse misuse, and the per-command cases below).
   changes the code.
 - **doctor** - `0` all checks pass, `1` at least one failed; every
   check always runs (no short-circuit).
-- **hook** - `0` a no-op, a clean re-lint, or a JSON decision (a
+- **approvals** - `0` consistent, `2` inconsistent (uncovered
+  markers, orphaned entries, or unresolvable files), `1` infra.
+  `--draft` is a generator, not a gate: `0` when every uncovered
+  marker was drafted (an orphan-only tree included), `2` only when
+  unresolvable files leave the draft incomplete.
+- **hook** - `0` a no-op, a clean event, or a JSON decision (a
   PreToolUse approval prompt or a PostToolUse Bash block); `1` a
   non-blocking infra error (unreadable stdin, a git failure); `2` a
-  PostToolUse finding on the edited lines or a non-compiling Go
-  package, which blocks the edit in-loop.
+  PostToolUse finding on the edited lines, a non-compiling Go
+  package, or an approvals inconsistency anywhere in the worktree,
+  which blocks the edit in-loop.
 - **escapes** - `0` whenever it runs, entries or not (an inventory,
   not a gate); `1` only for a bad `--since` rev.
 
@@ -339,7 +353,9 @@ By design, the ruleset is a single non-negotiable bundle. There are
 no flags to disable individual rules. Suppressing a finding requires
 the explicit per-site marker (`// no-report`, `// parse-skip`,
 `// nil-return`, `// test-skip`, `// dup-ok`) with a reason of at
-least 10 characters - non-empty was too cheap (`ok` / `todo` passed).
+least 10 characters - non-empty was too cheap (`ok` / `todo` passed) -
+plus a covering line in the approval manifest below: the reason
+explains the exception, the manifest line records its approval.
 
 Capture helpers are recognized by origin, not by name: a Go call
 counts only when its callee resolves (type info / import) to the
@@ -370,6 +386,46 @@ on a non-Go file is rejected - a dead line would be silent. The format
 is language-uniform; the restriction lifts as other engines adopt the
 contract.
 
+## Approval manifest
+
+Suppression markers are approved in one committed file,
+`.tackbox/approvals` at the repo root - one line per approved
+occurrence: an address (file plus named-scope chain) and the exact
+marker text.
+
+```text
+py/app/svc.py#Handler.process: no-report: legacy path, covered upstream
+js/src/boot.ts#init.<h4f2a9c1e>: no-report: splash fallback, reported upstream
+tools/gen.py: parse-skip: config validated upstream
+```
+
+The chain walks functions, classes, methods, or Markdown headings,
+joined by `.`; an entry with no `#` sits at file scope. Anonymous
+scopes (lambdas, arrows, IIFEs) appear as 8-hex content hashes; Java
+overloads carry a parameter-type signature; same-name siblings take
+an `@k` ordinal. Repeat the line for each identical occurrence.
+
+The check is bidirectional and always covers the whole tree: a
+marker without a covering entry and an entry without a live marker
+(an orphan) are both findings, reported by `tackbox lint` under the
+`approvals (whole tree):` header whatever the lint scope.
+`tackbox approvals` runs the same check standalone;
+`tackbox approvals --draft` prints a ready entry line for every
+uncovered marker - the address is computed for you, so approving a
+marker you just wrote is one append away, and bootstrapping a repo
+that already carries markers is: generate, review line by line,
+commit.
+
+Approving is adding the line. In an agent session the edit that adds
+a manifest line draws the PreToolUse ask quoting the entry (several
+lines in one edit draw one all-or-nothing ask), so the only route to
+a green check passes through a visible diff and a human decision.
+Writing a marker itself never asks - by any channel, Edit or shell -
+it merely leaves the tree inconsistent, which every later hook
+event, `dev.py check`, and CI reports until the entry lands or the
+marker is reverted. Removing a manifest line is free; a marker whose
+text, scope, or count changes needs its entry updated the same way.
+
 ## Runtime reporting helpers
 
 Direct reporting helpers ship per language; their shared runtime behavior -
@@ -387,24 +443,23 @@ specified in [docs/report-contracts.md](docs/report-contracts.md).
 Claude Code hook event on stdin and dispatches by `hook_event_name`:
 
 - **PostToolUse** on an Edit/Write re-lints the edited file (Go: its
-  package). On a finding it exits 2 with the finding on stderr, so the
-  model sees it and fixes it in-loop. On a **Bash** command it instead
-  diffs the whole worktree against HEAD and blocks if the command
-  planted a new suppression marker (on a lintable file) or a new
-  `.tackbox-reporters` line - containment for a marker a shell wrote
-  behind the Edit gate. Stateless: HEAD is the approval record, so an
-  approved marker stops asking once committed (worst case, a repeated
-  question, never a silent pass). The authoritative gate stays
-  pre-commit / CI.
-- **PreToolUse** asks for approval before a new suppression marker
-  (`// no-report`, `// parse-skip`, `// nil-return`, `// test-skip`,
-  `// dup-ok`) or a new `.tackbox-reporters` line lands;
-  removing one is free.
+  package). On a finding it exits 2 with the finding on stderr, so
+  the model sees it and fixes it in-loop. Every Post event - **Bash**
+  included - also runs the whole-tree approvals consistency check:
+  an unapproved marker, an orphaned entry, or an unresolvable file
+  blocks with the entry named and the fix - add the manifest line,
+  which asks, or revert. Stateless and tree-shaped: a commit changes
+  nothing, and the block repeats on every event until the tree is
+  consistent. The authoritative gate stays pre-commit / CI.
+- **PreToolUse** asks for approval before a new `.tackbox/approvals`
+  line or a new `.tackbox-reporters` line lands; removing one is
+  free. Editing markers in code draws no Pre ask - the consistency
+  check owns them.
 
-Both marker gates ask only about files an engine would lint (D012): a
-marker in a Go `testdata/` path or a non-lintable fixture extension
-(a `.java.txt`) is dead text and draws no question, while the
-`.tackbox-reporters` gate stays unconditional.
+Only markers in files an engine would lint participate in the check
+(D012): a marker in a Go `testdata/` path or a non-lintable fixture
+extension (a `.java.txt`) is dead text - no entry needed, no
+question - while the `.tackbox-reporters` gate stays unconditional.
 
 The hook is a no-op unless the edit's `cwd` is a git repo with a
 `dev.py` at its root. Wire it once, globally, in
@@ -481,7 +536,7 @@ uvx tackbox@latest escapes --since origin/main --context 5
   kinds, even at zero, so consumers see a stable shape.
 - `since` echoes the `--since` rev, or `null`.
 - `text` is the trimmed source line; for a marker it runs from the marker
-  keyword to end of line (the hook's own `_markers` extraction).
+  keyword to end of line.
 - `reason` (markers only) is what follows the keyword's colon, trimmed -
   possibly empty (the `tackbox: lang=` marker carries none).
 - `context` is the surrounding source, `--context N` lines each side
@@ -516,6 +571,7 @@ one stderr line, exit 1.
 ## Layout
 
 ```text
+.tackbox/approvals                     # suppression-approval manifest
 dev.py                                 # lint / test / e2e / check (dev-script)
 hygiene.py                             # dev.py lint hygiene (conflict/yaml/ws/newline)
 go.mod                                 # Go module

@@ -294,74 +294,108 @@ therefore loosens from "top-level def" to "top-level def or a
 top-level import binding of the declared name". Plain assignments
 stay invalid.
 
-## D011 - the suppression gate covers Bash (stateless diff) (2026-07-15)
+## D011 - suppression approval is a committed manifest (2026-07-19)
 
-Rules affected: none. This is a `tackbox hook` contract (as D005 is a
-helper contract); the hook is the enforcement surface.
+Rules affected: none. This is a `tackbox hook` / `tackbox lint`
+contract; rule behavior and marker semantics are unchanged.
 
-Decision: the hook gains a Bash arm. On a PostToolUse event for the
-Bash tool (same guard: cwd inside a git repo with dev.py at its
-root), the hook compares the working tree against HEAD - tracked
-modifications plus untracked files, .gitignore respected - and
-applies per file the same gate the Edit arm applies per edit: the
-marker multiset diff (more markers -> block; equal count but a
-changed marker or reason -> block; fewer -> free) on lintable files
-(D012), plus added `.tackbox-reporters` lines, unconditionally. A hit
-returns the PostToolUse block decision carrying the same approval
-wording as the PreToolUse gate: the marker and its file, and that a
-new suppression marker needs explicit user approval - revert it or
-get the approval.
+Decision: approval of a suppression marker is an explicit, versioned
+record: one line in `.tackbox/approvals` per approved occurrence -
+address plus exact marker text (identity schema: D014). The
+invariant is bidirectional and the check is a pure function of the
+tree: every marker in the tree's inventory must be covered by an
+entry, every entry must match a live marker (an orphan is an error),
+and a file that refuses scope resolution is reported as
+unresolvable, never guessed. One predicate serves every surface:
+folded into `tackbox lint`'s verdict (findings semantics, nonzero
+exit - CI and `dev.py check` inherit the wall), the standalone
+`tackbox approvals` subcommand (0 consistent / 2 inconsistent / 1
+infra; `--draft` emits entry lines for uncovered markers and gates
+nothing), and the hook's Post arms (an edit tool reports a hit as
+the lint arm does, block lines on stderr and exit 2; a Bash event
+returns the top-level block decision). The check always covers the
+whole tree regardless of lint scope - a scope-following check would
+be a bypass for any consumer whose CI lints scoped; its lint section
+is always headed `approvals (whole tree):`.
 
-Stateless by design: no ledger of approved markers; HEAD is the
-approval record - an approved marker stops flagging once committed.
-Worst mode is a repeated question about a not-yet-committed approved
-marker on every later Bash call, never a silent pass. A rename of a
-marker-bearing file re-asks (its markers are new against HEAD at the
-new path): over-asks, never under.
+The approval act rides on the manifest itself: an edit adding a
+manifest line draws the PreToolUse ask, quoting the entry; removals
+are free; a multi-entry addition draws one all-or-nothing ask (the
+permission decision is per-edit and indivisible). Markers in code
+are free text: planting one - Edit, sed, merge, anything - never
+asks; it makes the tree inconsistent, which every subsequent hook
+event, `dev.py check`, and CI reports statelessly. A commit changes
+nothing: the wall survives `--no-verify` and session ends. Checkout
+or merge of a branch whose markers are covered by its own manifest
+is silent - approvals travel with the tree.
 
-The asymmetry with the Edit arm, named: PreToolUse asks before a
-marker lands; a Bash command's effect is observable only after it
-ran, so the Bash arm asks after the fact - containment, not
-prevention. The diff is command-agnostic: sed, echo, a heredoc or
-python -c all land in the same worktree diff. Infra failures (git not
-answering) follow the hook's existing non-blocking contract (exit 1 +
-stderr); the approval gate has no CI backstop, so review owns what an
-infra failure lets through.
+Marker inventory, one definition, two precisions: the tree inventory
+(the check) is AST-precise - comment nodes whose text matches the
+marker regex, so a lookalike inside a string literal does not
+participate; the Pre gate's added-line detection over edit fragments
+is textual (fragments do not parse), a strict superset - the gap
+costs an extra look at a lookalike, never a silent pass.
 
-## D012 - marker gates ask only about lintable files (2026-07-15)
+Rationale: approval inferred from events (HEAD position - committed
+means approved - or hook-event sequences) re-asks about
+approved-but-uncommitted markers and cannot see writes that bypass
+the tool loop; an explicit record is consistent the moment the line
+lands, needs no state, and puts every approval in the diff where
+review reads it.
 
-Rules affected: none. A `tackbox hook` contract; engine dispatch is
-unchanged.
+Residuals, named: (A1) the manifest records the claim of approval,
+not proof of consent - a forged line is review's to catch, as a
+loud, attributable diff; (A2) in permission modes that auto-approve
+edits (`bypassPermissions`, possibly `acceptEdits`) the ask may not
+surface - the line still lands as a visible diff, review owns as A1;
+(A3) relocation of an approved marker within its scope (within the
+file, for file-scope markers) is undetected - identity is
+scope-grained, and a reason lying about its new context is review's
+signal; (A4) an unapproved marker still suppresses its finding until
+resolved - every hook event names the inconsistency, and check/CI
+hold the wall; (A5) the user's own terminal commits bypass agent
+hooks - CI owns them; (A6) editing an anonymous body renames its
+hash segment and re-asks everything beneath - over-ask by design;
+(A7) engine-version drift can change resolved chains - the pin
+(D015) plus fixtures make it a visible, reviewed bump; (A8) the
+Svelte template HTML-comment marker suppresses within the whole
+element that follows - wider than line-adjacent, accepted
+deliberately.
 
-Decision: both marker-gate arms - PreToolUse (Edit / Write /
-MultiEdit) and the D011 Bash arm - ask only about files the engine
-dispatch would lint (extension match plus the engine's own path
-filter, e.g. Go's testdata/ convention). A marker in a file no engine
-lints is dead text: nothing reads it, so an approval question about
-it is noise. The `.tackbox-reporters` gate is exempt from the
-predicate and stays unconditional - the file itself is unlintable by
-design.
+## D012 - only lintable files' markers participate (2026-07-19)
 
-The predicate is evaluated at mutation time against the destination
-path. Planting a marker in a dead file (fixture.py.txt) is free and
-stays dead; the move that brings it live (mv to fixture.py) makes its
-markers new-against-HEAD at a lintable path, and the Bash arm asks
-right there. Laundering is caught at the transition, statelessly.
+Rules affected: none. A `tackbox hook` / `tackbox lint` contract;
+engine dispatch is unchanged.
 
-Fixture space thus asks nothing: Go analyzer fixtures (dropped by the
-Go engines' path filter) and non-lintable fixture extensions (java's
-.java.txt) draw no questions, while consumer tests (`_test.go`,
-`src/test/`, `test_*.py`, `*.test.js`) are lintable, so their markers
-keep asking - test-skip suppression there is live. A path-name
-exemption (a testdata/ segment) would be unsound wherever an engine
-does lint such a path; lintability is sound by construction, and it
-is the same predicate the post arm applies when it lints an edited
-file - one scope, both sides of the hook.
+Decision: the marker inventory behind the approvals check (D011)
+covers only files the engine dispatch would lint (extension match
+plus the engine's own path filter, e.g. Go's testdata/ convention),
+plus the Markdown lang marker in lintable Markdown. A marker in a
+file no engine lints is dead text: nothing reads it, so it needs no
+approval, and an entry for it would approve a no-op. The
+`.tackbox-reporters` gate is exempt from the predicate and stays
+unconditional - the file itself is unlintable by design.
+
+The predicate is evaluated against the current tree. Planting a
+marker in a dead file (fixture.py.txt) is free and stays dead; the
+move that brings it live (mv to fixture.py) puts it in the inventory
+uncovered, and the next hook event, `dev.py check`, or CI reports
+it. Laundering is caught at the transition, statelessly.
+
+Fixture space thus needs no entries: Go analyzer fixtures (dropped
+by the Go engines' path filter) and non-lintable fixture extensions
+(java's .java.txt) are inert, while consumer tests (`_test.go`,
+`src/test/`, `test_*.py`, `*.test.js`) are lintable, so their
+markers need approval - test-skip suppression there is live. A
+path-name exemption (a testdata/ segment) would be unsound wherever
+an engine does lint such a path; lintability is sound by
+construction, and it is the same predicate the lint dispatch itself
+applies - one scope everywhere.
 
 Residual, named: a tackbox release that widens an engine's file set
-can turn dead markers live without a mutation event - that is our own
-release review's job; files generated at runtime by tests are outside
-a static gate's model - escape-inventory tooling, not the gate, is
+can turn dead markers live without a mutation event - that is our
+own release review's job; files generated at runtime by tests are
+outside a static model - escape-inventory tooling, not the gate, is
 the net for both.
 
 ## D013 - tackbox escapes: the bypass surface in one command (2026-07-16)
@@ -386,3 +420,93 @@ Rationale: the paved road is enforced by rules and gates; everything
 that legitimately steps off it (a marker, a tier-2 declaration, a
 quiet or notify lane choice) must be enumerable in one cheap command
 that review tooling of any harness can consume.
+
+## D014 - approval-manifest identity schema (2026-07-19)
+
+Rules affected: none. The carrier-independent address schema behind
+D011. All reads go through one provider seam
+(`load_approvals(root)`); the committed file is the first backend,
+not the contract - an external approval store would implement the
+same schema and bring its own consent act.
+
+Decision: an entry is
+`<repo-relative path>#<scope-chain>: <exact marker text>`; without
+`#<chain>`, the address is file scope (module-level code, Markdown
+outside any heading). The exact marker text is the full
+`keyword: reason` occurrence text; a changed reason is a different
+entry. Multiplicity is repeated identical lines; document order
+pairs the k-th occurrence with the k-th entry, and the tails beyond
+the shorter side report as uncovered or orphaned.
+
+A marker's scope is the innermost scope containing its byte
+position; the gap between declarations belongs to the parent (a
+comment line above a `def` addresses the parent). A chain joins
+segments with `.`, innermost last. A segment is the declaration's
+name; an anonymous scope contributes a content-hash segment
+`<h1a2b3c4d>`: sha256 over the UTF-8 bytes of the anonymous body's
+text with every maximal whitespace run collapsed to one ASCII space
+and the ends stripped, lowercase hex, truncated to 8. The chain
+continues through anonymous segments; named declarations inside
+them keep their names.
+
+Name synthesis, exactly two rules: a Go method's receiver type
+prefixes its name (`Server.Handle`); a JS/TS anonymous function
+assigned directly in a `const`/`let`/`var` declarator takes the
+variable's name. Java method segments carry a parameter-type
+signature `name(int,int)`, normalized by whitespace collapse only -
+types as written in source. Markdown chains are the heading outline
+(ATX + setext, built by a level stack); fenced code is inert.
+Same-name siblings of any kind disambiguate by a document-order
+ordinal: the first keeps the bare name, the k-th is `name@k`.
+
+Encoding is injective: within a segment the characters
+`\` `.` `#` `:` `@` are backslash-escaped; within the path only
+`\` `#` `:` are (dots stay literal). An entry line splits at the
+first unescaped colon-space; the address splits at the first
+unescaped `#`.
+
+Svelte: the top-level script blocks are located by an html parse of
+the file - never regex - and resolved as JS/TS per the `lang`
+attribute with byte offsets mapped back; chains inside follow the
+JS/TS rules. Markers outside script anchor at file scope; `<style>`
+content takes no markers (no rule dispatches there). A file whose
+language parse has ERROR nodes refuses resolution: its markers and
+entries report as unresolvable, never guessed; for `.svelte` only
+the extracted scripts' parse counts - ERROR nodes in the html
+container parse are expected on every real component and exempt.
+
+Named gaps: an anonymous-body edit renames the hash segment (D011
+A6); inserting an earlier same-name sibling renumbers later
+ordinals - accepted last-resort churn; Svelte snippet blocks are not
+yet named scopes - file scope is the coarse address.
+
+## D015 - outline engine: ast-grep, pinned, behind a seam (2026-07-19)
+
+Rules affected: none. The tooling decision behind D014's scope
+resolution.
+
+Decision: scope outlines come from ast-grep (`ast-grep-cli==0.44.1`,
+a runtime dependency of the thin wheel; the canonical executable is
+`ast-grep`, never the `sg` alias - upstream warns it collides with
+the Linux setgroups utility) invoked as a subprocess with `--json`
+behind an internal contract: declarations and comments with ranges
+per file, chain assembly in Python by range containment. Swapping
+the engine is a local change; the manifest format encodes nothing
+engine-specific. Per-language rule sets are strictly separate - a
+kind unknown to a grammar zeroes the whole rule, so rule-set
+validity is pinned by fixtures per language. Svelte is not an
+ast-grep language and gets no custom grammar: the html container
+parse plus script extraction (D014) covers it, and since ast-grep
+does not recognize the `.svelte` extension (such paths silently
+match nothing), Svelte content is always fed via stdin with an
+explicit language. The pin makes resolution deterministic; a
+version bump is a reviewed change (D011 A7). `tackbox doctor`
+verifies presence and the pinned version.
+
+Rejected: ANTLR - grammar decay across the five target languages,
+10-30x Python runtime, build coupling, error recovery unfit for
+dirty worktrees, v5 unready. py-tree-sitter with the language
+pack - its Svelte grammar returns script content as raw_text (the
+same two-phase work, no gain) and reintroduces per-platform grammar
+binaries via a runtime download - more dependency and less
+determinism.

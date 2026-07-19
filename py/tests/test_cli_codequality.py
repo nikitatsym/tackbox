@@ -21,6 +21,8 @@ from pathlib import Path
 import pytest
 from conftest import init_repo, tackbox_env
 
+from tackbox import approvals
+from tackbox.cli import _approvals_findings
 from tackbox.codequality import build_report
 from tackbox.engines import Finding
 
@@ -141,6 +143,53 @@ def test_codequality_includes_approvals_findings(tmp_path):
     assert len(appr) == 1, issues
     assert appr[0]["location"] == {"path": "a.py", "lines": {"begin": 2}}
     assert appr[0]["fingerprint"] == "a.py#f"  # the address, not sha256(rule:path:line)
+
+
+def test_approvals_findings_mapping_unit():
+    # The mapper: uncovered occurrences at their own lines under the shared
+    # address fingerprint; an orphan at its manifest line; an unresolvable
+    # file at line 1, fingerprinted by path.
+    e = approvals.Entry("a.py#f", "no-report: twice in one scope")
+    g = approvals.Entry("gone.py", "no-report: the marker is long gone")
+    report = approvals.Report(
+        uncovered=[approvals.Uncovered(e, "a.py", 2), approvals.Uncovered(e, "a.py", 3)],
+        orphans=[approvals.Orphan(g, 2)],
+        unresolvable=["Bad.java"],
+    )
+    findings, fps = _approvals_findings(report)
+    assert [(f.file, f.line) for f in findings] == [
+        ("a.py", 2),
+        ("a.py", 3),
+        (".tackbox/approvals", 2),
+        ("Bad.java", 1),
+    ]
+    assert [fps[f] for f in findings] == ["a.py#f", "a.py#f", "gone.py", "Bad.java"]
+
+
+def test_codequality_approvals_multiplicity_and_orphan(tmp_path):
+    # E2E: the k-th identical occurrence pairs with the k-th entry, so the
+    # uncovered tail reports at its own line; the orphan at its manifest line.
+    (tmp_path / "a.py").write_text(
+        "def f():\n"
+        "    x()  # no-report: twice in one scope\n"
+        "    y()  # no-report: twice in one scope\n"
+    )
+    (tmp_path / ".tackbox").mkdir()
+    (tmp_path / ".tackbox" / "approvals").write_text(
+        "a.py#f: no-report: twice in one scope\n"
+        "gone.py: no-report: the marker is long gone\n"
+    )
+    init_repo(tmp_path, commit=True)
+    out = tmp_path / "cq.json"
+    _run(tmp_path, out)
+    appr = [i for i in json.loads(out.read_text()) if i["check_name"] == "tackbox-approvals"]
+    assert [
+        (i["location"]["path"], i["location"]["lines"]["begin"], i["fingerprint"])
+        for i in appr
+    ] == [
+        (".tackbox/approvals", 2, "gone.py"),
+        ("a.py", 3, "a.py#f"),
+    ]
 
 
 # --------- Adversarial ---------------------------------------------------
