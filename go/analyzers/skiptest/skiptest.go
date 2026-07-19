@@ -1,6 +1,6 @@
 // Package skiptest enforces ERC008: a skipped test must say why.
 // In *_test.go files a Skip/Skipf on testing.T/B/F needs a non-empty
-// reason argument, and a bare SkipNow needs a `// test-skip: <reason>`
+// reason argument, and a bare SkipNow needs a test-skip
 // marker in the comment block directly above. This is the only
 // analyzer whose subject is the tests themselves.
 package skiptest

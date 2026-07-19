@@ -20,7 +20,7 @@ import nl.tsym.tackbox.javalint.MarkerIndex;
  *  through a string (getMessage / toString / string concatenation), or not at all.
  *  Rethrowing the caught itself (`throw e`) is not this rule - it is object flow.
  *  Orthogonal to JV001: a throw makes the catch non-silent, this checks the chain.
- *  A `// no-report: <reason>` above the catch escapes the whole chain check - a
+ *  A no-report marker with a reason above the catch escapes the whole chain check - a
  *  wire-boundary exception (a generated type with no cause slot) legitimately
  *  breaks it. */
 public final class ChainRule {

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 from .engines import Finding
@@ -21,14 +22,23 @@ _UNKNOWN_PATH = "UNKNOWN"
 
 _DUP_PREFIX = "DUP"
 
+# A per-finding fingerprint override: given a finding, return its fingerprint or
+# None to fall back to the default sha256(rule:path:line). tackbox-approvals
+# supplies the serialized entry address here so a marker's identity - not its
+# line - keys the MR widget; every engine finding keeps the default.
+FingerprintOf = Callable[[Finding], "str | None"]
 
-def _issue(f: Finding) -> dict:
+
+def _issue(f: Finding, fingerprint_of: FingerprintOf | None = None) -> dict:
     path = f.file if f.file is not None else _UNKNOWN_PATH
     line = f.line if f.line is not None else 1
     category = "Duplication" if f.rule.startswith(_DUP_PREFIX) else "Bug Risk"
     # Message stays out of the fingerprint: rewording a diagnostic must not
     # re-open resolved issues in the MR widget.
-    fingerprint = hashlib.sha256(f"{f.rule}:{path}:{line}".encode()).hexdigest()
+    override = fingerprint_of(f) if fingerprint_of is not None else None
+    fingerprint = override if override is not None else hashlib.sha256(
+        f"{f.rule}:{path}:{line}".encode()
+    ).hexdigest()
     description = f"{f.rule}: {' '.join(f.message.split())}" if f.message else f.rule
     return {
         "type": "issue",
@@ -41,16 +51,17 @@ def _issue(f: Finding) -> dict:
     }
 
 
-def build_report(findings: list[Finding]) -> list[dict]:
+def build_report(findings: list[Finding], fingerprint_of: FingerprintOf | None = None) -> list[dict]:
     """Issue objects sorted by (path, line, rule) for a stable artifact."""
-    issues = [_issue(f) for f in findings]
+    issues = [_issue(f, fingerprint_of) for f in findings]
     issues.sort(
         key=lambda i: (i["location"]["path"], i["location"]["lines"]["begin"], i["check_name"])
     )
     return issues
 
 
-def write_report(path: Path, findings: list[Finding]) -> None:
+def write_report(path: Path, findings: list[Finding],
+                 fingerprint_of: FingerprintOf | None = None) -> None:
     """Write the report to `path`; an unwritable path raises OSError loudly."""
-    text = json.dumps(build_report(findings), indent=2) + "\n"
+    text = json.dumps(build_report(findings, fingerprint_of), indent=2) + "\n"
     path.write_text(text, encoding="utf-8")

@@ -399,7 +399,7 @@ func emitIgnoreBans(fl *fileLines, absFiles []string, cwd string, machine bool, 
 }
 
 // suppressed reports whether the standalone comment block directly above the
-// endpoint's start line carries a `dup-ok: <reason>` marker whose reason is at
+// endpoint's start line carries a dup-ok marker whose reason is at
 // least minReason chars (D009).
 // Semantics mirror go/internal/markers.Above: the block's last line must be
 // startLine-1, and the marker may sit on any line of that contiguous block.

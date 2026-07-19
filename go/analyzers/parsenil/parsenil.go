@@ -1,6 +1,6 @@
 // Package parsenil implements ERC002: results from standard parsers
 // must either be captured on the error path or carry a
-// `// parse-skip: <reason>` marker. Skip reasons in the spec are
+// parse-skip marker with a reason. Skip reasons in the spec are
 // limited to user-input, fallthrough, optional-config. The reasons
 // `schema-drift` and `expected` indicate a real error and must
 // capture, not skip.

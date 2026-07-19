@@ -48,6 +48,7 @@ def _run_all_checks() -> list[CheckResult]:
         _check_git_in_path(),
         _check_go_toolchain(),
         _check_java_toolchain(),
+        _check_ast_grep(),
     ]
 
 
@@ -189,6 +190,33 @@ def _check_git_in_path() -> CheckResult:
     if not found:
         return CheckResult("git-in-path", False, "git not found in PATH")
     return CheckResult("git-in-path", True, found)
+
+
+_AST_GREP_VERSION = "0.44.1"
+
+
+def _check_ast_grep() -> CheckResult:
+    """The outline engine (D015): a pip runtime dependency, so `ast-grep` shares
+    the wheel's env. Gate presence AND the pinned version - a grammar bump can
+    silently change resolved scope chains (residual A7)."""
+    found = shutil.which("ast-grep")
+    if not found:
+        return CheckResult("ast-grep", False, "ast-grep not found in PATH")
+    try:
+        completed = subprocess.run(
+            [found, "--version"], capture_output=True, text=True, timeout=60
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        # no-report: doctor reports the ast-grep probe failure via CheckResult (no short-circuit)
+        return CheckResult("ast-grep", False, f"cannot run ast-grep: {e}")
+    text = completed.stdout or completed.stderr
+    m = re.search(r"(\d+\.\d+\.\d+)", text)
+    version = m.group(1) if m else "?"
+    if version != _AST_GREP_VERSION:
+        return CheckResult(
+            "ast-grep", False, f"version {version} != pinned {_AST_GREP_VERSION} ({found})"
+        )
+    return CheckResult("ast-grep", True, f"{found} ({version})")
 
 
 def _check_go_toolchain() -> CheckResult:

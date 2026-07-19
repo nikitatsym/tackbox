@@ -18,12 +18,15 @@ def _long_description() -> str:
 
 # flake8 hosts the py-native exception rules (the pyrules plugin); it ships in
 # the thin wheel so `uvx tackbox` resolves it into the same env as the plugin.
-# The engine binaries are NOT a pip dependency: they come from the machine
-# store (see tackbox.engines.ensure_engines), fetched once per engines version
-# so a thin patch bump never re-materializes ~350 MB of fat under uv.
+# ast-grep-cli is the outline engine (D015): a thin pip dependency (flake8
+# precedent), pinned so a grammar bump that shifts resolved scope chains is a
+# visible, reviewed version change (residual A7). The fat engine binaries are
+# NOT pip dependencies: they come from the machine store (see
+# tackbox.engines.ensure_engines), fetched once per engines version so a thin
+# patch bump never re-materializes ~350 MB of fat under uv.
 setup(
     version=os.environ.get("TACKBOX_VERSION", "0.0.0"),
-    install_requires=["flake8>=6"],
+    install_requires=["flake8>=6", "ast-grep-cli==0.44.1"],
     long_description=_long_description(),
     long_description_content_type="text/markdown",
 )

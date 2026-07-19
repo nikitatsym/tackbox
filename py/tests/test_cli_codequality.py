@@ -116,6 +116,33 @@ def test_flag_does_not_change_exit_code(two_engine_repo, tmp_path):
     assert out.is_file()
 
 
+# --------- approvals findings + fingerprint override seam ----------------
+
+
+def test_fingerprint_override_seam():
+    # tackbox-approvals supplies the serialized entry address; every other
+    # finding keeps the default sha256(rule:path:line).
+    f = Finding("tackbox-approvals", "a.py", 2, "a.py#f: no-report: x")
+    [issue] = build_report([f], fingerprint_of=lambda x: "a.py#f")
+    assert issue["fingerprint"] == "a.py#f"
+    [eng] = build_report([Finding("errcheck", "a.go", 3)])
+    assert eng["fingerprint"] == hashlib.sha256(b"errcheck:a.go:3").hexdigest()
+
+
+def test_codequality_includes_approvals_findings(tmp_path):
+    # An uncovered marker rides into --codequality as check_name tackbox-approvals,
+    # located at the marker, fingerprinted by the serialized address.
+    (tmp_path / "a.py").write_text("def f():\n    return 1  # no-report: uncovered marker\n")
+    init_repo(tmp_path, commit=True)
+    out = tmp_path / "cq.json"
+    _run(tmp_path, out)
+    issues = json.loads(out.read_text())
+    appr = [i for i in issues if i["check_name"] == "tackbox-approvals"]
+    assert len(appr) == 1, issues
+    assert appr[0]["location"] == {"path": "a.py", "lines": {"begin": 2}}
+    assert appr[0]["fingerprint"] == "a.py#f"  # the address, not sha256(rule:path:line)
+
+
 # --------- Adversarial ---------------------------------------------------
 
 

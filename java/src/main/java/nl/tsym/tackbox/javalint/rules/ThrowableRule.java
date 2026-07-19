@@ -13,7 +13,7 @@ import nl.tsym.tackbox.javalint.Finding;
 import nl.tsym.tackbox.javalint.MarkerIndex;
 
 /** JV003 (throwable): a catch of Throwable or Error must rethrow or carry a
- *  `// no-report: <reason>` marker. Reporting is not enough - VirtualMachineError
+ *  no-report marker with a reason. Reporting is not enough - VirtualMachineError
  *  and the other unrecoverable Errors must never be swallowed, only re-raised.
  *  Orthogonal to JV001: a captured Throwable is clean for JV001 but still JV003. */
 public final class ThrowableRule {

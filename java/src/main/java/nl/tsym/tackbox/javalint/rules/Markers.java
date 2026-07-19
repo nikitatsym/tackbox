@@ -6,7 +6,7 @@ import com.github.javaparser.ast.stmt.Statement;
 import nl.tsym.tackbox.javalint.Marker;
 import nl.tsym.tackbox.javalint.MarkerIndex;
 
-/** Shared `// no-report:` lookups: the block-above convention (a marker on the
+/** Shared no-report lookups: the block-above convention (a marker on the
  *  comment block directly above the anchor) applied to a catch clause and to a
  *  single statement. The anchor for a catch is its first body statement, or the
  *  catch clause itself when the body is empty. A dead marker near a firing
@@ -16,7 +16,7 @@ final class Markers {
 
     private Markers() {}
 
-    /** Hint for a `no-report:` near the catch that suppresses nothing: dead
+    /** Hint for a no-report near the catch that suppresses nothing: dead
      *  (trailing `try {`, the catch line, or a body statement; empty-reason in
      *  the body), or live but standalone above the `try`, where no catch anchor
      *  ever looks. Empty when none. */
@@ -36,7 +36,7 @@ final class Markers {
         return "";
     }
 
-    /** Hint for a dead `no-report:` on the statement's own line (trailing) or
+    /** Hint for a dead no-report on the statement's own line (trailing) or
      *  the line directly above it (where a live marker would sit). */
     static String deadNoReportHint(MarkerIndex idx, Statement stmt) {
         int line = stmt.getBegin().orElseThrow().line;

@@ -11,11 +11,12 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from . import __version__, cache, codequality, doctor, escapes, reporters
+from . import __version__, approvals, cache, codequality, doctor, escapes, reporters, scopes
 from .engines import (
     EngineResult,
     EnginesStoreError,
     EngineSpec,
+    Finding,
     active_engines,
     dispatch,
     engines_hash_hermetic,
@@ -75,11 +76,26 @@ def _dispatch(argv: list[str] | None) -> int:
             ChangedScopeError,
             cache.GoListError,
             reporters.ReportersError,
+            approvals.ApprovalsError,
+            scopes.ScopesError,
             EnginesStoreError,
         ) as e:
             # no-report: CLI boundary: surface as message + exit 2; a traceback here is the bug
             print(f"tackbox: {e}", file=sys.stderr)
             return 2
+    if args.command == "approvals":
+        try:
+            return _run_approvals(draft=args.draft)
+        except (
+            PathspecMagicError,
+            reporters.ReportersError,
+            approvals.ApprovalsError,
+            scopes.ScopesError,
+            subprocess.CalledProcessError,
+        ) as e:
+            # no-report: standalone approvals infra failure -> exit 1 (as everywhere)
+            print(f"tackbox: {e}", file=sys.stderr)
+            return 1
     if args.command == "escapes":
         # Inventory, not a gate (D013): exit 0 with entries or not; a bad --since
         # rev is exit 1 + one stderr line (handled inside run). _MARKER_RE is
@@ -143,6 +159,15 @@ def _parse_argv(argv: list[str]) -> argparse.Namespace:
         type=int,
         default=3,
         help="source lines of context each side of an entry (default 3)",
+    )
+    appr = sub.add_parser(
+        "approvals",
+        help="check the suppression-marker approval manifest against the tree",
+    )
+    appr.add_argument(
+        "--draft",
+        action="store_true",
+        help="emit draft manifest lines for uncovered markers (generator, not a gate)",
     )
     sub.add_parser("doctor", help="verify the hermetic install is functional")
     sub.add_parser(
@@ -257,6 +282,16 @@ def _run_lint(
         sys.stdout.flush()
         exit_code = _aggregate_exit(results)
 
+    # The approvals predicate always covers the whole tree, regardless of lint
+    # scope - a scope-following check would be a bypass for scoped CI. Its
+    # inconsistencies count as findings (nonzero exit), same wall as the engines.
+    report = _approvals_report(repo_root)
+    for line in approvals.render_blocks(report):
+        sys.stdout.write(line + "\n")
+    sys.stdout.flush()
+    if not report.ok():
+        exit_code = max(exit_code, 1)
+
     # The report is the flag's purpose, so it is written regardless of exit_code.
     # located_findings needs machine-mode output, hence a second pass; the
     # console pass above stays byte-identical.
@@ -268,8 +303,63 @@ def _run_lint(
             if results
             else []
         )
-        codequality.write_report(Path(codequality_path), findings)
+        appr_findings, fingerprints = _approvals_findings(report)
+        codequality.write_report(
+            Path(codequality_path), findings + appr_findings, fingerprints.get
+        )
     return exit_code
+
+
+def _approvals_report(repo_root: Path) -> approvals.Report:
+    """The whole-tree consistency report (D014/D015): resolve every marker to an
+    address, load the manifest, and pair them. Always whole-tree."""
+    files, _warnings = collect_source_set(repo_root)
+    engines = active_engines()
+    return approvals.check(
+        repo_root, files, _MARKER_RE, lambda rel: lintable(rel, engines)
+    )
+
+
+def _approvals_findings(report: approvals.Report):
+    """(findings, fingerprint map) for the codequality report. check_name is
+    tackbox-approvals; location is the marker for uncovered / the manifest for
+    orphans; fingerprint (via the override map) is the serialized entry address."""
+    findings: list = []
+    fingerprints: dict = {}
+    for u in report.uncovered:
+        f = Finding("tackbox-approvals", u.file, u.line, u.entry.line_text())
+        findings.append(f)
+        fingerprints[f] = u.entry.address
+    for o in report.orphans:
+        f = Finding("tackbox-approvals", approvals.FILENAME, o.line, o.entry.line_text())
+        findings.append(f)
+        fingerprints[f] = o.entry.address
+    for path in report.unresolvable:
+        f = Finding("tackbox-approvals", path, 1, "unresolvable file (syntax does not parse)")
+        findings.append(f)
+        fingerprints[f] = path
+    return findings, fingerprints
+
+
+def _run_approvals(draft: bool) -> int:
+    """`tackbox approvals`: a thin consistency gate (0 consistent / 2
+    inconsistent / 1 infra) that runs only the outline engine, not the lint
+    engines. `--draft` is a generator, not a gate: it prints entry lines for
+    uncovered markers and exits 0 unless unresolvable files make the draft
+    incomplete (then 2)."""
+    repo_root = _find_repo_root()
+    report = _approvals_report(repo_root)
+    if draft:
+        for line in report.draft_lines():
+            print(line)
+        for o in report.orphans:
+            print(f"orphan (no matching marker; remove?): {o.entry.line_text()}", file=sys.stderr)
+        for path in report.unresolvable:
+            print(f"unresolvable (syntax does not parse): {path}", file=sys.stderr)
+        return 2 if report.unresolvable else 0
+    for line in approvals.render_blocks(report):
+        print(line)
+    return 0 if report.ok() else 2
 
 
 def _codequality_findings(
@@ -532,7 +622,7 @@ def _print_banner(tackbox_root: Path) -> None:
 # -- Claude Code hook -----------------------------------------------------
 
 _HOOK_TOOLS = frozenset({"Edit", "Write", "MultiEdit"})
-# Suppression markers plus the markdown `tackbox: lang=<code>` marker: adding or
+# Suppression markers plus the markdown tackbox lang marker: adding or
 # editing any of them rides the same PreToolUse approval gate (_marker_gate).
 _MARKER_RE = re.compile(
     r"(?:no-report|parse-skip|nil-return|long-comment|test-skip|dup-ok):"
