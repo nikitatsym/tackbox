@@ -119,6 +119,25 @@ Full constraints per rule:
   bare `fit` / `fdescribe` / `ftest`, disables the rest of the suite. No
   escape hatch; the focused test must be removed.
 
+### Svelte template markers
+
+`svelte-eslint-parser` drives `.svelte` files; the `//` marker form
+works inside `<script>` blocks and `{...}` expressions exactly as in
+plain JS/TS. The template adds one form - an HTML comment
+immediately above an element:
+
+```text
+<!-- no-report: inline handler failure is tolerated here -->
+<button onclick={...}>go</button>
+```
+
+It suppresses a marker-honoring rule's finding anywhere inside that
+element - element-wide on purpose, since an inline handler can span
+lines (D011 A8) - and stops at the element boundary: following
+siblings still report. Recognition reads the enclosing element's
+preceding `SvelteHTMLComment` sibling; `/* ... */` block comments
+are never markers.
+
 ## Reporter recognition
 
 A call counts as a reporter only when its callee resolves to one of the

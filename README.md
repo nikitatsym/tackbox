@@ -386,6 +386,37 @@ on a non-Go file is rejected - a dead line would be silent. The format
 is language-uniform; the restriction lifts as other engines adopt the
 contract.
 
+### Suppression marker forms
+
+Every marker is `<keyword>: <reason>` carried by the language's
+ordinary comment token:
+
+- Go, Java, JS/TS: a `//` line comment. Block comments are never
+  markers; the one exception is `dup-ok`, where the duplication
+  engine also accepts a standalone single-line `/* ... */` (see its
+  section).
+- Python: a `#` comment.
+- Markdown: the `tackbox: lang=` HTML comment (see the Markdown
+  engine section) is the only Markdown marker.
+- Svelte: inside `<script>` blocks the `//` form works as in JS/TS;
+  the template adds two forms - a `//` comment inside a `{...}`
+  expression (line-adjacent, as ever) and an HTML comment
+  immediately above an element:
+
+```text
+<!-- no-report: inline handler failure is tolerated here -->
+<button onclick={...}>go</button>
+```
+
+The HTML-comment form suppresses within that whole element
+(deliberately wider than line adjacency: an inline handler can span
+lines - D011 A8) and stops at the element boundary; following
+siblings still report. `<style>` content takes no markers.
+
+Placement per rule (above the `try`, standalone above the block,
+directly above the statement) is each rule's own contract; the
+10-character reason floor (D009) is universal.
+
 ## Approval manifest
 
 Suppression markers are approved in one committed file,
