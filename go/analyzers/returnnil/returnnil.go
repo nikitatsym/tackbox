@@ -1,8 +1,8 @@
 // Package returnnil implements ERC004: a bare `return nil` from a
 // function whose single result is `*T`, `[]T`, or `map[K]V` must
-// carry a `// nil-return: <reason>` marker on the line directly
+// carry a nil-return marker with a reason on the line directly
 // above, or sit inside an err-branch whose guard already carries a
-// valid `// no-report: <reason>` marker (ERC001's own gate). The
+// valid no-report marker with a reason (ERC001's own gate). The
 // alternative is to widen the signature to `(val, ok)` / `(val,
 // err)`. Error-assignable results are exempt: their nil is the
 // no-error contract.
@@ -92,7 +92,7 @@ func errBranchGuards(pass *analysis.Pass, body *ast.BlockStmt) []*ast.IfStmt {
 
 // coveredByGuardMarker reports whether ret sits inside an err-branch guard's
 // Body (position containment stands in for ancestry) that itself carries a
-// valid `// no-report:` marker directly above the if - the site marker that
+// valid no-report marker directly above the if - the site marker that
 // already silences ERC001 on the branch also covers the return inside it.
 func coveredByGuardMarker(idx *markers.Index, guards []*ast.IfStmt, ret *ast.ReturnStmt) bool {
 	for _, g := range guards {

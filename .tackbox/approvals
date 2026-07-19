@@ -1,0 +1,48 @@
+bin/tackbox-eslint.js: no-report: CLI bootstrap, no reporter wired before main() runs
+bin/tackbox-mdlint.js: no-report: CLI bootstrap, no reporter wired before run() executes
+go/internal/wrapcli/wrapcli.go#Main: no-report: normal exit
+go/internal/wrapcli/wrapcli.go#Main: no-report: report itself failed, capture would be a no-op
+go/report/report.go#logAt: no-report: this is the local log sink; err is emitted here, not handled
+go/report/report.go#maskDSN: parse-skip: user-input
+hygiene.py#findings: no-report: collects a parse diagnostic into findings, no short-circuit
+java/report/src/main/java/nl/tsym/tackbox/report/Report.java#Report.maskDsn(String): no-report: malformed DSN is config; the opaque marker is the recovery
+java/src/main/java/nl/tsym/tackbox/javalint/Javalint.java#Javalint.run(String[]): no-report: CLI boundary: a malformed or dead reporter declaration
+java/src/main/java/nl/tsym/tackbox/javalint/rules/Flow.java#Flow.DoubleScan.step(Statement,St): dup-ok: parallel state walkers kept separate on purpose; generic merge couples them
+java/src/main/java/nl/tsym/tackbox/javalint/rules/Flow.java#Flow.DoubleScan.step(Statement,St): dup-ok: parallel state walkers kept separate on purpose; generic merge couples them
+java/src/main/java/nl/tsym/tackbox/javalint/rules/Flow.java#Flow.SilentScan.step(Statement,St): dup-ok: parallel state walkers kept separate on purpose; generic merge couples them
+java/src/main/java/nl/tsym/tackbox/javalint/rules/Flow.java#Flow.SilentScan.step(Statement,St): dup-ok: parallel state walkers kept separate on purpose; generic merge couples them
+js/report.js#dispatchEventSafely: no-report: dispatch failure loses only the notice; the verb's local log already ran
+js/report.js#maskDSN: no-report: malformed user DSN, opaque marker is the recovery
+py/tackbox/cache.py#_module_digests: no-report: dir outside repo boundary - not ours to digest, skip
+py/tackbox/cache.py#erclint_import_paths: no-report: dir outside repo boundary - not ours to digest, skip
+py/tackbox/cache.py#gc_soft_cap: no-report: best-effort GC unlink; a miss is never a run failure
+py/tackbox/cache.py#gc_soft_cap._mtime: no-report: missing marker sorts as oldest for GC, never fails the run
+py/tackbox/cache.py#is_cached: no-report: cache is transparent - a miss is never a run failure
+py/tackbox/cache.py#mark_clean: no-report: cache is transparent - a write miss is never a run failure
+py/tackbox/cli.py#_clean_args: no-report: crashed run never produced json -> attribute nothing, never a false clean
+py/tackbox/cli.py#_clean_args: no-report: nonzero = reporter-resolution crash, no json -> attribute nothing
+py/tackbox/cli.py#_clean_args: no-report: unparseable erclint json -> attribute nothing, never a false clean
+py/tackbox/cli.py#_clean_args: no-report: unparseable javalint json -> attribute nothing, never a false clean
+py/tackbox/cli.py#_dispatch: no-report: CLI boundary: surface as message + exit 2; a traceback here is the bug
+py/tackbox/cli.py#_dispatch: no-report: standalone approvals infra failure -> exit 1 (as everywhere)
+py/tackbox/cli.py#_erclint_has_findings: no-report: unparseable erclint output -> failing aggregate, never a false clean
+py/tackbox/cli.py#_hook_post: no-report: edited file resolves outside the repo - nothing in scope to lint
+py/tackbox/cli.py#_hook_post: no-report: hook contract: infra error -> exit 1 + stderr, non-blocking
+py/tackbox/cli.py#_hook_rel: no-report: unresolvable path - fall back to the raw target for the message
+py/tackbox/cli.py#_hook_repo_root: no-report: git rev-parse cannot run here - not a git repo, the hook is a deliberate no-op
+py/tackbox/cli.py#_run_hook: no-report: hook contract: bad stdin -> exit 1 + one stderr line, non-blocking
+py/tackbox/cli.py#_same_path: no-report: unresolvable path is simply not the reporters file - guard
+py/tackbox/cli.py#main: no-report: best-effort devnull redirect for the atexit flush; nothing to report
+py/tackbox/cli.py#main: no-report: downstream pipe closed (lint | head) - exit 141, no traceback
+py/tackbox/doctor.py#_check_ast_grep: no-report: doctor reports the ast-grep probe failure via CheckResult (no short-circuit)
+py/tackbox/doctor.py#_check_binaries_start: no-report: doctor collects every failure to report them all (no short-circuit)
+py/tackbox/doctor.py#_check_engines_store: no-report: doctor reports the store error via CheckResult (no short-circuit)
+py/tackbox/doctor.py#_java_major_version: no-report: doctor reports the unparseable/absent java via CheckResult
+py/tackbox/doctor.py#_source_set_has_ext: no-report: git absent or failed - treat as no such sources; the toolchain probe surfaces it
+py/tackbox/doctor.py#_source_set_has_ext: no-report: git ls-files failed - doctor degrades to "no such sources", not a run failure
+py/tackbox/engines.py#_erclint_dev_version: no-report: no go toolchain - the dev binary builds on demand, so the
+py/tackbox/engines.py#_fetch_and_install: no-report: lost the init race - the winner's store is committed
+py/tackbox/engines.py#_version_from_binary: no-report: binary missing or non-zero exit - the version banner degrades to "?"
+py/tackbox/engines.py#_version_from_npm_manifest: no-report: manifest missing or unparseable - the version banner degrades to "?"
+py/tests/test_publish_workflow.py#_find_matrix_job: no-report: malformed matrix entry in the scanned workflow yaml - skip it
+scripts/lock_engines.py#cmd_check: no-report: prints the parse error and fails the gate (exit 1)

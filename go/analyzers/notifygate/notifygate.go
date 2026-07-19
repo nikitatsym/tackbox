@@ -9,7 +9,7 @@
 //
 // Only a notify carrying the caught error (argument-flow) is gated - a notify
 // the error does not reach is not terminating this failure path. The complement
-// of a narrowed notify stays covered by ERC001. A `// no-report:` marker above
+// of a narrowed notify stays covered by ERC001. A no-report marker above
 // the branch suppresses; a new marker needs user approval.
 package notifygate
 

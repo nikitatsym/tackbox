@@ -10,7 +10,7 @@
 // scripts) is still flagged, and a misplaced / duplicate / malformed
 // marker is a finding that leaves the file strict-ASCII.
 //
-//   <!-- tackbox: lang=ru personal experimental repo -->
+//   <!-- tackbox lang ru personal experimental repo -->
 //
 // The marker is read from micromark HTML-comment tokens, not params.lines:
 // markdownlint masks HTML-comment interiors in `lines`, so the raw code is

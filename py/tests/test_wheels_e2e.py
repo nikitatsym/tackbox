@@ -159,8 +159,15 @@ def test_thin_wheel_does_not_depend_on_fat(wheels):
     assert not any("tackbox-engines" in r or "tackbox_engines" in r for r in requires), (
         f"thin wheel still pins fat: {requires}"
     )
-    # flake8 stays a real dependency (hosts the pyrules plugin).
+    # flake8 stays a real dependency (hosts the pyrules plugin); ast-grep-cli is
+    # the pinned outline engine (D015), a thin runtime dep like flake8.
     assert any("flake8" in r for r in requires), f"thin must still require flake8: {requires}"
+    assert any("ast-grep-cli" in r or "ast_grep_cli" in r for r in requires), (
+        f"thin must pin the outline engine ast-grep-cli: {requires}"
+    )
+    assert any("==0.44.1" in r for r in requires if "ast" in r.lower()), (
+        f"ast-grep-cli must be version-pinned: {requires}"
+    )
 
 
 def test_engines_json_carries_store_pins(engines_payload, wheels):
@@ -185,7 +192,7 @@ def test_hermetic_doctor_exits_zero(hermetic_venv, fixture_repo, engines_payload
         f"doctor failed: {result.returncode}\n"
         f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
     )
-    assert "doctor: 7 checks, 0 failed" in result.stdout
+    assert "doctor: 8 checks, 0 failed" in result.stdout
     assert "ok platform:" in result.stdout
     assert "ok engines-store:" in result.stdout
     assert "ok payload-checksums:" in result.stdout
@@ -193,6 +200,9 @@ def test_hermetic_doctor_exits_zero(hermetic_venv, fixture_repo, engines_payload
     assert "ok git-in-path:" in result.stdout
     assert "ok go-toolchain:" in result.stdout
     assert "ok java-toolchain:" in result.stdout
+    # The outline engine ships as a thin runtime pip dep, so the pinned ast-grep
+    # resolves into the same env as the wheel.
+    assert "ok ast-grep:" in result.stdout
 
 
 def test_hermetic_lint_finds_all_engine_violations(hermetic_venv, fixture_repo, engines_payload):

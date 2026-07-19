@@ -14,7 +14,7 @@ import nl.tsym.tackbox.javalint.Finding;
  *  no-op wrapper - it catches only to rethrow the same exception unchanged.
  *  Removing the try/catch lets the exception propagate identically. Port of
  *  opengrep java-useless-catch; a structural redundancy, not a swallow, so no
- *  `// no-report:` escape - the fix is deletion, not annotation. */
+ *  marker escape - the fix is deletion, not annotation. */
 public final class UselessCatchRule {
 
     public static final String ID = "JV004";

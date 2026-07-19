@@ -11,7 +11,7 @@ import nl.tsym.tackbox.javalint.Recognition;
 /** JV001 (swallow): every execution path through a catch must propagate the
  *  exception (a `throw` in its own frame), report it (a tier-1/tier-2 capture
  *  receiving the caught), print it (a printing terminal), or be covered by a
- *  `// no-report: <reason>` marker - above the catch body for every path, or
+ *  no-report marker with a reason - above the catch body for every path, or
  *  above a statement for the paths executing it. Judged per path (the spec's
  *  same-branch doctrine): a guard's throw covers only its own leg, so a silent
  *  fall-through or else leg still swallows. */

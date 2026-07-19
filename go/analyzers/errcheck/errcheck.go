@@ -4,7 +4,7 @@
 // carrying it (whether that notify is narrow enough is ERC009's call, not this
 // one), report it via a printing terminal exit (`log.Fatal*`/`die` carrying the
 // error - a reported death; `os.Exit` prints nothing and is excluded), or the
-// whole if must carry a `// no-report: <reason>` marker on the line directly
+// whole if must carry a no-report marker with a reason on the line directly
 // above it. The walk is path-sensitive (flow.go): a handled if/else leg does
 // not credit its silent complement.
 package errcheck

@@ -27,7 +27,7 @@ def test_dev_mode_summary_and_exit_zero():
     text = out.getvalue()
     assert rc == 0
     lines = text.strip().splitlines()
-    assert lines[-1].startswith("doctor: 7 checks, 0 failed")
+    assert lines[-1].startswith("doctor: 8 checks, 0 failed")
     ids = {ln.split(" ", 2)[1].rstrip(":") for ln in lines[:-1]}
     assert ids == {
         "platform",
@@ -37,6 +37,7 @@ def test_dev_mode_summary_and_exit_zero():
         "git-in-path",
         "go-toolchain",
         "java-toolchain",
+        "ast-grep",
     }
     assert all(ln.startswith("ok ") for ln in lines[:-1])
 
@@ -92,7 +93,7 @@ def test_hermetic_platform_mismatch_flags_check(tmp_path, monkeypatch):
     text = out.getvalue()
     assert "fail platform:" in text
     assert f"wheel built for {_foreign_platform_key()}" in text
-    assert "doctor: 7 checks, " in text
+    assert "doctor: 8 checks, " in text
 
 
 def test_hermetic_payload_mismatch_flags_check(tmp_path, monkeypatch):
@@ -231,6 +232,42 @@ def test_java_major_version_parses_modern_and_legacy(monkeypatch, banner, major)
     # `java -version` writes to stderr; the parser must read it there.
     monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: _Fake(banner))
     assert doctor._java_major_version("/usr/bin/java") == major
+
+
+# -- ast-grep check --------------------------------------------------------
+
+
+def test_ast_grep_ok_when_pinned_version_present(monkeypatch):
+    monkeypatch.setattr(doctor.shutil, "which", lambda n: "/usr/bin/ast-grep" if n == "ast-grep" else None)
+
+    class _P:
+        stdout = f"ast-grep {doctor._AST_GREP_VERSION}\n"
+        stderr = ""
+
+    monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: _P())
+    r = doctor._check_ast_grep()
+    assert r.ok and doctor._AST_GREP_VERSION in r.detail
+
+
+def test_ast_grep_fails_when_absent(monkeypatch):
+    monkeypatch.setattr(doctor.shutil, "which", lambda n: None)
+    r = doctor._check_ast_grep()
+    assert not r.ok and "not found" in r.detail
+
+
+def test_ast_grep_fails_on_version_drift(monkeypatch):
+    # Adversarial: a grammar-bearing version bump can silently shift resolved
+    # scope chains (A7); the pin must fail loudly, not pass on any ast-grep.
+    monkeypatch.setattr(doctor.shutil, "which", lambda n: "/usr/bin/ast-grep")
+
+    class _P:
+        stdout = "ast-grep 0.45.0\n"
+        stderr = ""
+
+    monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: _P())
+    r = doctor._check_ast_grep()
+    assert not r.ok
+    assert "0.45.0" in r.detail and doctor._AST_GREP_VERSION in r.detail
 
 
 # -- engines-store check ---------------------------------------------------

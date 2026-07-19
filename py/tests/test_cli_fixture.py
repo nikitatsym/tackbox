@@ -108,7 +108,7 @@ function shortThrow() {
 }
 """
 
-# Negative: `# no-report: <reason>` with a reason suppresses the finding.
+# Negative: a no-report marker with a reason suppresses the finding.
 PY_SUPPRESSED_OK = """def cleanup():
     try:
         work()
@@ -117,7 +117,7 @@ PY_SUPPRESSED_OK = """def cleanup():
         pass
 """
 
-# Negative: `# no-report:` with an empty reason must NOT suppress.
+# Negative: an empty-reason no-report marker must NOT suppress.
 PY_MARKER_NO_REASON = """def cleanup():
     try:
         work()

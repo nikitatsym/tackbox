@@ -13,7 +13,7 @@ import nl.tsym.tackbox.javalint.MarkerIndex;
 import nl.tsym.tackbox.javalint.Recognition;
 
 /** JV005 (exit): System.exit inside a catch must be preceded, in the same frame,
- *  by a report or a print of the caught, or carry a `// no-report: <reason>`
+ *  by a report or a print of the caught, or carry a no-report
  *  marker. Otherwise the process dies on a swallowed error. Ordering matters -
  *  a report after the exit never runs on the exiting path (port of ERC003). */
 public final class ExitRule extends CatchRule {

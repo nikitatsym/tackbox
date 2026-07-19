@@ -227,7 +227,7 @@ test('no-swallow-catch executor-reject (F7cal)', () => {
 // it is a finding unless the enclosing function contains at least one syntactic
 // `.reason` access (fail closed, per F2b - allSettled is rare enough that the
 // coarse gate is acceptable). Passing the result whole to a helper is opaque
-// (no visible `.reason`) and is a finding. Escape: `// no-report: <reason>`.
+// (no visible `.reason`) and is a finding. Escape: a no-report marker.
 test('no-swallow-allsettled (F7b)', () => {
   ruleTester.run('no-swallow-allsettled', require('../rules/no-swallow-allsettled'), {
     valid: [
@@ -262,7 +262,7 @@ test('no-swallow-allsettled (F7b)', () => {
 // path throws the caught object or converts to a Result boundary carrying it
 // (object-flow principle F5; stringification breaks the chain). A fallback
 // value, a report-and-continue, or a stringified rethrow swallows it
-// (report+default = finding). Escape: `// parse-skip: <reason>` above the try.
+// (report+default = finding). Escape: a parse-skip marker above the try.
 test('no-parse-fallback (F7c)', () => {
   ruleTester.run('no-parse-fallback', require('../rules/no-parse-fallback'), {
     valid: [
@@ -579,7 +579,7 @@ test('ts-exit-in-catch', () => {
 // A skip/todo/skipIf/fixme in a chain rooted at bare it/test/describe, or a
 // bare xit/xdescribe/xtest, drops the test unless it carries a non-empty
 // in-call reason (node:test options skip/todo, playwright (cond, 'reason'))
-// or a // test-skip: <reason> marker above the statement. Chained forms
+// or a test-skip marker above the statement. Chained forms
 // (skipIf(...)(...), skip.each(...)(...)) report once, on the inner call
 // carrying the skip property. A deeper root (queue.skip, foo.test.skip) is
 // out of scope.

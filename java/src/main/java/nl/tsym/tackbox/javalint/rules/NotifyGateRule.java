@@ -21,7 +21,7 @@ import nl.tsym.tackbox.javalint.Recognition;
  *  routes every failure to the user lane and blinds the telemetry the operator
  *  watches. Gate strength is proportional to observability loss, and notify
  *  drops the only channel the operator sees (D006). The complement of a narrowed
- *  notify stays covered by JV001; a `// no-report:` marker is the last resort
+ *  notify stays covered by JV001; a no-report marker is the last resort
  *  and a new one needs user approval. */
 public final class NotifyGateRule extends CatchRule {
 

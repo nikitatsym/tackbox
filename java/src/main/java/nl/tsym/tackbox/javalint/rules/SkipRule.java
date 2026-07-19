@@ -22,7 +22,7 @@ import nl.tsym.tackbox.javalint.Finding;
  *  literal (`@Disabled("")`, `@Ignore(" ")`, `@Disabled(value = "")`). A
  *  non-empty string value is clean; a non-literal value expression (a constant
  *  reference, a concatenation) is trusted and left clean. There is no
- *  `// no-report:` escape for Java - the fix is always to put the reason into
+ *  marker escape for Java - the fix is always to put the reason into
  *  the annotation value.
  *
  *  <p>Matching is by the annotation's simple name only: javaparser here runs

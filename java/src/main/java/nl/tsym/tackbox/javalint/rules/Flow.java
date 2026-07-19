@@ -69,7 +69,7 @@ final class Flow {
      *  body's end) without a report on the way and without marker cover; the
      *  result is the line that path ends on, or -1 when every path is covered.
      *  A throw is never a silent termination. Marker cover is per-statement: a
-     *  `// no-report:` block above a statement covers every path executing it,
+     *  no-report block above a statement covers every path executing it,
      *  which subsumes the whole-catch placement above the first statement. */
     static int silentPathEnd(BlockStmt body, Predicate<MethodCallExpr> reports,
             MarkerIndex markers) {

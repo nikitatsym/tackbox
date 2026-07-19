@@ -2,7 +2,7 @@
 // reported - the recovered value flows into a go/report capture or a
 // `.tackbox-reporters` sink - or re-panicked so the original stack survives.
 // A bare recover that swallows the value is a finding unless it carries a
-// `// no-report: <reason>` marker.
+// no-report marker with a reason.
 package recoverswallow
 
 import (
