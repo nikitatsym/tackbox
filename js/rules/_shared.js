@@ -384,11 +384,38 @@ function blockHasReport(context, block, errName) {
   return found
 }
 
-// hasMarkerAbove returns true when the comment block directly above node
-// carries `// <prefix>: <reason>` (reason at least MIN_REASON chars, D009) on
-// any of its lines - not only the line immediately above, so a long reason can
-// be followed by human context. A blank line breaks the block (adjacency
-// required).
+// markerText reports whether a comment's raw text is `<prefix>: <reason>` with
+// reason at least MIN_REASON chars (D009) - the shared marker shape.
+function markerText(raw, prefix) {
+  const text = raw.trim()
+  if (!text.startsWith(prefix + ':')) return false
+  return text.slice(prefix.length + 1).trim().length >= MIN_REASON
+}
+
+// precedingSvelteSibling returns the template node immediately before `el` among
+// its parent's children (Program.body at the top level, SvelteElement.children
+// when nested), skipping whitespace-only text; null when there is none.
+function precedingSvelteSibling(el) {
+  const parent = el.parent
+  if (!parent) return null
+  const sibs = parent.children || parent.body
+  if (!Array.isArray(sibs)) return null
+  for (let k = sibs.indexOf(el) - 1; k >= 0; k--) {
+    const s = sibs[k]
+    if (s.type === 'SvelteText' && typeof s.value === 'string' && s.value.trim() === '') continue
+    return s
+  }
+  return null
+}
+
+// hasMarkerAbove returns true when a suppression marker `<prefix>: <reason>`
+// (reason at least MIN_REASON chars, D009) sits above node. Two forms: a `//`
+// comment block directly above node - any of its contiguous lines, so a long
+// reason can be followed by human context, a blank line breaking the block - and,
+// in a Svelte template, an HTML comment `<!-- ... -->` immediately above an
+// enclosing element, which covers the whole element (residual A8: an inline
+// handler can span lines). getAllComments omits SvelteHTMLComment nodes, so the
+// template form is read off the element's preceding sibling.
 function hasMarkerAbove(context, node, prefix) {
   if (!node || !node.loc) return false
   const sourceCode = context.sourceCode || context.getSourceCode()
@@ -397,10 +424,12 @@ function hasMarkerAbove(context, node, prefix) {
     if (c.type === 'Line') byEndLine.set(c.loc.end.line, c)
   }
   for (let line = node.loc.start.line - 1; byEndLine.has(line); line--) {
-    const text = byEndLine.get(line).value.trim()
-    if (!text.startsWith(prefix + ':')) continue
-    const reason = text.slice(prefix.length + 1).trim()
-    if (reason.length >= MIN_REASON) return true
+    if (markerText(byEndLine.get(line).value, prefix)) return true
+  }
+  for (let cur = node.parent; cur; cur = cur.parent) {
+    if (cur.type !== 'SvelteElement') continue
+    const sib = precedingSvelteSibling(cur)
+    if (sib && sib.type === 'SvelteHTMLComment' && markerText(sib.value, prefix)) return true
   }
   return false
 }
