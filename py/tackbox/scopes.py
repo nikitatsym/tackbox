@@ -37,7 +37,7 @@ class ScopesError(RuntimeError):
 @dataclass(frozen=True)
 class ResolvedMarker:
     address: str  # serialized `path` (file scope) or `path#chain`
-    marker: str  # exact marker text (`keyword: reason`), as cli._markers extracts
+    marker: str  # exact marker text (`keyword: reason`, through end of line)
     line: int  # 1-based line of the marker occurrence in the file
 
 
@@ -206,7 +206,7 @@ def _chain_for(cbyte: int, scopes: list[_Scope], serialized: dict[int, str]) -> 
     return [serialized[i] for i in containing]
 
 
-# -- marker extraction (mirrors cli._markers, adds line/byte offset) --------
+# -- marker extraction ------------------------------------------------------
 
 
 def _markers_in(node_text: str, node_start_byte: int, node_start_line: int,
@@ -214,9 +214,9 @@ def _markers_in(node_text: str, node_start_byte: int, node_start_line: int,
                 only_ranges: list[tuple[int, int]] | None = None) -> list[tuple[str, int, int]]:
     """(marker text, marker start byte, 1-based line) for each marker occurrence
     in a comment node. Marker text = the match through end of its line, stripped
-    - the exact `keyword: reason` text cli._markers yields, unchanged. When
-    `only_ranges` is given, a marker counts only if its start falls inside one
-    (used for markdown, where the marker must sit inside an HTML comment)."""
+    - the exact `keyword: reason` occurrence text. When `only_ranges` is given,
+    a marker counts only if its start falls inside one (used for markdown, where
+    the marker must sit inside an HTML comment)."""
     out: list[tuple[str, int, int]] = []
     for m in marker_re.finditer(node_text):
         if only_ranges is not None and not any(s <= m.start() < e for s, e in only_ranges):
@@ -475,6 +475,9 @@ _SVELTE_STYLE_RE = re.compile(rb"<style\b[^>]*>.*?</style>", re.DOTALL | re.IGNO
 
 def _resolve_svelte(raw: bytes, marker_re: re.Pattern[str]) -> _Sub:
     content = raw.decode("utf-8", errors="replace")
+    # ast-grep parses `content`, so its byte offsets index this re-encoded
+    # buffer - never `raw`, where an invalid byte re-encodes wider (U+FFFD).
+    data = content.encode("utf-8")
     matches = _ast_scan(content, _SVELTE_HTML_RULES)
     scripts = [m for m in matches if m["ruleId"] == "raw"]
     html_comments = [m for m in matches if m["ruleId"] == "comment"]
@@ -485,14 +488,16 @@ def _resolve_svelte(raw: bytes, marker_re: re.Pattern[str]) -> _Sub:
         b = s["range"]["byteOffset"]
         start, end = b["start"], b["end"]
         covered.append((start, end))
-        tag = raw[raw.rfind(b"<script", 0, start): start].decode("utf-8", errors="replace")
+        tag = data[data.rfind(b"<script", 0, start): start].decode("utf-8", errors="replace")
         m = re.search(r'\blang\s*=\s*[\'"]?([A-Za-z0-9]+)', tag)
         script_lang = _SVELTE_SCRIPT_LANG.get(m.group(1).lower() if m else "", "javascript")
-        script_sub = _resolve_code(raw[start:end].decode("utf-8"), script_lang, marker_re)
+        script_sub = _resolve_code(
+            data[start:end].decode("utf-8", errors="replace"), script_lang, marker_re
+        )
         if script_sub.unresolvable:
             return _Sub(unresolvable=True)  # a script that does not parse refuses the file
         for chain, text, _local_line, local_byte in script_sub.markers:
-            line = raw.count(b"\n", 0, start + local_byte) + 1
+            line = data.count(b"\n", 0, start + local_byte) + 1
             sub.markers.append((chain, text, line, start + local_byte))
 
     # Template HTML-comment markers (AST-precise) anchor at file scope.
@@ -506,11 +511,11 @@ def _resolve_svelte(raw: bytes, marker_re: re.Pattern[str]) -> _Sub:
     # non-html-comment) text, scanned textually (a superset, over-ask direction).
     # Blanking keeps newlines so byte line numbers stay accurate; script and
     # html-comment regions are blanked so their markers are not double-counted.
-    blanked = bytearray(raw)
+    blanked = bytearray(data)
     for c in html_comments:
         b = c["range"]["byteOffset"]
         covered.append((b["start"], b["end"]))
-    for mm in _SVELTE_STYLE_RE.finditer(raw):
+    for mm in _SVELTE_STYLE_RE.finditer(data):
         covered.append((mm.start(), mm.end()))
     for start, end in covered:
         for i in range(start, end):
@@ -532,8 +537,10 @@ def _resolve_svelte(raw: bytes, marker_re: re.Pattern[str]) -> _Sub:
 def resolve_file(root: Path, rel: str, marker_re: re.Pattern[str]) -> FileResult:
     """Resolve `root/rel`'s markers to addresses, or flag it unresolvable.
 
-    A file with no marker-like text (AST-precise markers are a subset of the
-    textual match) resolves to no markers without invoking the engine."""
+    Always parses: a file with no marker text still refuses resolution on
+    ERROR nodes, so a manifest entry naming a broken file reports the file
+    as unresolvable, not itself as an orphan. Callers keep tree scans cheap
+    with the has_marker_text prefilter."""
     lang = language_for(rel)
     if lang is None:
         return FileResult()
@@ -544,8 +551,6 @@ def resolve_file(root: Path, rel: str, marker_re: re.Pattern[str]) -> FileResult
     if b"\x00" in raw:
         return FileResult()  # binary: no marker text to resolve
     content = raw.decode("utf-8", errors="replace")
-    if not marker_re.search(content):
-        return FileResult()  # no comment marker can exist without a textual match
 
     if lang == "markdown":
         sub = _resolve_markdown(content, marker_re)

@@ -171,7 +171,9 @@ def _parse_argv(argv: list[str]) -> argparse.Namespace:
     )
     sub.add_parser("doctor", help="verify the hermetic install is functional")
     sub.add_parser(
-        "hook", help="Claude Code hook: PostToolUse lint + PreToolUse marker gate"
+        "hook",
+        help="Claude Code hook: PostToolUse lint + approvals consistency, "
+        "PreToolUse manifest gate",
     )
     return parser.parse_args(argv)
 
@@ -213,7 +215,7 @@ def _lint_results(
         ensure_engines()
 
     # Self-lint: tackbox lints itself. Cache is disabled so tackbox never
-    # self-caches its own bugs (plan: "чтобы tackbox не самокэшировал").
+    # self-caches its own bugs.
     if tackbox_root.resolve() == repo_root.resolve():
         no_cache = True
 
@@ -622,8 +624,8 @@ def _print_banner(tackbox_root: Path) -> None:
 # -- Claude Code hook -----------------------------------------------------
 
 _HOOK_TOOLS = frozenset({"Edit", "Write", "MultiEdit"})
-# Suppression markers plus the markdown tackbox lang marker: adding or
-# editing any of them rides the same PreToolUse approval gate (_marker_gate).
+# Suppression markers plus the markdown tackbox lang marker: the pattern the
+# approvals check (scopes / approvals) matches against the tree inventory.
 _MARKER_RE = re.compile(
     r"(?:no-report|parse-skip|nil-return|long-comment|test-skip|dup-ok):"
     r"|tackbox:\s*lang=\S*"
@@ -649,8 +651,6 @@ def _run_hook() -> int:
     if name == "PreToolUse":
         return _hook_pre(event)
     if name == "PostToolUse":
-        if event.get("tool_name") == "Bash":
-            return _hook_bash(event)  # D011: stateless worktree-vs-HEAD marker diff
         return _hook_post(event)
     return 0
 
@@ -695,19 +695,38 @@ def _hook_target(event: dict) -> tuple[Path | None, dict]:
 
 
 def _hook_post(event: dict) -> int:
+    """PostToolUse: the worktree-wide approvals wall first (for a Bash event and
+    every edit tool alike), then, for an edit tool, the diff-scoped lint arm.
+
+    The consistency check is tree-shaped (D011): an inconsistency planted anywhere
+    by any channel - a shelled-in marker, a committed-but-unapproved marker, an
+    orphaned manifest line - blocks the next hook event of any kind. An edit tool
+    reports it as the lint arm does (block lines on stderr, exit 2); a Bash event
+    has no edit target, so the wall is its only arm and a hit rides the existing
+    top-level `decision: block` JSON (exit 0).
+    """
     root = _hook_repo_root(event)
     if root is None:
         return 0
-    target, tool_input = _hook_target(event)
-    if target is None:
-        return 0
     try:
-        rel = str(target.resolve().relative_to(root.resolve()))
-    except (ValueError, OSError):
-        # no-report: edited file resolves outside the repo - nothing in scope to lint
-        return 0
-
-    try:
+        # [1:] drops the lint-section header: the hook payload is the canonical
+        # block texts alone (render_blocks returns [] when clean).
+        blocks = approvals.render_blocks(_approvals_report(root))[1:]
+        target, tool_input = _hook_target(event)
+        if target is None:
+            # Bash / non-edit tool: the consistency wall is its only arm
+            if blocks:
+                print(json.dumps({"decision": "block", "reason": "\n".join(blocks)}))
+            return 0
+        if blocks:
+            for line in blocks:
+                sys.stderr.write(line + "\n")
+            return 2
+        try:
+            rel = str(target.resolve().relative_to(root.resolve()))
+        except (ValueError, OSError):
+            # no-report: edited file resolves outside the repo - nothing in scope to lint
+            return 0
         results, _warnings, _orphans = _lint_results(
             root, _tackbox_root(), rel, no_cache=False, changed_scope=None, machine=True
         )
@@ -726,6 +745,8 @@ def _hook_post(event: dict) -> int:
         ChangedScopeError,
         cache.GoListError,
         reporters.ReportersError,
+        approvals.ApprovalsError,
+        scopes.ScopesError,
         EnginesStoreError,
         subprocess.CalledProcessError,
         ValueError,  # a non-compile erclint analyzer-load error
@@ -854,180 +875,73 @@ def _partition_findings(
 
 
 def _hook_pre(event: dict) -> int:
+    """PreToolUse Edit/Write/MultiEdit: the manifest and reporters declaration
+    gates. Adding a `.tackbox/approvals` line asks (quoting the entry); adding a
+    `.tackbox-reporters` line asks (unchanged). Removals are free. Code markers no
+    longer ask here - approval rides the manifest, and an unapproved marker
+    surfaces at the next Post consistency event."""
     root = _hook_repo_root(event)
     if root is None:
         return 0
     target, tool_input = _hook_target(event)
     if target is None:
         return 0
-    old, new, replace_all = _hook_pre_content(event["tool_name"], tool_input, target)
-    rel = _hook_rel(target, root)
+    old, new = _hook_pre_content(event["tool_name"], tool_input, target)
 
+    if _same_path(target, root / approvals.FILENAME):
+        ask = _manifest_ask(old, new)
+        return _hook_ask_reason(ask) if ask is not None else 0
     if _same_path(target, root / reporters.FILENAME):
         added = _reporters_added_line(old, new)
         if added is not None:
-            return _hook_ask(f".tackbox-reporters line added: {added}", rel)
-        return 0
-
-    # D012: the marker gate asks only about files an engine would lint - a marker
-    # in a dead file (fixture.py.txt, a Go testdata/ path) is inert text.
-    if not lintable(rel, active_engines()):
-        return 0
-    marker = _marker_gate(old, new, replace_all)
-    if marker is not None:
-        return _hook_ask(f"suppression marker: {marker}", rel)
+            return _hook_ask(
+                f".tackbox-reporters line added: {added}", _hook_rel(target, root)
+            )
     return 0
 
 
-# -- PostToolUse Bash arm (D011) ------------------------------------------
-
-# Shared tail for the Bash block reasons: the PreToolUse gate's approval wording.
-_APPROVAL_TAIL = (
-    "a new suppression marker needs explicit user approval - revert it or get "
-    "the user's approval"
-)
-
-
-def _hook_bash(event: dict) -> int:
-    """PostToolUse Bash arm (D011): a stateless worktree-vs-HEAD marker diff.
-
-    HEAD is the approval record - an approved marker stops flagging once
-    committed; worst mode is a repeated question, never a silent pass. Marker
-    gates on lintable files (D012); added `.tackbox-reporters` lines
-    unconditionally. A git-status infra failure follows the hook's non-blocking
-    contract (exit 1 + one stderr line); a per-file `git show` failure just means
-    the path is absent in HEAD (old="")."""
-    root = _hook_repo_root(event)
-    if root is None:
-        return 0
-    status = subprocess.run(
-        ["git", "status", "--porcelain", "-z", "-uall", "--no-renames"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-    )
-    if status.returncode != 0:
-        # Hook contract: an infra failure is non-blocking (one stderr line, exit 1).
-        print(f"tackbox hook: {status.stderr.strip() or 'git status failed'}", file=sys.stderr)
-        return 1
-    engines = active_engines()
-    hits = [
-        r for rel in _porcelain_paths(status.stdout)
-        if (r := _bash_hit(root, rel, engines)) is not None
-    ]
-    if hits:
-        print(json.dumps({"decision": "block", "reason": "\n".join(hits)}))
-    return 0
-
-
-def _porcelain_paths(stdout: str) -> list[str]:
-    """Non-deleted repo-relative paths from `git status --porcelain -z` (staged or
-    unstaged both count as worktree; a deletion has nothing to read)."""
-    out: list[str] = []
-    for entry in stdout.split("\0"):
-        if len(entry) < 4:
-            continue
-        xy, path = entry[:2], entry[3:]
-        if "D" in xy:
-            continue
-        out.append(path)
-    return out
-
-
-def _bash_hit(root: Path, rel: str, engines: list[EngineSpec]) -> str | None:
-    """One block-reason line for `rel`, or None. The root `.tackbox-reporters`
-    added-line check is unconditional; the marker gate runs only on lintable
-    files (D012)."""
-    if rel == reporters.FILENAME:
-        new = _read_worktree(root, rel)
-        if new is None:
-            return None
-        added = _reporters_added_line(_git_show_head(root, rel), new)
-        if added is not None:
-            return f".tackbox-reporters line added via Bash: {added} ({rel}); {_APPROVAL_TAIL}"
-        return None
-    if not lintable(rel, engines):
-        return None
-    new = _read_worktree(root, rel)
-    if new is None:
-        return None
-    marker = _marker_gate(_git_show_head(root, rel), new, replace_all=False)
-    if marker is not None:
-        return f"suppression marker via Bash: {marker} ({rel}); {_APPROVAL_TAIL}"
-    return None
-
-
-def _git_show_head(root: Path, rel: str) -> str:
-    """`git show HEAD:<rel>` decoded utf-8/replace, empty on any failure (path
-    absent in HEAD, or an unborn HEAD) - not an infra error, just old=""."""
-    r = subprocess.run(["git", "show", f"HEAD:{rel}"], cwd=root, capture_output=True)
-    if r.returncode != 0:
-        return ""
-    return r.stdout.decode("utf-8", errors="replace")
-
-
-def _read_worktree(root: Path, rel: str) -> str | None:
-    """Worktree text at `root/rel` (utf-8/replace), or None when the path is gone
-    (a delete race) or binary - a NUL byte marks a file with no marker text to
-    gate. is_file() guards the race, mirroring _hook_pre_content's read."""
-    p = root / rel
-    if not p.is_file():
-        return None
-    data = p.read_bytes()
-    if b"\x00" in data:
-        return None
-    return data.decode("utf-8", errors="replace")
-
-
-def _hook_pre_content(
-    tool_name: str, tool_input: dict, target: Path
-) -> tuple[str, str, bool]:
-    """(old, new, replace_all) content for the marker / line diff.
+def _hook_pre_content(tool_name: str, tool_input: dict, target: Path) -> tuple[str, str]:
+    """(old, new) content for the added-line diff.
 
     Write compares against the file on disk (absent -> empty); Edit uses its
     old/new strings; MultiEdit concatenates every edit's strings.
     """
     if tool_name == "Write":
         old = target.read_text(encoding="utf-8") if target.is_file() else ""
-        return old, tool_input.get("content") or "", False
+        return old, tool_input.get("content") or ""
     if tool_name == "MultiEdit":
         edits = tool_input.get("edits") or []
         old = "\n".join(e.get("old_string") or "" for e in edits)
         new = "\n".join(e.get("new_string") or "" for e in edits)
-        return old, new, any(e.get("replace_all") for e in edits)
-    return (
-        tool_input.get("old_string") or "",
-        tool_input.get("new_string") or "",
-        bool(tool_input.get("replace_all")),
+        return old, new
+    return tool_input.get("old_string") or "", tool_input.get("new_string") or ""
+
+
+def _manifest_ask(old: str, new: str) -> str | None:
+    """The manifest approval ask for a proposed `.tackbox/approvals` edit, or None
+    when it adds no entry line (removals are free).
+
+    One edit adding several entries draws ONE ask (the permission is per-edit and
+    indivisible - approved or rejected atomically). Duplicate entries collapse to
+    one line with ` x<count>`; the header counts total occurrences. Entries are
+    listed in deterministic lexicographic line order."""
+    old_c = Counter(s.strip() for s in old.splitlines() if s.strip())
+    new_c = Counter(s.strip() for s in new.splitlines() if s.strip())
+    added = new_c - old_c
+    if not added:
+        return None
+    ordered = sorted(added)
+    total = sum(added.values())
+    if total == 1:
+        return f"approve suppression marker: {ordered[0]}"
+    header = (
+        f"approve {total} suppression markers (Allow = all, Deny = none;"
+        " re-add one by one to decide individually):"
     )
-
-
-def _markers(content: str) -> list[str]:
-    """Each marker occurrence as `keyword: reason` (through end of its line,
-    trimmed). The multiset drives new-marker and reason-change detection."""
-    out: list[str] = []
-    for m in _MARKER_RE.finditer(content):
-        end = content.find("\n", m.start())
-        out.append(content[m.start() : len(content) if end < 0 else end].strip())
-    return out
-
-
-def _marker_gate(old: str, new: str, replace_all: bool) -> str | None:
-    """The marker string that must be approved, or None to allow.
-
-    replace_all is conservative: any marker present in new but not old asks.
-    Otherwise count-first: more markers -> ask; equal count but a changed
-    marker/reason -> ask; fewer -> allow (removing a marker is free).
-    """
-    old_c, new_c = Counter(_markers(old)), Counter(_markers(new))
-    added = list((new_c - old_c).elements())
-    if replace_all:
-        return added[0] if added else None
-    if sum(new_c.values()) > sum(old_c.values()):
-        return added[0] if added else next(iter(new_c))
-    if sum(new_c.values()) == sum(old_c.values()) and new_c != old_c:
-        return added[0] if added else "reason changed"
-    return None
+    body = [
+        f"  {line}" + (f" x{added[line]}" if added[line] > 1 else "") for line in ordered
+    ]
+    return "\n".join([header, *body])
 
 
 def _reporters_added_line(old: str, new: str) -> str | None:
@@ -1040,13 +954,17 @@ def _reporters_added_line(old: str, new: str) -> str | None:
 
 
 def _hook_ask(reason: str, rel: str) -> int:
+    return _hook_ask_reason(f"{reason} ({rel})")
+
+
+def _hook_ask_reason(reason: str) -> int:
     print(
         json.dumps(
             {
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "ask",
-                    "permissionDecisionReason": f"{reason} ({rel})",
+                    "permissionDecisionReason": reason,
                 }
             }
         )

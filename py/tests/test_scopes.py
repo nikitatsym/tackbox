@@ -420,6 +420,40 @@ def test_svelte_script_parse_error_refuses(tmp_path):
     assert r.markers == []
 
 
+def test_svelte_invalid_utf8_before_script_resolves(tmp_path):
+    # An invalid UTF-8 byte upstream of the script must not crash resolution or
+    # shift ast-grep's byte offsets: the parsed text re-encodes the byte wider
+    # (U+FFFD), so offsets index the re-encoded buffer, never the raw bytes.
+    src = (
+        b"<p>caf\xff</p>\n"
+        b"<script>\n"
+        b"function go() {\n"
+        b"  // no-report: invalid byte upstream of the script\n"
+        b"}\n"
+        b"</script>\n"
+    )
+    (tmp_path / "s.svelte").write_bytes(src)
+    r = scopes.resolve_file(tmp_path, "s.svelte", _MARKER_RE)
+    assert r.unresolvable is False
+    assert addrs(r) == {4: "s.svelte#go"}
+
+
+def test_svelte_invalid_utf8_inside_script_resolves(tmp_path):
+    # An invalid byte inside the script decodes to U+FFFD (the module-wide
+    # replace idiom), never a UnicodeDecodeError crash.
+    src = (
+        b"<script>\n"
+        b"function go() {\n"
+        b"  let s = '\xff';  // no-report: invalid byte inside the script\n"
+        b"}\n"
+        b"</script>\n"
+    )
+    (tmp_path / "t.svelte").write_bytes(src)
+    r = scopes.resolve_file(tmp_path, "t.svelte", _MARKER_RE)
+    assert r.unresolvable is False
+    assert addrs(r) == {3: "t.svelte#go"}
+
+
 # -- ERROR-file refusal ----------------------------------------------------
 
 def test_error_file_refused(tmp_path):

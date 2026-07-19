@@ -1,4 +1,5 @@
-"""Step C acceptance: `tackbox hook` PostToolUse lint + PreToolUse marker gate.
+"""`tackbox hook`: PostToolUse lint + worktree-wide approvals consistency, and
+the PreToolUse manifest-approval gate.
 
 Drives `python -m tackbox.cli hook` with Claude Code hook-event JSON on stdin
 and pins exit code / stdout / stderr for each contract case. The hook derives
@@ -14,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from conftest import init_repo, tackbox_env
+from conftest import commit_all, git, init_repo, tackbox_env
 
 from tackbox.cli import _finding_line, _partition_findings, _span_lines
 from tackbox.engines import Finding, active_engines, lintable
@@ -367,7 +368,7 @@ def test_finding_line_location_unknown():
     assert _finding_line(f) == "?: r: m"
 
 
-# -- PreToolUse -----------------------------------------------------------
+# -- PreToolUse: approval-manifest gate -----------------------------------
 
 
 def _ask(r: subprocess.CompletedProcess) -> dict:
@@ -379,18 +380,25 @@ def _ask(r: subprocess.CompletedProcess) -> dict:
     return out
 
 
-def _pre_edit(tmp_path: Path, old: str, new: str) -> subprocess.CompletedProcess:
-    """PreToolUse Edit of svc.go from old_string to new_string in a fresh
-    dev-guarded repo - the marker gate's canonical input."""
-    _dev_py(tmp_path)
-    _init(tmp_path)
+def _pre_write(tmp_path: Path, rel: str, content: str) -> subprocess.CompletedProcess:
+    return _hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Write",
+            "cwd": str(tmp_path),
+            "tool_input": {"file_path": str(tmp_path / rel), "content": content},
+        }
+    )
+
+
+def _pre_edit(tmp_path: Path, rel: str, old: str, new: str) -> subprocess.CompletedProcess:
     return _hook(
         {
             "hook_event_name": "PreToolUse",
             "tool_name": "Edit",
             "cwd": str(tmp_path),
             "tool_input": {
-                "file_path": str(tmp_path / "svc.go"),
+                "file_path": str(tmp_path / rel),
                 "old_string": old,
                 "new_string": new,
             },
@@ -398,64 +406,109 @@ def _pre_edit(tmp_path: Path, old: str, new: str) -> subprocess.CompletedProcess
     )
 
 
-def test_pre_introduce_marker_ask(tmp_path):
-    r = _pre_edit(tmp_path, "x := 1", "// no-report: bootstrap only\nx := 1")
-    assert "no-report" in _ask(r)["permissionDecisionReason"]
+# The two canonical ask texts (plan, user-approved) - fixed verbatim.
+CANON_SINGLE = (
+    "approve suppression marker: "
+    "app/svc.py#Handler.process: no-report: legacy path, covered upstream"
+)
+CANON_MULTI = (
+    "approve 4 suppression markers (Allow = all, Deny = none;"
+    " re-add one by one to decide individually):\n"
+    "  app/svc.py#Handler.process: no-report: legacy path, covered upstream\n"
+    "  app/svc.py#Handler.retry: no-report: transient, retried x2\n"
+    "  lib/util.ts#parseCfg: parse-skip: config validated upstream"
+)
 
 
-def test_pre_remove_marker_allow(tmp_path):
-    r = _pre_edit(tmp_path, "// no-report: bootstrap only\nx := 1", "x := 1")
-    assert r.returncode == 0, r.stderr
-    assert r.stdout == "", f"removing a marker is free (no output):\n{r.stdout}"
-
-
-def test_pre_change_reason_ask(tmp_path):
-    r = _pre_edit(tmp_path, "// no-report: old reason\nx := 1", "// no-report: new reason\nx := 1")
-    assert "no-report" in _ask(r)["permissionDecisionReason"]
-
-
-def test_pre_introduce_test_skip_marker_ask(tmp_path):
-    r = _pre_edit(tmp_path, "x := 1", "// test-skip: flaky under race\nx := 1")
-    assert "test-skip" in _ask(r)["permissionDecisionReason"]
-
-
-def test_pre_remove_test_skip_marker_allow(tmp_path):
-    r = _pre_edit(tmp_path, "// test-skip: flaky under race\nx := 1", "x := 1")
-    assert r.returncode == 0, r.stderr
-    assert r.stdout == "", f"removing a marker is free (no output):\n{r.stdout}"
-
-
-def test_pre_write_new_file_with_marker_ask(tmp_path):
+def test_pre_manifest_single_entry_ask(tmp_path):
+    # Adding one manifest line draws the canonical single ask, quoting the entry.
     _dev_py(tmp_path)
+    (tmp_path / ".tackbox").mkdir()
     _init(tmp_path)
-    r = _hook(
-        {
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Write",
-            "cwd": str(tmp_path),
-            "tool_input": {
-                "file_path": str(tmp_path / "new.go"),
-                "content": "package pkg\n// parse-skip: generated blob\nvar x = 1\n",
-            },
-        }
+    r = _pre_write(
+        tmp_path,
+        ".tackbox/approvals",
+        "app/svc.py#Handler.process: no-report: legacy path, covered upstream\n",
     )
-    assert "parse-skip" in _ask(r)["permissionDecisionReason"]
+    assert _ask(r)["permissionDecisionReason"] == CANON_SINGLE
+
+
+def test_pre_manifest_multi_entry_one_ask(tmp_path):
+    # A single edit adding several entries draws ONE atomic ask listing every one
+    # (Allow = all, Deny = none). Duplicates collapse to ` x<count>`; the header
+    # counts total occurrences (here 1 + 2 + 1 = 4). Deny is atomic - the whole
+    # edit is rejected and nothing lands; re-add one by one to decide individually.
+    _dev_py(tmp_path)
+    (tmp_path / ".tackbox").mkdir()
+    _init(tmp_path)
+    r = _pre_write(
+        tmp_path,
+        ".tackbox/approvals",
+        "app/svc.py#Handler.process: no-report: legacy path, covered upstream\n"
+        "app/svc.py#Handler.retry: no-report: transient, retried\n"
+        "app/svc.py#Handler.retry: no-report: transient, retried\n"
+        "lib/util.ts#parseCfg: parse-skip: config validated upstream\n",
+    )
+    out = _ask(r)
+    assert out["permissionDecisionReason"] == CANON_MULTI
+    # ONE ask, not several: the whole payload is a single JSON object on one line.
+    assert r.stdout.strip().count("\n") == 0, f"expected one ask object:\n{r.stdout}"
+
+
+def test_pre_manifest_edit_adds_line_ask(tmp_path):
+    # The arm covers Edit as well as Write: an Edit that appends one entry asks.
+    _dev_py(tmp_path)
+    (tmp_path / ".tackbox").mkdir()
+    (tmp_path / ".tackbox" / "approvals").write_text("a.py: no-report: one\n")
+    _init(tmp_path)
+    r = _pre_edit(
+        tmp_path,
+        ".tackbox/approvals",
+        "a.py: no-report: one",
+        "a.py: no-report: one\nc.py: no-report: three",
+    )
+    assert (
+        _ask(r)["permissionDecisionReason"]
+        == "approve suppression marker: c.py: no-report: three"
+    )
+
+
+def test_pre_manifest_removal_free(tmp_path):
+    # Removing a manifest line is free - no ask.
+    _dev_py(tmp_path)
+    (tmp_path / ".tackbox").mkdir()
+    (tmp_path / ".tackbox" / "approvals").write_text(
+        "a.py: no-report: one\nb.py: no-report: two\n"
+    )
+    _init(tmp_path)
+    r = _pre_write(tmp_path, ".tackbox/approvals", "a.py: no-report: one\n")
+    assert r.returncode == 0 and r.stdout == "", f"removing a line is free:\n{r.stdout}"
+
+
+def test_pre_manifest_nested_not_gated(tmp_path):
+    # Root-only: a .tackbox/approvals under a subdirectory is not the manifest;
+    # adding an entry line to it draws no ask (same-named files elsewhere do not
+    # participate).
+    _dev_py(tmp_path)
+    (tmp_path / "sub" / ".tackbox").mkdir(parents=True)
+    _init(tmp_path)
+    r = _pre_write(
+        tmp_path,
+        "sub/.tackbox/approvals",
+        "app/x.py: no-report: nested, not the root manifest\n",
+    )
+    assert r.returncode == 0 and r.stdout == "", f"nested manifest is not gated:\n{r.stdout}"
+
+
+# -- PreToolUse: reporters ask (unchanged arm) ----------------------------
 
 
 def test_pre_reporters_add_line_ask(tmp_path):
     _dev_py(tmp_path)
     (tmp_path / ".tackbox-reporters").write_text("a.go#f: sink one\n")
     _init(tmp_path)
-    r = _hook(
-        {
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Write",
-            "cwd": str(tmp_path),
-            "tool_input": {
-                "file_path": str(tmp_path / ".tackbox-reporters"),
-                "content": "a.go#f: sink one\nb.go#g: sink two\n",
-            },
-        }
+    r = _pre_write(
+        tmp_path, ".tackbox-reporters", "a.go#f: sink one\nb.go#g: sink two\n"
     )
     assert "b.go#g" in _ask(r)["permissionDecisionReason"]
 
@@ -464,150 +517,43 @@ def test_pre_reporters_remove_line_allow(tmp_path):
     _dev_py(tmp_path)
     (tmp_path / ".tackbox-reporters").write_text("a.go#f: sink one\nb.go#g: sink two\n")
     _init(tmp_path)
-    r = _hook(
-        {
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Write",
-            "cwd": str(tmp_path),
-            "tool_input": {
-                "file_path": str(tmp_path / ".tackbox-reporters"),
-                "content": "a.go#f: sink one\n",
-            },
-        }
-    )
-    assert r.returncode == 0, r.stderr
-    assert r.stdout == "", f"removing a declaration line is free:\n{r.stdout}"
+    r = _pre_write(tmp_path, ".tackbox-reporters", "a.go#f: sink one\n")
+    assert r.returncode == 0 and r.stdout == "", f"removing a declaration is free:\n{r.stdout}"
 
 
-def test_pre_plain_edit_no_marker_allow(tmp_path):
-    r = _pre_edit(tmp_path, "a := 1", "a := 2")
-    assert r.returncode == 0, r.stderr
-    assert r.stdout == "", f"a plain edit is free:\n{r.stdout}"
+# -- PreToolUse: code markers no longer ask (the old _marker_gate is gone) -
 
 
-# -- PreToolUse: markdown lang marker (rides the suppression-marker gate) --
-
-
-def _pre_edit_md(tmp_path: Path, old: str, new: str) -> subprocess.CompletedProcess:
-    """PreToolUse Edit of notes.md - the lang marker rides the same gate as a
-    // no-report suppression, so it flows through _marker_gate unchanged."""
+def test_pre_code_marker_edit_no_ask(tmp_path):
+    # Marker edits in code files no longer draw a Pre ask. Approval rides the
+    # manifest now, not the code edit; an unapproved code marker surfaces at the
+    # next Post consistency event instead.
     _dev_py(tmp_path)
     _init(tmp_path)
-    return _hook(
-        {
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Edit",
-            "cwd": str(tmp_path),
-            "tool_input": {
-                "file_path": str(tmp_path / "notes.md"),
-                "old_string": old,
-                "new_string": new,
-            },
-        }
-    )
-
-
-def test_pre_introduce_lang_marker_ask(tmp_path):
-    # A newly added markdown lang marker escalates for approval exactly like a
-    # new // no-report suppression.
-    r = _pre_edit_md(
-        tmp_path, "# notes\n", "<!-- tackbox: lang=ru personal repo -->\n# notes\n"
-    )
-    assert "lang=ru" in _ask(r)["permissionDecisionReason"]
-
-
-def test_pre_remove_lang_marker_allow(tmp_path):
-    r = _pre_edit_md(
-        tmp_path, "<!-- tackbox: lang=ru personal repo -->\n# notes\n", "# notes\n"
-    )
-    assert r.returncode == 0, r.stderr
-    assert r.stdout == "", f"removing a marker is free (no output):\n{r.stdout}"
-
-
-def test_pre_change_lang_marker_reason_ask(tmp_path):
-    r = _pre_edit_md(
+    r = _pre_edit(
         tmp_path,
-        "<!-- tackbox: lang=ru old reason -->\n",
-        "<!-- tackbox: lang=ru new reason -->\n",
+        "app/svc.py",
+        "x = 1",
+        "# no-report: added straight into code\nx = 1",
     )
-    assert "lang=ru" in _ask(r)["permissionDecisionReason"]
+    assert r.returncode == 0 and r.stdout == "", f"a code marker edit must not ask:\n{r.stdout}"
 
 
-def test_pre_write_new_md_with_lang_marker_ask(tmp_path):
+def test_pre_code_marker_write_no_ask(tmp_path):
     _dev_py(tmp_path)
     _init(tmp_path)
-    r = _hook(
-        {
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Write",
-            "cwd": str(tmp_path),
-            "tool_input": {
-                "file_path": str(tmp_path / "new.md"),
-                "content": "<!-- tackbox: lang=ru fresh file -->\n# hi\n",
-            },
-        }
-    )
-    assert "lang=ru" in _ask(r)["permissionDecisionReason"]
+    r = _pre_write(tmp_path, "new.py", "# parse-skip: generated blob\nx = 1\n")
+    assert r.returncode == 0 and r.stdout == "", f"a new file with a marker must not ask:\n{r.stdout}"
 
 
-# -- PreToolUse D012: the marker gate asks only about lintable files -------
-
-
-def _pre_edit_rel(tmp_path: Path, rel: str, new: str) -> subprocess.CompletedProcess:
+def test_pre_plain_edit_allow(tmp_path):
     _dev_py(tmp_path)
     _init(tmp_path)
-    return _hook(
-        {
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Edit",
-            "cwd": str(tmp_path),
-            "tool_input": {
-                "file_path": str(tmp_path / rel),
-                "old_string": "x = 1",
-                "new_string": new,
-            },
-        }
-    )
+    r = _pre_edit(tmp_path, "svc.py", "a := 1", "a := 2")
+    assert r.returncode == 0 and r.stdout == "", f"a plain edit is free:\n{r.stdout}"
 
 
-def test_pre_marker_in_go_testdata_allow(tmp_path):
-    # A Go testdata/ path is dropped by the Go engines' path filter -> unlintable
-    # -> the marker gate stays silent (D012).
-    r = _pre_edit_rel(
-        tmp_path,
-        "go/analyzers/x/testdata/src/x/x.go",
-        "// no-report: dead marker in go testdata\nx = 1",
-    )
-    assert r.returncode == 0 and r.stdout == "", f"testdata marker must allow:\n{r.stdout}"
-
-
-def test_pre_marker_in_java_txt_fixture_allow(tmp_path):
-    # A .java.txt fixture has no engine extension -> unlintable -> silent.
-    r = _pre_edit_rel(
-        tmp_path,
-        "java/src/test/resources/testdata/Foo.java.txt",
-        "// no-report: dead marker in java txt fixture\nx = 1",
-    )
-    assert r.returncode == 0 and r.stdout == "", f".java.txt marker must allow:\n{r.stdout}"
-
-
-def test_pre_marker_in_live_py_ask(tmp_path):
-    r = _pre_edit_rel(
-        tmp_path, "app/svc.py", "# no-report: live python needs approval\nx = 1"
-    )
-    assert "no-report" in _ask(r)["permissionDecisionReason"]
-
-
-def test_pre_marker_in_file_named_testdata_py_ask(tmp_path):
-    # A file merely NAMED testdata.py is a real .py (pyrules has no testdata
-    # filter) -> lintable -> the gate asks. Lintability, not a path name (D012).
-    r = _pre_edit_rel(
-        tmp_path, "testdata.py", "# no-report: real python module here\nx = 1"
-    )
-    assert "no-report" in _ask(r)["permissionDecisionReason"]
-
-
-# -- PostToolUse Bash arm (D011) ------------------------------------------
+# -- PostToolUse: worktree-wide approvals consistency (Edit/Write + Bash) --
 
 
 def _bash(tmp_path: Path) -> subprocess.CompletedProcess:
@@ -616,114 +562,167 @@ def _bash(tmp_path: Path) -> subprocess.CompletedProcess:
             "hook_event_name": "PostToolUse",
             "tool_name": "Bash",
             "cwd": str(tmp_path),
-            "tool_input": {"command": "echo x >> svc.py"},
+            "tool_input": {"command": "true"},
+        }
+    )
+
+
+def _post_edit(
+    tmp_path: Path, rel: str, old: str = "x = 1", new: str = "x = 2"
+) -> subprocess.CompletedProcess:
+    return _hook(
+        {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Edit",
+            "cwd": str(tmp_path),
+            "tool_input": {
+                "file_path": str(tmp_path / rel),
+                "old_string": old,
+                "new_string": new,
+            },
         }
     )
 
 
 def _block(r: subprocess.CompletedProcess) -> str:
+    # The Bash consistency arm: a hit rides the top-level block JSON, exit 0.
     assert r.returncode == 0, f"block decision still exits 0:\n{r.stdout}\n{r.stderr}"
     payload = json.loads(r.stdout)
     assert payload["decision"] == "block", payload
+    # The payload is the canonical block texts alone - no lint-section header.
+    assert "approvals (whole tree):" not in payload["reason"], payload
     return payload["reason"]
 
 
-def test_bash_new_marker_in_tracked_py_blocks(tmp_path):
-    # ADVERSARIAL bypass: a marker planted into a tracked lintable .py by a shell
-    # command (not the Edit hook) is caught by the after-the-fact worktree diff.
+def _block_edit(r: subprocess.CompletedProcess) -> str:
+    # The edit-tool consistency arm reports as the lint arm does: block lines on
+    # stderr, exit 2 - not the Bash arm's JSON decision.
+    assert r.returncode == 2, f"an edit-tool hit exits 2:\n{r.stdout}\n{r.stderr}"
+    assert r.stdout == "", f"an edit-tool hit prints no JSON:\n{r.stdout}"
+    assert "approvals (whole tree):" not in r.stderr, r.stderr
+    return r.stderr
+
+
+def test_post_edit_unapproved_marker_blocks(tmp_path):
     _dev_py(tmp_path)
-    (tmp_path / "svc.py").write_text("def f():\n    return 1\n")
+    (tmp_path / "svc.py").write_text("# no-report: unapproved planted marker\nx = 1\n")
     _init(tmp_path)
-    (tmp_path / "svc.py").write_text(
-        "def f():\n    return 1  # no-report: planted out of band via bash\n"
-    )
+    reason = _block_edit(_post_edit(tmp_path, "svc.py"))
+    assert "Unapproved suppression marker" in reason, reason
+    assert "svc.py: no-report: unapproved planted marker" in reason, reason
+
+
+def test_post_edit_cross_file_inconsistency_blocks(tmp_path):
+    # ADVERSARIAL: an inconsistency planted in one file blocks the next edit of an
+    # unrelated, clean file - the check is worktree-wide, not scoped to the edited
+    # path. b.py has no finding of its own; a.py's uncovered marker is the block.
+    _dev_py(tmp_path)
+    (tmp_path / "a.py").write_text("# no-report: planted in a, never approved\nx = 1\n")
+    (tmp_path / "b.py").write_text("y = 1\n")
+    _init(tmp_path)
+    reason = _block_edit(_post_edit(tmp_path, "b.py", old="y = 1", new="y = 2"))
+    assert "Unapproved suppression marker" in reason, reason
+    assert "a.py: no-report: planted in a, never approved" in reason, reason
+
+
+def _shelled_repo(tmp_path: Path) -> None:
+    # A marker planted by a shell command (not the Edit hook): the file is clean at
+    # commit, then a marker is written straight to the worktree.
+    _dev_py(tmp_path)
+    (tmp_path / "svc.py").write_text("x = 1\n")
+    _init(tmp_path)
+    (tmp_path / "svc.py").write_text("# no-report: shelled in at module scope\nx = 1\n")
+
+
+def test_bash_shelled_marker_blocks(tmp_path):
+    _shelled_repo(tmp_path)
     reason = _block(_bash(tmp_path))
-    assert "no-report" in reason and "svc.py" in reason and "via Bash" in reason, reason
+    assert "Unapproved suppression marker" in reason, reason
+    assert "svc.py: no-report: shelled in at module scope" in reason, reason
 
 
-def test_bash_new_marker_in_untracked_py_blocks(tmp_path):
-    _dev_py(tmp_path)
-    _init(tmp_path)
-    (tmp_path / "new.py").write_text("x = 1  # no-report: fresh untracked marker here\n")
+def test_bash_shelled_marker_repeats(tmp_path):
+    # Stateless: a second event repeats the same block (no snooze, no pairing).
+    _shelled_repo(tmp_path)
+    _block(_bash(tmp_path))
     reason = _block(_bash(tmp_path))
-    assert "no-report" in reason and "new.py" in reason, reason
+    assert "svc.py: no-report: shelled in at module scope" in reason, reason
 
 
-def test_bash_marker_in_unlintable_txt_silent(tmp_path):
-    _dev_py(tmp_path)
-    _init(tmp_path)
-    (tmp_path / "fixture.py.txt").write_text(
-        "x = 1  # no-report: dead marker in unlintable file\n"
+def test_bash_shelled_marker_silenced_by_manifest(tmp_path):
+    # A covering manifest line makes the tree consistent immediately - silent even
+    # uncommitted.
+    _shelled_repo(tmp_path)
+    _block(_bash(tmp_path))
+    (tmp_path / ".tackbox").mkdir()
+    (tmp_path / ".tackbox" / "approvals").write_text(
+        "svc.py: no-report: shelled in at module scope\n"
     )
     r = _bash(tmp_path)
-    assert r.returncode == 0 and r.stdout == "", f"unlintable file is silent:\n{r.stdout}"
+    assert r.returncode == 0 and r.stdout == "", f"a covering line silences it:\n{r.stdout}"
 
 
-def test_bash_committed_marker_unchanged_silent(tmp_path):
-    # HEAD is the approval record: a marker already in HEAD, edited elsewhere in
-    # the file, does not re-ask (equal marker multiset vs HEAD).
-    _dev_py(tmp_path)
-    (tmp_path / "svc.py").write_text("x = 1  # no-report: approved committed marker\n")
-    _init(tmp_path)
-    (tmp_path / "svc.py").write_text("x = 2  # no-report: approved committed marker\n")
-    r = _bash(tmp_path)
-    assert r.returncode == 0 and r.stdout == "", f"unchanged marker vs HEAD is silent:\n{r.stdout}"
-
-
-def test_bash_marker_removed_silent(tmp_path):
-    _dev_py(tmp_path)
-    (tmp_path / "svc.py").write_text("x = 1  # no-report: committed marker to remove\n")
-    _init(tmp_path)
+def test_bash_shelled_marker_silenced_by_reversion(tmp_path):
+    _shelled_repo(tmp_path)
+    _block(_bash(tmp_path))
     (tmp_path / "svc.py").write_text("x = 1\n")
     r = _bash(tmp_path)
-    assert r.returncode == 0 and r.stdout == "", f"removing a marker is free:\n{r.stdout}"
+    assert r.returncode == 0 and r.stdout == "", f"reverting the marker silences it:\n{r.stdout}"
 
 
-def test_bash_marker_reason_change_blocks(tmp_path):
+def test_post_orphan_after_marker_removal_blocks(tmp_path):
+    # A manifest entry outliving its marker is an orphan - red until the line goes.
     _dev_py(tmp_path)
-    (tmp_path / "svc.py").write_text("x = 1  # no-report: original committed reason\n")
-    _init(tmp_path)
-    (tmp_path / "svc.py").write_text("x = 1  # no-report: a different reason now here\n")
-    reason = _block(_bash(tmp_path))
-    assert "no-report" in reason and "svc.py" in reason, reason
-
-
-def test_bash_laundering_txt_to_py_blocks(tmp_path):
-    # ADVERSARIAL laundering: a marker parked in a dead .py.txt in HEAD, then moved
-    # live (delete + untracked .py). The move makes its marker new at a lintable
-    # path, and the Bash arm asks at the transition (D012).
-    _dev_py(tmp_path)
-    (tmp_path / "fixture.py.txt").write_text(
-        "x = 1  # no-report: laundered marker going live\n"
+    (tmp_path / "svc.py").write_text("x = 1\n")
+    (tmp_path / ".tackbox").mkdir()
+    (tmp_path / ".tackbox" / "approvals").write_text(
+        "svc.py: no-report: this marker was removed\n"
     )
     _init(tmp_path)
-    (tmp_path / "fixture.py.txt").unlink()
-    (tmp_path / "fixture.py").write_text(
-        "x = 1  # no-report: laundered marker going live\n"
-    )
-    reason = _block(_bash(tmp_path))
-    assert "no-report" in reason and "fixture.py" in reason, reason
+    reason = _block_edit(_post_edit(tmp_path, "svc.py"))
+    assert "Orphaned approval" in reason, reason
+    assert "svc.py: no-report: this marker was removed" in reason, reason
 
 
-def test_bash_reporters_added_line_blocks(tmp_path):
-    # The .tackbox-reporters gate is exempt from the lintability predicate and
-    # fires on any added line, worktree vs HEAD.
+def test_committed_unapproved_marker_still_blocks(tmp_path):
+    # Tree-shaped: committing an unapproved marker does not approve it. It stays red
+    # on every later event (the wall survives commit / --no-verify).
     _dev_py(tmp_path)
-    (tmp_path / ".tackbox-reporters").write_text("a.py#f: sink one\n")
+    (tmp_path / "svc.py").write_text("# no-report: committed but never approved\nx = 1\n")
     _init(tmp_path)
-    (tmp_path / ".tackbox-reporters").write_text("a.py#f: sink one\nb.py#g: sink two\n")
     reason = _block(_bash(tmp_path))
-    assert "b.py#g" in reason and ".tackbox-reporters" in reason, reason
+    assert "Unapproved suppression marker" in reason, reason
+    assert "svc.py: no-report: committed but never approved" in reason, reason
 
 
-def test_bash_unborn_head_blocks(tmp_path):
-    # Unborn HEAD (git init, no commit): git show HEAD:<path> fails everywhere, so
-    # old="" and every marker is new - a block, never a crash.
+def test_bash_covered_branch_silent(tmp_path):
+    # Approvals travel with the tree: a branch whose marker is covered by its own
+    # committed manifest is silent after checkout - no state, no HEAD diff.
+    _dev_py(tmp_path)
+    (tmp_path / "base.txt").write_text("base\n")
+    _init(tmp_path)
+    git(tmp_path, "checkout", "-q", "-b", "feature")
+    (tmp_path / "svc.py").write_text("# no-report: covered on this branch\nx = 1\n")
+    (tmp_path / ".tackbox").mkdir()
+    (tmp_path / ".tackbox" / "approvals").write_text(
+        "svc.py: no-report: covered on this branch\n"
+    )
+    commit_all(tmp_path, "feature")
+    git(tmp_path, "checkout", "-q", "main")
+    git(tmp_path, "checkout", "-q", "feature")
+    r = _bash(tmp_path)
+    assert r.returncode == 0 and r.stdout == "", f"a covered branch is silent:\n{r.stdout}"
+
+
+def test_bash_unborn_head_marker_blocks(tmp_path):
+    # Worktree-based, not HEAD-based: an unborn HEAD (git init, no commit) with a
+    # shelled-in untracked marker still blocks - no `git show HEAD` needed.
     _dev_py(tmp_path)
     init_repo(tmp_path, commit=False)
-    (tmp_path / "svc.py").write_text("x = 1  # no-report: marker in unborn head repo\n")
+    (tmp_path / "svc.py").write_text("# no-report: marker in an unborn-head repo\nx = 1\n")
     reason = _block(_bash(tmp_path))
-    assert "no-report" in reason and "svc.py" in reason, reason
+    assert "Unapproved suppression marker" in reason, reason
+    assert "svc.py: no-report: marker in an unborn-head repo" in reason, reason
 
 
 def test_bash_clean_tree_silent(tmp_path):
@@ -731,11 +730,94 @@ def test_bash_clean_tree_silent(tmp_path):
     (tmp_path / "svc.py").write_text("x = 1\n")
     _init(tmp_path)
     r = _bash(tmp_path)
-    assert r.returncode == 0 and r.stdout == "", f"clean tree is silent:\n{r.stdout}"
+    assert r.returncode == 0 and r.stdout == "", f"a clean tree is silent:\n{r.stdout}"
+
+
+def test_pre_manifest_multiedit_one_ask(tmp_path):
+    # The manifest arm covers MultiEdit: several edits adding entry lines still
+    # draw ONE atomic ask listing every added entry.
+    _dev_py(tmp_path)
+    (tmp_path / ".tackbox").mkdir()
+    _init(tmp_path)
+    r = _hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "MultiEdit",
+            "cwd": str(tmp_path),
+            "tool_input": {
+                "file_path": str(tmp_path / ".tackbox" / "approvals"),
+                "edits": [
+                    {"old_string": "", "new_string": "a.py: no-report: first entry line"},
+                    {"old_string": "", "new_string": "b.py: no-report: second entry line"},
+                ],
+            },
+        }
+    )
+    assert _ask(r)["permissionDecisionReason"] == (
+        "approve 2 suppression markers (Allow = all, Deny = none;"
+        " re-add one by one to decide individually):\n"
+        "  a.py: no-report: first entry line\n"
+        "  b.py: no-report: second entry line"
+    )
+
+
+def test_bash_unresolvable_file_blocks(tmp_path):
+    # A marker-bearing file that does not parse refuses resolution and blocks
+    # with the canonical unresolvable text - pinned verbatim (plan, user-approved).
+    # Java, not Python: the python grammar recovers from most damage without an
+    # ERROR node, while a missing brace is a guaranteed java ERROR.
+    _dev_py(tmp_path)
+    (tmp_path / "Bad.java").write_text(
+        "class C {\n"
+        "  void a() {\n"
+        "    if (true) {\n"
+        "      x(); // no-report: marker in a broken file\n"
+        "    // MISSING closing brace\n"
+        "  }\n"
+        "  void b() { y(); }\n"
+        "}\n"
+    )
+    _init(tmp_path)
+    reason = _block(_bash(tmp_path))
+    assert (
+        "Unresolvable file (syntax does not parse; its markers and approvals are "
+        "unverified - fix the syntax first):" in reason
+    ), reason
+    assert "  Bad.java" in reason, reason
+
+
+def test_bash_lang_marker_needs_entry(tmp_path):
+    # The markdown lang marker is part of the inventory: shelled in, it blocks
+    # until covered; its entry text runs through the comment's closing `-->`.
+    _dev_py(tmp_path)
+    (tmp_path / "notes.md").write_text("plain\n")
+    _init(tmp_path)
+    (tmp_path / "notes.md").write_text("<!-- tackbox: lang=ru personal repo -->\nplain\n")
+    reason = _block(_bash(tmp_path))
+    assert "Unapproved suppression marker" in reason, reason
+    assert "notes.md: tackbox: lang=ru personal repo -->" in reason, reason
+    (tmp_path / ".tackbox").mkdir()
+    (tmp_path / ".tackbox" / "approvals").write_text(
+        "notes.md: tackbox: lang=ru personal repo -->\n"
+    )
+    r = _bash(tmp_path)
+    assert r.returncode == 0 and r.stdout == "", f"a covering entry silences it:\n{r.stdout}"
+
+
+def test_bash_marker_in_unlintable_txt_silent(tmp_path):
+    # D012: only markers in files an engine would lint participate. A marker in a
+    # dead .py.txt is inert - no block.
+    _dev_py(tmp_path)
+    (tmp_path / "fixture.py.txt").write_text(
+        "x = 1  # no-report: dead marker in an unlintable file\n"
+    )
+    _init(tmp_path)
+    r = _bash(tmp_path)
+    assert r.returncode == 0 and r.stdout == "", f"an unlintable-file marker is silent:\n{r.stdout}"
 
 
 def test_lintable_normalizes_backslash_paths():
-    # Windows-shape sanity (D011/D012): a backslash hook path meets the same
+    # Windows-shape sanity (D012): a backslash hook path meets the same
     # forward-slash path filters git output uses; git-side paths stay '/'.
     eng = active_engines()
     assert lintable("go\\analyzers\\x\\testdata\\src\\x\\x.go", eng) is False
