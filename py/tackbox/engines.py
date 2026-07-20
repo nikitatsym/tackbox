@@ -737,7 +737,9 @@ def _write_paths_file(paths_dir: Path, paths: list[str]) -> str:
     absolute path. Engines read the list from here instead of taking thousands of
     positional args, keeping the spawn under ARG_MAX (E2BIG) on large repos."""
     fd, name = tempfile.mkstemp(prefix="paths-", suffix=".txt", dir=str(paths_dir))
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+    # newline="" pins LF: text mode would write CRLF on Windows, and a trailing
+    # `\r` on a path breaks every list-file reader.
+    with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
         for p in paths:
             fh.write(p + "\n")
     return name
@@ -751,7 +753,7 @@ def _write_java_argfile(paths_dir: Path, tokens: list[str]) -> str:
     expansion fires only in the launcher-options slot, so the whole `-jar ...`
     invocation rides the file, keeping the spawn under ARG_MAX on large repos."""
     fd, name = tempfile.mkstemp(prefix="javalint-", suffix=".args", dir=str(paths_dir))
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+    with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
         for tok in tokens:
             esc = tok.replace("\\", "\\\\").replace('"', '\\"')
             fh.write(f'"{esc}"\n')

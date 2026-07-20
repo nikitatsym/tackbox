@@ -62,6 +62,7 @@ func ReadPathList(path string) ([]string, error) {
 	}
 	var out []string
 	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSuffix(line, "\r")
 		if line != "" {
 			out = append(out, line)
 		}

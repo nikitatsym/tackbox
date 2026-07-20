@@ -186,6 +186,15 @@ def test_java_argfile_escapes_backslash_and_quote(tmp_path):
     assert Path(name).read_text(encoding="utf-8") == '"a\\\\b"\n"c\\"d"\n'
 
 
+def test_list_files_written_with_lf_only(tmp_path):
+    # Text mode without newline= would emit CRLF on Windows; a trailing `\r` on a
+    # path breaks every list-file reader ("File not found: a.go\r").
+    paths = engines._write_paths_file(tmp_path, ["a.go", "b/c.py"])
+    argfile = engines._write_java_argfile(tmp_path, ["-jar", "x.jar", "A.java"])
+    assert b"\r" not in Path(paths).read_bytes()
+    assert b"\r" not in Path(argfile).read_bytes()
+
+
 # -- pyrules: --files-from on our checker CLI ------------------------------
 
 
@@ -247,11 +256,15 @@ def _stub_exit0(path: Path) -> None:
 def test_listfile_spawn_survives_a_path_list_that_would_exceed_arg_max(
     monkeypatch, tmp_path
 ):
-    # Several thousand long paths whose combined bytes exceed ARG_MAX; passed as
+    # Enough long paths to exceed the PLATFORM's ARG_MAX (1 MiB on macOS, ~2 MiB
+    # on Linux runners - a fixed count is not adversarial everywhere); passed as
     # raw argv this is the E2BIG crash the fix removes.
-    paths = [f"src/{'d' * 180}/file_{i}.go" for i in range(6000)]
+    arg_max = os.sysconf("SC_ARG_MAX")
+    template = f"src/{'d' * 180}/file_{{i:06d}}.go"
+    per_path = len(template.format(i=0)) + 1
+    paths = [template.format(i=i) for i in range(arg_max // per_path + 512)]
     raw_bytes = sum(len(p.encode("utf-8")) + 1 for p in paths)
-    assert raw_bytes > os.sysconf("SC_ARG_MAX"), raw_bytes
+    assert raw_bytes > arg_max, raw_bytes
 
     stub = tmp_path / "stub-engine"
     _stub_exit0(stub)
