@@ -1,6 +1,6 @@
 package declared
 
-// myPanic is declared in .tackbox-reporters (installed by the test). It counts
+// myPanic is declared in .tackbox/reporters (installed by the test). It counts
 // only when the recovered value flows into its arguments (argument-flow).
 func myPanic(name string, recovered any) {}
 

@@ -49,7 +49,7 @@ func main() {
 			decls = append(decls, usage...)
 		}
 		if err != nil {
-			report.Error(context.Background(), "resolve .tackbox-reporters", err, nil, "erclint.reporters")
+			report.Error(context.Background(), "resolve .tackbox/reporters", err, nil, "erclint.reporters")
 			os.Exit(2)
 		}
 		astutil.SetDeclaredReporters(decls)

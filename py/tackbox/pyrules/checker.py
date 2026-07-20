@@ -654,7 +654,7 @@ class Plugin:
             "--reporters",
             parse_from_config=False,
             default="",
-            help="declared reporter sinks as file#func,... (.tackbox-reporters)",
+            help="declared reporter sinks as file#func,... (.tackbox/reporters)",
         )
 
     @classmethod
@@ -664,7 +664,7 @@ class Plugin:
         if dead is not None:
             # Hard error, scope-independent: parity with go/js reporter validation.
             file, func = dead
-            sys.stderr.write(f".tackbox-reporters: no top-level function {func} in {file}\n")
+            sys.stderr.write(f".tackbox/reporters: no top-level function {func} in {file}\n")
             raise SystemExit(2)
         cls._reporter_names = names
 

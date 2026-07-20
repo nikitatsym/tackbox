@@ -94,7 +94,7 @@ def _full_repo(tmp_path: Path) -> Path:
     _write(tmp_path, "markers.go", MARKERS_GO)
     _write(tmp_path, "sinks.py", SINKS_PY)
     _write(tmp_path, "sinks.go", SINKS_GO)
-    _write(tmp_path, ".tackbox-reporters", REPORTERS)
+    _write(tmp_path, ".tackbox/reporters", REPORTERS)
     init_repo(tmp_path, commit=True)
     return tmp_path
 
@@ -136,7 +136,7 @@ def test_full_inventory_every_kind(tmp_path):
     assert "src/app/errors.py#report_api_error: central API error sink" in decls
     assert "go/net.go#reportNet: network failure capture sink" in decls
     assert all(
-        e["file"] == ".tackbox-reporters"
+        e["file"] == ".tackbox/reporters"
         for e in doc["entries"]
         if e["kind"] == "reporter-decl"
     )

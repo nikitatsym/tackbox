@@ -6,7 +6,7 @@ import (
 	"os"
 )
 
-// myReport is declared in .tackbox-reporters (installed by the test); it
+// myReport is declared in .tackbox/reporters (installed by the test); it
 // prints the error and hands back a process exit code.
 func myReport(err error) int {
 	fmt.Fprintln(os.Stderr, err)

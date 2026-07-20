@@ -1,4 +1,4 @@
-"""Parse and validate `.tackbox-reporters` declarations.
+"""Parse and validate `.tackbox/reporters` declarations.
 
 A declaration names a repo-local function as a report sink: a call whose
 callee resolves to it counts as a capture (subject to argument-flow), so
@@ -24,7 +24,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-FILENAME = ".tackbox-reporters"
+FILENAME = ".tackbox/reporters"
 
 KIND_CAPTURE = "capture"
 KIND_USAGE = "usage"
@@ -41,7 +41,7 @@ _KNOWN_EXTS = _JS_EXTS | _GO_EXTS | _ENGINE_DECL_EXTS
 
 
 class ReportersError(Exception):
-    """A `.tackbox-reporters` parse or path-validation failure (CLI exit 2)."""
+    """A `.tackbox/reporters` parse or path-validation failure (CLI exit 2)."""
 
 
 @dataclass(frozen=True)

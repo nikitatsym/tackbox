@@ -42,7 +42,7 @@ var reportDedupVerb = map[string]bool{"Error": true, "Warn": true, "Quiet": true
 // so both are exempt.
 var reportMsgVerb = map[string]bool{"Error": true, "Warn": true, "Notify": true}
 
-// DeclaredReporter is a `.tackbox-reporters` sink resolved to its package
+// DeclaredReporter is a `.tackbox/reporters` sink resolved to its package
 // path and function name. A capture sink's call captures when the caught
 // error flows into the call's arguments (argument-flow). A usage sink
 // (`[usage]`) never captures; ERC003 owns its semantics.
@@ -181,7 +181,7 @@ func reportVerbIn(info *types.Info, call *ast.CallExpr, set map[string]bool) boo
 
 // IsReporterCall reports whether call's callee resolves to any recognized
 // reporter: a tier-1 go/report capture (Error/Warn/Quiet/Panic) or a tier-2
-// `.tackbox-reporters` capture sink. Unlike captureKind it does not require
+// `.tackbox/reporters` capture sink. Unlike captureKind it does not require
 // the caught error to flow in - ERC006 scrubs every argument of a reporter
 // call for secrets and raw user input regardless of which arg carries the
 // error. Usage sinks are not reporters and are excluded.

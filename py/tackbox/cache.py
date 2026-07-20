@@ -14,7 +14,7 @@ Unit granularity:
 - eslint / mdlint / opengrep -> unit = file, digest = sha256(repo-relative path +
   file content + reporter policy). Path folds in so identical content at two
   paths digests apart (a test-exempt path vs a production path); policy folds in
-  so a `.tackbox-reporters` change invalidates.
+  so a `.tackbox/reporters` change invalidates.
 - erclint -> unit = Go package, digest = sha256(import path + own .go files
   (GoFiles + CgoFiles + TestGoFiles + XTestGoFiles) + transitive in-module deps'
   .go files + go.mod + go.sum + reporter policy). A signature change in package B
@@ -125,7 +125,7 @@ def policy_digest(reporter_pairs: tuple[tuple[str, str, str], ...]) -> str:
 def non_go_unit_digest(rel_path: str, content_sha: str, policy: str) -> str:
     """Unit digest for a non-Go file: repo-relative path + content sha + policy,
     joined with a separator. Path and policy fold in so identical content at two
-    paths, or under a changed `.tackbox-reporters`, never share a marker."""
+    paths, or under a changed `.tackbox/reporters`, never share a marker."""
     h = hashlib.sha256()
     h.update(rel_path.encode())
     h.update(b"\0")
@@ -218,7 +218,7 @@ def erclint_package_digests(
     together with the .go files of its transitive in-module deps.
 
     `policy` (the reporter-policy digest) folds into every package digest, so a
-    `.tackbox-reporters` change invalidates the packages it can affect.
+    `.tackbox/reporters` change invalidates the packages it can affect.
 
     Missing / not-a-package / no-enclosing-module entries are dropped from
     the returned map; the caller decides what to do (usually: skip caching

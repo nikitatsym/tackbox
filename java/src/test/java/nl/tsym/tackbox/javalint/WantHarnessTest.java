@@ -75,7 +75,7 @@ class WantHarnessTest {
     /** A `// reporters: <file>#<Class.method>,...` directive names sibling
      *  testdata files as declared reporters; each is read from the testdata
      *  directory and resolved to its package, exactly as the CLI reads the
-     *  repo-relative files a real `.tackbox-reporters` names. */
+     *  repo-relative files a real `.tackbox/reporters` names. */
     private static List<Reporters.Resolved> parseReporters(String text, Path dir) throws Exception {
         for (String line : text.split("\n", -1)) {
             Matcher m = REPORTERS.matcher(line);

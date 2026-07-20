@@ -142,7 +142,7 @@ are never markers.
 
 A call counts as a reporter only when its callee resolves to one of the
 reporter names imported from `tackbox` / `tackbox/report` (tier-1), or
-to a function declared in a repo-root `.tackbox-reporters` file
+to a function declared in a repo-root `.tackbox/reporters` file
 (tier-2). A bare identifier that merely shares the name is not trusted.
 
 Names: `reportError`, `reportWarn`, `reportQuiet`, `reportApiError`,
@@ -160,7 +160,7 @@ Tier-1 covers named, renamed, default- or namespace-member, and CJS
 to tier-1 calls; declared sinks carry only the argument-flow contract
 (the caught error must flow into the call).
 
-`.tackbox-reporters` lines are `file#function: reason`. The `tackbox`
+`.tackbox/reporters` lines are `file#function: reason`. The `tackbox`
 CLI parses and validates the file. When you consume this ESLint plugin
 directly (without the CLI), populate `settings.tackbox.reporters` (a
 list of `"file#function"` strings) in your own config; symbol

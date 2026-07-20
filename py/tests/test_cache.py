@@ -467,7 +467,7 @@ def test_policy_digest_stable_with_no_pairs():
 
 
 def test_policy_digest_ignores_reason_text():
-    """reporters.pairs drops the reason, so a reason-only .tackbox-reporters edit
+    """reporters.pairs drops the reason, so a reason-only .tackbox/reporters edit
     yields the same policy digest and never churns the cache."""
     a = reporters.pairs(reporters.parse("rep.py#f: original reason text\n"))
     b = reporters.pairs(reporters.parse("rep.py#f: reworded reason entirely\n"))

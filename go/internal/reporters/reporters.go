@@ -25,7 +25,7 @@ func Resolve(spec string) ([]astutil.DeclaredReporter, error) {
 		}
 		hash := strings.LastIndex(entry, "#")
 		if hash <= 0 {
-			return nil, fmt.Errorf(".tackbox-reporters: malformed declaration %q", entry)
+			return nil, fmt.Errorf(".tackbox/reporters: malformed declaration %q", entry)
 		}
 		file, fn := entry[:hash], entry[hash+1:]
 		pkg, err := loadFile(file)
@@ -36,7 +36,7 @@ func Resolve(spec string) ([]astutil.DeclaredReporter, error) {
 			continue
 		}
 		if !hasFunc(pkg, fn) {
-			return nil, fmt.Errorf(".tackbox-reporters: no top-level function %s in %s", fn, file)
+			return nil, fmt.Errorf(".tackbox/reporters: no top-level function %s in %s", fn, file)
 		}
 		out = append(out, astutil.DeclaredReporter{PkgPath: pkg.PkgPath, Name: fn})
 	}
@@ -53,7 +53,7 @@ func loadFile(file string) (*packages.Package, error) {
 	}
 	pkgs, err := packages.Load(cfg, "file="+file)
 	if err != nil {
-		return nil, fmt.Errorf(".tackbox-reporters: cannot load %s: %w", file, err)
+		return nil, fmt.Errorf(".tackbox/reporters: cannot load %s: %w", file, err)
 	}
 	if len(pkgs) == 0 || pkgs[0].Types == nil || pkgs[0].Types.Scope() == nil {
 		return nil, nil

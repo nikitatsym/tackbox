@@ -364,7 +364,7 @@ counts only when its callee resolves (type info / import) to the
 `nl.tsym.tackbox.report.Report` call or a known logger sink (e.g.
 slf4j, `java.lang.System.Logger`) at `ERROR` / `WARNING` - tier-1.
 Every language also honors a function declared in a repo-root
-`.tackbox-reporters` file (`file#function: reason`) - tier-2. A
+`.tackbox/reporters` file (`file#function: reason`) - tier-2. A
 declaration names a report sink - it is not an exclude: it disables no
 rule, and a declared call is honored only when the caught error flows
 into its arguments. Python resolves tier-1 by import origin too (D010),
@@ -483,14 +483,14 @@ Claude Code hook event on stdin and dispatches by `hook_event_name`:
   nothing, and the block repeats on every event until the tree is
   consistent. The authoritative gate stays pre-commit / CI.
 - **PreToolUse** asks for approval before a new `.tackbox/approvals`
-  line or a new `.tackbox-reporters` line lands; removing one is
+  line or a new `.tackbox/reporters` line lands; removing one is
   free. Editing markers in code draws no Pre ask - the consistency
   check owns them.
 
 Only markers in files an engine would lint participate in the check
 (D012): a marker in a Go `testdata/` path or a non-lintable fixture
 extension (a `.java.txt`) is dead text - no entry needed, no
-question - while the `.tackbox-reporters` gate stays unconditional.
+question - while the `.tackbox/reporters` gate stays unconditional.
 
 The hook is a no-op unless the edit's `cwd` is a git repo with a
 `dev.py` at its root. Wire it once, globally, in
@@ -524,7 +524,7 @@ enumerates:
 - **suppression markers** (`// no-report`, `// parse-skip`,
   `// nil-return`, `// long-comment`, `// test-skip`, `// dup-ok`, plus
   the markdown `tackbox: lang=` marker), each with its reason;
-- **`.tackbox-reporters` declarations** - the tier-2 sinks;
+- **`.tackbox/reporters` declarations** - the tier-2 sinks;
 - **notify / quiet lane choices** - the call sites of the user-lane-only
   `notify` and the telemetry-only `quiet` verbs.
 
@@ -550,7 +550,7 @@ uvx tackbox@latest escapes --since origin/main --context 5
      "text": "no-report: central boundary already captures it",
      "reason": "central boundary already captures it",
      "context": ["...", "...", "..."]},
-    {"kind": "reporter-decl", "file": ".tackbox-reporters", "line": 2,
+    {"kind": "reporter-decl", "file": ".tackbox/reporters", "line": 2,
      "text": "src/app/errors.py#report_api_error: the API sink",
      "context": ["..."]},
     {"kind": "notify-site", "file": "js/foo.js", "line": 40,
@@ -580,7 +580,7 @@ uvx tackbox@latest escapes --since origin/main --context 5
 
 The scan covers the same lintable source set the linter would scan (the
 D012 predicate: extension match plus each engine's path filter, so a Go
-`testdata/` file is out), plus the root `.tackbox-reporters` (every
+`testdata/` file is out), plus the root `.tackbox/reporters` (every
 non-empty line is one declaration - the file has no comment syntax).
 notify / quiet call sites are detected **textually per language**
 (`report_quiet` / `notify` in Python, `reportQuiet` / `notify` in the JS

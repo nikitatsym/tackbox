@@ -505,19 +505,21 @@ def test_pre_manifest_nested_not_gated(tmp_path):
 
 def test_pre_reporters_add_line_ask(tmp_path):
     _dev_py(tmp_path)
-    (tmp_path / ".tackbox-reporters").write_text("a.go#f: sink one\n")
+    (tmp_path / ".tackbox").mkdir()
+    (tmp_path / ".tackbox/reporters").write_text("a.go#f: sink one\n")
     _init(tmp_path)
     r = _pre_write(
-        tmp_path, ".tackbox-reporters", "a.go#f: sink one\nb.go#g: sink two\n"
+        tmp_path, ".tackbox/reporters", "a.go#f: sink one\nb.go#g: sink two\n"
     )
     assert "b.go#g" in _ask(r)["permissionDecisionReason"]
 
 
 def test_pre_reporters_remove_line_allow(tmp_path):
     _dev_py(tmp_path)
-    (tmp_path / ".tackbox-reporters").write_text("a.go#f: sink one\nb.go#g: sink two\n")
+    (tmp_path / ".tackbox").mkdir()
+    (tmp_path / ".tackbox/reporters").write_text("a.go#f: sink one\nb.go#g: sink two\n")
     _init(tmp_path)
-    r = _pre_write(tmp_path, ".tackbox-reporters", "a.go#f: sink one\n")
+    r = _pre_write(tmp_path, ".tackbox/reporters", "a.go#f: sink one\n")
     assert r.returncode == 0 and r.stdout == "", f"removing a declaration is free:\n{r.stdout}"
 
 

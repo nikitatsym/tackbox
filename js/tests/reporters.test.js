@@ -203,7 +203,7 @@ test('tier-2 $lib alias: aliased .svelte.ts reporter is recognized; bare/undecla
   assert.equal(badErrs.length, 2, 'bare swallow + undeclared reporter must both flag: ' + badErrs.join(', '))
 })
 
-// report.js self-lints clean when the repo-root .tackbox-reporters declares
+// report.js self-lints clean when the repo-root .tackbox/reporters declares
 // reportPanic as the fatal-lane console sink (matching the real self-lint): the
 // declaration exempts that one console.error, the catches carry no-report
 // markers, and the reportError calls sit in event callbacks, not catches. This

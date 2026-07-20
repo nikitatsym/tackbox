@@ -12,7 +12,7 @@ const tsRuleTester = new RuleTester({
 })
 
 // Reporter calls are recognized only through a tackbox/report import (tier-1)
-// or a .tackbox-reporters declaration (tier-2); a bare name is not trusted.
+// or a .tackbox/reporters declaration (tier-2); a bare name is not trusted.
 // These rule tests import the canonical reporters so the calls resolve.
 const R =
   "import { reportError, reportSynth, reportSynthError, reportApiError, reportWarn, reportLayerError } from 'tackbox/report'\n"

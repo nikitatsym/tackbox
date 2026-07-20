@@ -5,7 +5,7 @@
 // the call. A silent exit (`os.Exit(1)` in an err-branch, `log.Fatal("msg")`
 // with the live error dropped) stays a finding.
 //
-// A declared usage sink (`[usage]` in `.tackbox-reporters`) is the opposite,
+// A declared usage sink (`[usage]` in `.tackbox/reporters`) is the opposite,
 // single-purpose lane: a deliberate diagnostic exit - clean outside
 // err-branches, a finding inside one regardless of arguments. Raw exits and
 // undeclared wrappers keep the strict contract above.

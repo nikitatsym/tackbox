@@ -453,7 +453,8 @@ def java_swallow_repo(tmp_path) -> Path:
     _needs_java()
     (tmp_path / "Handler.java").write_text(JAVA_SWALLOW_WITH_REPORTER)
     # Typo: "repot" instead of "report" - a dead declared symbol, exit 2.
-    (tmp_path / ".tackbox-reporters").write_text(
+    (tmp_path / ".tackbox").mkdir()
+    (tmp_path / ".tackbox/reporters").write_text(
         "Handler.java#Handler.repot: swallow log helper\n"
     )
     init_repo(tmp_path)
@@ -463,7 +464,7 @@ def java_swallow_repo(tmp_path) -> Path:
 
 def test_reporters_typo_crash_does_not_hide_swallow_after_fix(java_swallow_repo, tmp_path):
     """Exact reproduced scenario: a real java swallow plus a typo'd
-    `.tackbox-reporters` (dead declared symbol) crashes javalint loudly (exit
+    `.tackbox/reporters` (dead declared symbol) crashes javalint loudly (exit
     2). Fixing the typo must make the next run see the still-unfixed swallow,
     not a false-clean cache marker left by the crashed run."""
     cache_home = tmp_path / "cache"
@@ -475,7 +476,7 @@ def test_reporters_typo_crash_does_not_hide_swallow_after_fix(java_swallow_repo,
     )
     assert "repot" in crashed.stderr
 
-    (java_swallow_repo / ".tackbox-reporters").write_text(
+    (java_swallow_repo / ".tackbox/reporters").write_text(
         "Handler.java#Handler.report: swallow log helper\n"
     )
 
@@ -524,13 +525,14 @@ def work():
 
 
 def test_reporters_removal_invalidates_warm_cache(tmp_path):
-    """A1(a): a swallow credited by .tackbox-reporters is primed clean; deleting
+    """A1(a): a swallow credited by .tackbox/reporters is primed clean; deleting
     the declaration must make the warm run report TBX001, not serve a stale clean
     marker keyed without the reporter policy."""
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "mod.py").write_text(PY_SWALLOW_WITH_REPORTER)
-    (repo / ".tackbox-reporters").write_text(
+    (repo / ".tackbox").mkdir()
+    (repo / ".tackbox/reporters").write_text(
         "mod.py#report_it: local py swallow sink\n"
     )
     init_repo(repo)
@@ -543,7 +545,7 @@ def test_reporters_removal_invalidates_warm_cache(tmp_path):
         f"{prime.stdout}\n{prime.stderr}"
     )
 
-    (repo / ".tackbox-reporters").unlink()
+    (repo / ".tackbox/reporters").unlink()
     warm = _run_tackbox(repo, cache_home)
     assert warm.returncode != 0, (
         f"deleting the reporter must surface the swallow, not a stale clean:\n"

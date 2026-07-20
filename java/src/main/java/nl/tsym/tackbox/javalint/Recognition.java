@@ -36,7 +36,7 @@ import java.util.Optional;
  *    nl.tsym.tackbox.report.Report runtime capture helper (recognized by origin,
  *    DECISIONS D004). The gate is the declared type's origin (explicit import or
  *    fully-qualified name), never the receiver name or the method-owner name.
- *  - tier-2: a call whose (package, Class, method) matches a `.tackbox-reporters`
+ *  - tier-2: a call whose (package, Class, method) matches a `.tackbox/reporters`
  *    declaration. The declaration's package comes from parsing the declared file;
  *    the call-site's comes from resolving the qualifier through this file's
  *    imports and package - the same origin machinery as tier-1.
@@ -202,7 +202,7 @@ public final class Recognition {
     /** error/warn/quiet/panic on the Report helper, resolved by origin the same way as
      *  slf4j and the tier-2 declared reporters (package + class), so a consumer's
      *  {@code catch (X e) { Report.error(..., e); }} is credited without a marker
-     *  or a `.tackbox-reporters` entry. A same-named Report from another package,
+     *  or a `.tackbox/reporters` entry. A same-named Report from another package,
      *  or one declared in this file, resolves to a different origin and fails
      *  closed - the name alone never matches. */
     private boolean reportCaptures(CompilationUnit cu, MethodCallExpr call, String caught) {
