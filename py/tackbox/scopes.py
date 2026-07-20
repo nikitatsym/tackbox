@@ -21,13 +21,28 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# The canonical executable, never the `sg` alias (collides with linux setgroups).
-_AST_GREP = "ast-grep"
+
+def ast_grep_exe() -> str | None:
+    """Path of the `ast-grep` executable, or None when absent.
+
+    The console script installs next to the interpreter (ast-grep-cli is a pip
+    dependency), and an unactivated venv - entrypoints launched by path, as
+    uvx and CI smoke do - has no PATH entry for it, so the interpreter's dir
+    is probed first; PATH is the fallback for system installs. Always
+    `ast-grep`, never the `sg` alias (collides with linux setgroups).
+    """
+    exe = Path(sys.executable).with_name("ast-grep.exe" if os.name == "nt" else "ast-grep")
+    if exe.is_file():
+        return str(exe)
+    return shutil.which("ast-grep")
 
 
 class ScopesError(RuntimeError):
@@ -105,7 +120,7 @@ def _ast_scan(content: str, ruleset: str) -> list[dict]:
     never handed to it."""
     try:
         proc = subprocess.run(
-            [_AST_GREP, "scan", "--stdin", "--inline-rules", ruleset, "--json=compact"],
+            [ast_grep_exe() or "ast-grep", "scan", "--stdin", "--inline-rules", ruleset, "--json=compact"],
             input=content.encode("utf-8"),
             capture_output=True,
         )

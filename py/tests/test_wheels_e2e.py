@@ -112,7 +112,18 @@ def _tackbox(venv: Path) -> Path:
 
 
 def _hermetic_env(engines_payload: Path) -> dict:
-    return {**os.environ, "TACKBOX_ENGINES_DIR": str(engines_payload)}
+    """os.environ with every PATH dir carrying an `ast-grep` removed: the wheel
+    venv is driven by entrypoint path, unactivated, exactly as launchers and CI
+    drive it, and must be self-sufficient - an ast-grep reachable from the dev
+    venv or a global install would mask executable-resolution bugs."""
+    def _carries_ast_grep(d: str) -> bool:
+        return (Path(d) / "ast-grep").is_file() or (Path(d) / "ast-grep.exe").is_file()
+
+    path = os.pathsep.join(
+        p for p in os.environ.get("PATH", "").split(os.pathsep)
+        if p and not _carries_ast_grep(p)
+    )
+    return {**os.environ, "PATH": path, "TACKBOX_ENGINES_DIR": str(engines_payload)}
 
 
 def test_thin_and_fat_wheels_built(wheels):
