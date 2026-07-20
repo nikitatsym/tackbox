@@ -684,3 +684,21 @@ def _parse_reporter_specs(raw: str) -> list[tuple[str, str]]:
         if file.endswith(".py"):
             specs.append((file, func))
     return specs
+
+
+if __name__ == "__main__":
+    # Run form: python -m tackbox.pyrules.checker --files-from <list> <flake8 flags>
+    # The file list rides --files-from (thousands of paths on argv overflow
+    # ARG_MAX / E2BIG on large repos); the checker reads it and hands the paths to
+    # flake8 in process, every other arg passing through unchanged. flake8 is
+    # imported here, in the __main__ guard, so the main tackbox process - which
+    # imports this module only for Plugin / CODE_TO_ID - never pulls it in.
+    import argparse
+    from flake8.main import cli as _flake8_cli
+
+    _parser = argparse.ArgumentParser(add_help=False)
+    _parser.add_argument("--files-from", required=True)
+    _ns, _passthrough = _parser.parse_known_args()
+    with open(_ns.files_from, encoding="utf-8") as _fh:
+        _files = [line for line in _fh.read().splitlines() if line]
+    sys.exit(_flake8_cli.main([*_passthrough, *_files]))

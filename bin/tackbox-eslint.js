@@ -11,9 +11,13 @@ function parseArgv(argv) {
   const decls = []
   const files = []
   let machine = false
-  for (const a of argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]
     if (a === '--machine') {
       machine = true
+    } else if (a === '--files-from') {
+      // The file set rides a list-file, not positional argv (ARG_MAX safety).
+      files.push(...readFilesFrom(argv[++i]))
     } else if (a.startsWith(REPORTERS_FLAG)) {
       for (const d of a.slice(REPORTERS_FLAG.length).split(',')) {
         if (!d) continue
@@ -25,6 +29,12 @@ function parseArgv(argv) {
     }
   }
   return { decls, files, machine }
+}
+
+// readFilesFrom reads a newline-separated UTF-8 list-file into its non-empty
+// paths. Additive to positional paths - the bin is public on npm.
+function readFilesFrom(listPath) {
+  return fs.readFileSync(listPath, 'utf8').split('\n').filter(Boolean)
 }
 
 function parseModule(file, code) {
