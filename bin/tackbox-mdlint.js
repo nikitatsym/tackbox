@@ -6,7 +6,7 @@ const noNonAscii = require('../js/markdownlint-rules/no-non-ascii')
 // readFilesFrom reads a newline-separated UTF-8 list-file into its non-empty
 // paths. Additive to positional paths - the bin is public on npm.
 function readFilesFrom(listPath) {
-  return fs.readFileSync(listPath, 'utf8').split('\n').filter(Boolean)
+  return fs.readFileSync(listPath, 'utf8').split(/\r?\n/).filter(Boolean)
 }
 
 async function run() {

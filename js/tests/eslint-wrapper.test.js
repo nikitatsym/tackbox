@@ -54,12 +54,17 @@ test('inline eslint-disable cannot silence a swallow (--machine mode)', () => {
 
 // --files-from feeds the file set through a list-file (ARG_MAX safety); it must
 // lint exactly those paths and never treat the flag or its path as a file.
-test('--files-from list is linted like positional paths', () => {
+function lintViaList(listContent) {
   inTmpDir(dir => {
     const list = path.join(dir, 'files.txt')
-    fs.writeFileSync(list, 'bad.js\n')
+    fs.writeFileSync(list, listContent)
     const r = spawnSync('node', [WRAPPER, '--files-from', list], { cwd: dir, encoding: 'utf8' })
     assert.equal(r.status, 1, r.stdout + r.stderr)
     assert.match(r.stdout, /no-swallow-catch/)
   })
-})
+}
+
+test('--files-from list is linted like positional paths', () => lintViaList('bad.js\n'))
+
+// A list-file written on Windows carries CRLF; a trailing \r on a path is ENOENT.
+test('--files-from strips CRLF line endings', () => lintViaList('bad.js\r\n'))

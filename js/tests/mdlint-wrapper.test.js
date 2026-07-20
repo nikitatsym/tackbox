@@ -55,15 +55,20 @@ test('exits 0 on clean ASCII file', () => {
 
 // --files-from feeds the file set through a list-file (ARG_MAX safety); it must
 // lint exactly those paths and never treat the flag or its path as a file.
-test('--files-from list is linted like positional paths', () => {
+function lintViaList(listContent) {
   withTmp(dir => {
     writeFileSync(path.join(dir, 'bad.md'), '# hi\n\nrocket: \u{1F680}\n')
-    writeFileSync(path.join(dir, 'files.txt'), 'bad.md\n')
+    writeFileSync(path.join(dir, 'files.txt'), listContent)
     const r = spawnSync('node', [WRAPPER, '--files-from', path.join(dir, 'files.txt')], { cwd: dir, encoding: 'utf8' })
     assert.equal(r.status, 1, r.stdout + r.stderr)
     assert.match(r.stdout, /no-non-ascii/)
   })
-})
+}
+
+test('--files-from list is linted like positional paths', () => lintViaList('bad.md\n'))
+
+// A list-file written on Windows carries CRLF; a trailing \r on a path is ENOENT.
+test('--files-from strips CRLF line endings', () => lintViaList('bad.md\r\n'))
 
 // End-to-end (default rules + noInlineConfig): the lang marker survives the
 // real CLI path, not just the rule unit tests.
