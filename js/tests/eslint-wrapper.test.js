@@ -51,3 +51,15 @@ test('inline eslint-disable cannot silence a swallow (--machine mode)', () => {
     assert.match(r.stdout, /no-swallow-catch/)
   })
 })
+
+// --files-from feeds the file set through a list-file (ARG_MAX safety); it must
+// lint exactly those paths and never treat the flag or its path as a file.
+test('--files-from list is linted like positional paths', () => {
+  inTmpDir(dir => {
+    const list = path.join(dir, 'files.txt')
+    fs.writeFileSync(list, 'bad.js\n')
+    const r = spawnSync('node', [WRAPPER, '--files-from', list], { cwd: dir, encoding: 'utf8' })
+    assert.equal(r.status, 1, r.stdout + r.stderr)
+    assert.match(r.stdout, /no-swallow-catch/)
+  })
+})

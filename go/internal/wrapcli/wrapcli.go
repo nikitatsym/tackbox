@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/nikitatsym/tackbox/go/report"
 )
@@ -48,6 +49,24 @@ func Main(name, version string, run Run) {
 	}
 	// no-report: normal exit
 	os.Exit(code)
+}
+
+// ReadPathList reads a newline-separated list-file (UTF-8), returning its
+// non-empty lines. Engines take the file/package list through such a file, not
+// as thousands of positional args, so the spawn stays under ARG_MAX (E2BIG) on
+// large repos.
+func ReadPathList(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read path list %s: %w", path, err)
+	}
+	var out []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return out, nil
 }
 
 // ToAbs resolves each non-absolute arg against cwd, leaving absolutes alone.

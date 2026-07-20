@@ -35,10 +35,12 @@ from .source_set import (
     module_relative,
 )
 
-# (repo_root, tackbox_root, args, reporters) -> argv.
+# (repo_root, tackbox_root, args, reporters, paths_dir) -> argv.
 # reporters = (repo-relative-file, function, kind) triples from .tackbox/reporters.
+# paths_dir = a per-run temp dir the builder drops a list-file / @argfile into, so
+# the file/package list rides that file, never positional argv (ARG_MAX / E2BIG).
 ArgvBuilder = Callable[
-    [Path, Path, list[str], "tuple[tuple[str, str, str], ...]"], list[str]
+    [Path, Path, list[str], "tuple[tuple[str, str, str], ...]", Path], list[str]
 ]
 
 _TACKBOX_PKG_ROOT = Path(__file__).parent
@@ -428,19 +430,24 @@ def _machine_argv(engine: EngineSpec, argv: list[str], machine: bool) -> list[st
 def _run_one(run: EngineRun) -> EngineResult:
     if run.engine.package_mode:
         return _run_per_module(run)
-    argv = _machine_argv(
-        run.engine,
-        run.engine.build_argv(run.repo_root, run.tackbox_root, run.args, run.reporters),
-        run.machine,
-    )
     env = hermetic_env() if is_hermetic() else None
-    completed = subprocess.run(
-        argv,
-        cwd=run.repo_root,
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    # The temp dir holds the engine's list-file / @argfile; it must outlive the
+    # subprocess and is torn down once the child has read it.
+    with tempfile.TemporaryDirectory(prefix="tackbox-argv-") as paths_dir:
+        argv = _machine_argv(
+            run.engine,
+            run.engine.build_argv(
+                run.repo_root, run.tackbox_root, run.args, run.reporters, Path(paths_dir)
+            ),
+            run.machine,
+        )
+        completed = subprocess.run(
+            argv,
+            cwd=run.repo_root,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
     return EngineResult(
         engine_id=run.engine.id,
         exit_code=normalize_exit_code(completed.returncode),
@@ -462,23 +469,28 @@ def _run_per_module(run: EngineRun) -> EngineResult:
     max_code = 0
     outs: list[str] = []
     errs: list[str] = []
-    for module in sorted(groups):
-        rel = [module_relative(module, p) for p in groups[module]]
-        argv = _machine_argv(
-            run.engine,
-            run.engine.build_argv(run.repo_root, run.tackbox_root, rel, run.reporters),
-            run.machine,
-        )
-        completed = subprocess.run(
-            argv,
-            cwd=run.repo_root / module,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        max_code = max(max_code, normalize_exit_code(completed.returncode))
-        outs.append(completed.stdout.decode("utf-8", errors="replace"))
-        errs.append(completed.stderr.decode("utf-8", errors="replace"))
+    # One temp dir for the whole per-module fan-out; each module drops its own
+    # list-file into it (mkstemp keeps names unique), all torn down at the end.
+    with tempfile.TemporaryDirectory(prefix="tackbox-argv-") as paths_dir:
+        for module in sorted(groups):
+            rel = [module_relative(module, p) for p in groups[module]]
+            argv = _machine_argv(
+                run.engine,
+                run.engine.build_argv(
+                    run.repo_root, run.tackbox_root, rel, run.reporters, Path(paths_dir)
+                ),
+                run.machine,
+            )
+            completed = subprocess.run(
+                argv,
+                cwd=run.repo_root / module,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            max_code = max(max_code, normalize_exit_code(completed.returncode))
+            outs.append(completed.stdout.decode("utf-8", errors="replace"))
+            errs.append(completed.stderr.decode("utf-8", errors="replace"))
     for pkg in orphans:
         errs.append(f"no enclosing go.mod, skipped: {pkg}\n")
     return EngineResult(
@@ -720,6 +732,59 @@ def _reporters_flag(
     return [f"{flag}={','.join(picked)}"] if picked else []
 
 
+def _write_paths_file(paths_dir: Path, paths: list[str]) -> str:
+    """One path per line (UTF-8) in a fresh temp file under paths_dir; return its
+    absolute path. Engines read the list from here instead of taking thousands of
+    positional args, keeping the spawn under ARG_MAX (E2BIG) on large repos."""
+    fd, name = tempfile.mkstemp(prefix="paths-", suffix=".txt", dir=str(paths_dir))
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        for p in paths:
+            fh.write(p + "\n")
+    return name
+
+
+def _write_java_argfile(paths_dir: Path, tokens: list[str]) -> str:
+    """JDK @argfile of the full launcher invocation (JDK 9+): one double-quoted
+    token per line, backslash and double-quote escaped per the launcher's argfile
+    grammar. Every token is quoted, not just paths, so a '#' (the argfile comment
+    char, e.g. in a --reporters flag) survives. Invoked as `java @<file>`: argfile
+    expansion fires only in the launcher-options slot, so the whole `-jar ...`
+    invocation rides the file, keeping the spawn under ARG_MAX on large repos."""
+    fd, name = tempfile.mkstemp(prefix="javalint-", suffix=".args", dir=str(paths_dir))
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        for tok in tokens:
+            esc = tok.replace("\\", "\\\\").replace('"', '\\"')
+            fh.write(f'"{esc}"\n')
+    return name
+
+
+# The three list-file argv shapes, shared by the dev and hermetic registries so
+# the two differ only in how they resolve the binary/jar path.
+
+
+def _paths_from_argv(head: list[str], items: list[str], paths_dir: Path | None) -> list[str]:
+    """`head` plus `--paths-from <list-file>` for the go wrapper commands (erclint
+    packages, erclint-opengrep / tackbox-jscpd files)."""
+    return [*head, "--paths-from", _write_paths_file(paths_dir, items)]
+
+
+def _node_listfile_argv(
+    head: list[str], flag: list[str], files: list[str], paths_dir: Path | None
+) -> list[str]:
+    """`head` (node + wrapper script) plus the reporters flag and a
+    `--files-from <list-file>` for the node wrapper commands."""
+    return [*head, *flag, "--files-from", _write_paths_file(paths_dir, files)]
+
+
+def _java_argfile_argv(
+    jar: Path, files: list[str], reporters, paths_dir: Path | None
+) -> list[str]:
+    """`java @<argfile>` where the argfile carries the whole `-jar ...` invocation
+    plus the file list (see _write_java_argfile for why the launcher needs it)."""
+    flag = _reporters_flag(reporters, _JAVA_EXTS, lambda f: f)
+    return ["java", "@" + _write_java_argfile(paths_dir, ["-jar", str(jar), *flag, *files])]
+
+
 # --- Dev-mode engine specs ------------------------------------------------
 
 _JS_EXTS = frozenset(
@@ -808,7 +873,7 @@ def _version_from_npm_manifest(tackbox_root: Path, pkg: str) -> str:
 
 
 def _erclint_argv(
-    repo_root: Path, tackbox_root: Path, pkgs: list[str], reporters=()
+    repo_root: Path, tackbox_root: Path, pkgs: list[str], reporters=(), paths_dir: Path | None = None
 ) -> list[str]:
     bin_ = _built_go_binary(tackbox_root, "erclint")
     flag = _reporters_flag(reporters, _GO_EXTS, lambda f: str(repo_root / f))
@@ -819,14 +884,16 @@ def _erclint_argv(
         kind="usage",
         flag="--usage-sinks",
     )
-    return [str(bin_), "-json", *flag, *usage, *(f"./{p}" for p in pkgs)]
+    return _paths_from_argv(
+        [str(bin_), "-json", *flag, *usage], [f"./{p}" for p in pkgs], paths_dir
+    )
 
 
 def _erclint_opengrep_argv(
-    _repo_root: Path, tackbox_root: Path, files: list[str], reporters=()
+    _repo_root: Path, tackbox_root: Path, files: list[str], reporters=(), paths_dir: Path | None = None
 ) -> list[str]:
     bin_ = _built_go_binary(tackbox_root, "erclint-opengrep")
-    return [str(bin_), *files]
+    return _paths_from_argv([str(bin_)], files, paths_dir)
 
 
 def _dev_jscpd_bin(tackbox_root: Path) -> Path:
@@ -876,11 +943,11 @@ def _dev_jscpd_bin(tackbox_root: Path) -> Path:
 
 
 def _tackbox_jscpd_argv(
-    _repo_root: Path, tackbox_root: Path, files: list[str], reporters=()
+    _repo_root: Path, tackbox_root: Path, files: list[str], reporters=(), paths_dir: Path | None = None
 ) -> list[str]:
     bin_ = _built_go_binary(tackbox_root, "tackbox-jscpd")
     jscpd = _dev_jscpd_bin(tackbox_root)
-    return [str(bin_), "--jscpd", str(jscpd), *files]
+    return _paths_from_argv([str(bin_), "--jscpd", str(jscpd)], files, paths_dir)
 
 
 def _javalint_src_hash(tackbox_root: Path) -> str:
@@ -928,37 +995,47 @@ def _built_javalint_jar(tackbox_root: Path) -> Path:
 
 
 def _javalint_argv(
-    _repo_root: Path, tackbox_root: Path, files: list[str], reporters=()
+    _repo_root: Path, tackbox_root: Path, files: list[str], reporters=(), paths_dir: Path | None = None
 ) -> list[str]:
     jar = _built_javalint_jar(tackbox_root)
-    flag = _reporters_flag(reporters, _JAVA_EXTS, lambda f: f)
-    return ["java", "-jar", str(jar), *flag, *files]
+    return _java_argfile_argv(jar, files, reporters, paths_dir)
 
 
 def _tackbox_eslint_argv(
-    _repo_root: Path, tackbox_root: Path, files: list[str], reporters=()
+    _repo_root: Path, tackbox_root: Path, files: list[str], reporters=(), paths_dir: Path | None = None
 ) -> list[str]:
     flag = _reporters_flag(reporters, _JS_EXTS, lambda f: f)
-    return ["node", str(tackbox_root / "bin" / "tackbox-eslint.js"), *flag, *files]
+    head = ["node", str(tackbox_root / "bin" / "tackbox-eslint.js")]
+    return _node_listfile_argv(head, flag, files, paths_dir)
 
 
 def _tackbox_mdlint_argv(
-    _repo_root: Path, tackbox_root: Path, files: list[str], _reporters=()
+    _repo_root: Path, tackbox_root: Path, files: list[str], _reporters=(), paths_dir: Path | None = None
 ) -> list[str]:
-    return ["node", str(tackbox_root / "bin" / "tackbox-mdlint.js"), *files]
+    head = ["node", str(tackbox_root / "bin" / "tackbox-mdlint.js")]
+    return _node_listfile_argv(head, [], files, paths_dir)
 
 
 def _pyrules_argv(
-    _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=()
+    _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=(), paths_dir: Path | None = None
 ) -> list[str]:
-    """flake8 in closed form. It runs under the same interpreter as tackbox
-    (dev: the uv env; hermetic: the uvx venv), so it discovers the TBX plugin
-    entry point in both. Shared by the dev and hermetic registries."""
+    """flake8 in closed form, driven through our checker CLI. The checker reads
+    the file list via --files-from (ARG_MAX safety) and hands it to flake8 in
+    process. It runs under the same interpreter as tackbox (dev: the uv env;
+    hermetic: the uvx venv), so flake8 discovers the TBX plugin entry point in
+    both. Shared by the dev and hermetic registries."""
     flag = _reporters_flag(reporters, _PY_EXTS, lambda f: f)
+    listfile = _write_paths_file(paths_dir, files)
     return [
-        sys.executable, "-m", "flake8",
+        sys.executable,
+        # `-m` on a submodule its package already imports emits a benign runpy
+        # RuntimeWarning ("found in sys.modules ... prior to execution"); silence
+        # just that class so it never leaks onto the engine stderr the CLI surfaces.
+        "-W", "ignore::RuntimeWarning:runpy",
+        "-m", "tackbox.pyrules.checker",
+        "--files-from", listfile,
         "--isolated", "--disable-noqa", "--select=TBX",
-        *flag, *files,
+        *flag,
     ]
 
 
@@ -1033,7 +1110,7 @@ def _hermetic_rule_script(name: str) -> Path:
 
 
 def _erclint_argv_hermetic(
-    repo_root: Path, _tackbox_root: Path, pkgs: list[str], reporters=()
+    repo_root: Path, _tackbox_root: Path, pkgs: list[str], reporters=(), paths_dir: Path | None = None
 ) -> list[str]:
     flag = _reporters_flag(reporters, _GO_EXTS, lambda f: str(repo_root / f))
     usage = _reporters_flag(
@@ -1043,62 +1120,52 @@ def _erclint_argv_hermetic(
         kind="usage",
         flag="--usage-sinks",
     )
-    return [
-        str(_hermetic_erclint_bin("erclint")),
-        "-json",
-        *flag,
-        *usage,
-        *(f"./{p}" for p in pkgs),
-    ]
+    head = [str(_hermetic_erclint_bin("erclint")), "-json", *flag, *usage]
+    return _paths_from_argv(head, [f"./{p}" for p in pkgs], paths_dir)
 
 
 def _erclint_opengrep_argv_hermetic(
-    _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=()
+    _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=(), paths_dir: Path | None = None
 ) -> list[str]:
-    return [str(_hermetic_erclint_bin("erclint-opengrep")), *files]
+    return _paths_from_argv(
+        [str(_hermetic_erclint_bin("erclint-opengrep"))], files, paths_dir
+    )
 
 
 def _tackbox_jscpd_argv_hermetic(
-    _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=()
+    _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=(), paths_dir: Path | None = None
 ) -> list[str]:
     """Wrapper from the thin wheel; jscpd from the versioned engine store. Unlike
     node/opengrep the wrapper takes the store path explicitly (--jscpd) rather
     than resolving off PATH, so dev and hermetic share one wrapper contract."""
     jscpd = hermetic_engines_root() / "bin" / exe_name("jscpd")
-    return [str(_hermetic_erclint_bin("tackbox-jscpd")), "--jscpd", str(jscpd), *files]
+    head = [str(_hermetic_erclint_bin("tackbox-jscpd")), "--jscpd", str(jscpd)]
+    return _paths_from_argv(head, files, paths_dir)
 
 
 def _javalint_argv_hermetic(
-    _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=()
+    _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=(), paths_dir: Path | None = None
 ) -> list[str]:
     """`java` is the system toolchain (like go), not a bundled binary; the jar
     rides in the thin wheel. hermetic_env keeps the system PATH so java resolves;
     doctor's java-toolchain check gates its presence + version."""
     jar = _TACKBOX_PKG_ROOT / "bin" / "javalint.jar"
-    flag = _reporters_flag(reporters, _JAVA_EXTS, lambda f: f)
-    return ["java", "-jar", str(jar), *flag, *files]
+    return _java_argfile_argv(jar, files, reporters, paths_dir)
 
 
 def _tackbox_eslint_argv_hermetic(
-    _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=()
+    _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=(), paths_dir: Path | None = None
 ) -> list[str]:
     flag = _reporters_flag(reporters, _JS_EXTS, lambda f: f)
-    return [
-        str(_hermetic_node_bin()),
-        str(_hermetic_rule_script("tackbox-eslint.js")),
-        *flag,
-        *files,
-    ]
+    head = [str(_hermetic_node_bin()), str(_hermetic_rule_script("tackbox-eslint.js"))]
+    return _node_listfile_argv(head, flag, files, paths_dir)
 
 
 def _tackbox_mdlint_argv_hermetic(
-    _repo_root: Path, _tackbox_root: Path, files: list[str], _reporters=()
+    _repo_root: Path, _tackbox_root: Path, files: list[str], _reporters=(), paths_dir: Path | None = None
 ) -> list[str]:
-    return [
-        str(_hermetic_node_bin()),
-        str(_hermetic_rule_script("tackbox-mdlint.js")),
-        *files,
-    ]
+    head = [str(_hermetic_node_bin()), str(_hermetic_rule_script("tackbox-mdlint.js"))]
+    return _node_listfile_argv(head, [], files, paths_dir)
 
 
 HERMETIC_ENGINES: list[EngineSpec] = [

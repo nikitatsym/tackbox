@@ -91,17 +91,24 @@ func TestSemgrepIgnoreInRepoRootFails(t *testing.T) {
 	}
 }
 
-func TestPathsRewrittenToRepoRelative(t *testing.T) {
+// setupPkgBadGoRepo builds the wrapper and a temp repo holding pkg/bad.go (a
+// go-exit-in-recover finding); the shared fixture for the path-rewrite tests.
+func setupPkgBadGoRepo(t *testing.T) (string, string) {
+	t.Helper()
 	requireOpengrepOnPath(t)
 	bin := buildOpengrepWrapper(t)
 	repo := makeRepo(t)
-
 	if err := os.MkdirAll(filepath.Join(repo, "pkg"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(repo, "pkg", "bad.go"), []byte(badGo), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	return bin, repo
+}
+
+func TestPathsRewrittenToRepoRelative(t *testing.T) {
+	bin, repo := setupPkgBadGoRepo(t)
 
 	stdout, stderr, runErr := runWrapper(t, bin, repo, "pkg/bad.go")
 	if runErr == nil {

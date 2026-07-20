@@ -11,6 +11,7 @@ import (
 	"github.com/nikitatsym/tackbox/go/analyzers"
 	"github.com/nikitatsym/tackbox/go/internal/astutil"
 	"github.com/nikitatsym/tackbox/go/internal/reporters"
+	"github.com/nikitatsym/tackbox/go/internal/wrapcli"
 	"github.com/nikitatsym/tackbox/go/report"
 )
 
@@ -19,24 +20,40 @@ var version = "dev"
 
 const reportersFlag = "--reporters="
 const usageSinksFlag = "--usage-sinks="
+const pathsFromFlag = "--paths-from"
 
 func main() {
 	var spec, usageSpec string
 	var rest []string
-	for _, arg := range os.Args[1:] {
-		if arg == "--version" || arg == "-version" {
+	args := os.Args[1:]
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--version" || arg == "-version":
 			fmt.Printf("erclint %s\n", version)
 			return
-		}
-		if strings.HasPrefix(arg, reportersFlag) {
+		case strings.HasPrefix(arg, reportersFlag):
 			spec = arg[len(reportersFlag):]
-			continue
-		}
-		if strings.HasPrefix(arg, usageSinksFlag) {
+		case strings.HasPrefix(arg, usageSinksFlag):
 			usageSpec = arg[len(usageSinksFlag):]
-			continue
+		case arg == pathsFromFlag:
+			if i+1 >= len(args) {
+				report.Error(context.Background(), "read --paths-from",
+					fmt.Errorf("%s requires a file argument", pathsFromFlag), nil, "erclint.pathsfrom")
+				os.Exit(2)
+			}
+			i++
+			// The package patterns ride a list-file instead of positional argv
+			// (ARG_MAX safety); inject them where the positional args went.
+			paths, err := wrapcli.ReadPathList(args[i])
+			if err != nil {
+				report.Error(context.Background(), "read --paths-from", err, nil, "erclint.pathsfrom")
+				os.Exit(2)
+			}
+			rest = append(rest, paths...)
+		default:
+			rest = append(rest, arg)
 		}
-		rest = append(rest, arg)
 	}
 	if spec != "" || usageSpec != "" {
 		decls, err := reporters.Resolve(spec)

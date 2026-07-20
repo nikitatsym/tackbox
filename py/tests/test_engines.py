@@ -243,16 +243,15 @@ def test_dev_engines_registry_order_locked():
     ]
 
 
-def test_pyrules_invocation_neutralizes_ambient_channels_structurally():
+def test_pyrules_invocation_neutralizes_ambient_channels_structurally(tmp_path):
     # --select=TBX gates out a consumer's own flake8 plugin - too costly to pin
     # behaviorally; --isolated / --disable-noqa are pinned in the hardening test.
+    # (The checker/--files-from shape is pinned in test_engines_listfile.py.)
     pyrules = next(e for e in DEV_ENGINES if e.id == "pyrules")
-    argv = pyrules.build_argv(None, None, ["a.py"], ())
-    assert "flake8" in argv
+    argv = pyrules.build_argv(None, None, ["a.py"], (), tmp_path)
     assert "--isolated" in argv
     assert "--disable-noqa" in argv
     assert "--select=TBX" in argv
-    assert argv[-1] == "a.py"
 
 
 def test_dev_engines_erclint_is_package_mode():
@@ -294,51 +293,54 @@ def test_dev_engines_javalint_extension_is_only_java():
     assert jl.machine_flag is False
 
 
-def test_hermetic_javalint_argv_uses_system_java_and_thin_jar():
+def test_hermetic_javalint_argv_uses_system_java_and_argfile(tmp_path):
     jl = next(e for e in engines.HERMETIC_ENGINES if e.id == "javalint")
     argv = jl.build_argv(
-        Path("/repo"), Path("/tb"), ["a.java"], (("Rep.java", "Rep.report", "capture"),)
+        Path("/repo"), Path("/tb"), ["a.java"],
+        (("Rep.java", "Rep.report", "capture"),), tmp_path,
     )
-    assert argv[:3] == [
-        "java", "-jar", str(engines._TACKBOX_PKG_ROOT / "bin" / "javalint.jar")
-    ]
-    # reporter path stays repo-relative (javalint reads it cwd-relative, unlike
-    # erclint's absolute paths); the java sink is passed through.
-    assert "--reporters=Rep.java#Rep.report" in argv
-    assert argv[-1] == "a.java"
+    # System java (like go); the whole -jar invocation + file list rides a JDK
+    # @argfile, so no positional args hit the spawn boundary. The argfile body
+    # (thin jar, reporter passthrough) is pinned in test_engines_listfile.py.
+    assert argv[0] == "java" and argv[1].startswith("@")
+    assert "a.java" not in argv
 
 
-def _assert_erclint_splits_usage_flag(spec):
+def _assert_erclint_splits_usage_flag(spec, paths_dir):
     argv = spec.build_argv(
         Path("/repo"),
         Path("/tb"),
         ["pkg"],
         (("rep.go", "myReport", "capture"), ("cli.go", "usage", "usage")),
+        paths_dir,
     )
     assert f"--reporters={Path('/repo') / 'rep.go'}#myReport" in argv
     assert f"--usage-sinks={Path('/repo') / 'cli.go'}#usage" in argv
 
 
-def test_dev_erclint_argv_splits_capture_and_usage_flags(monkeypatch):
+def test_dev_erclint_argv_splits_capture_and_usage_flags(monkeypatch, tmp_path):
     monkeypatch.setattr(
         engines, "_built_go_binary", lambda root, name: Path("/tb/bin") / name
     )
-    _assert_erclint_splits_usage_flag(next(e for e in DEV_ENGINES if e.id == "erclint"))
-
-
-def test_hermetic_erclint_argv_splits_capture_and_usage_flags():
     _assert_erclint_splits_usage_flag(
-        next(e for e in engines.HERMETIC_ENGINES if e.id == "erclint")
+        next(e for e in DEV_ENGINES if e.id == "erclint"), tmp_path
     )
 
 
-def test_eslint_argv_drops_usage_declarations():
+def test_hermetic_erclint_argv_splits_capture_and_usage_flags(tmp_path):
+    _assert_erclint_splits_usage_flag(
+        next(e for e in engines.HERMETIC_ENGINES if e.id == "erclint"), tmp_path
+    )
+
+
+def test_eslint_argv_drops_usage_declarations(tmp_path):
     es = next(e for e in DEV_ENGINES if e.id == "tackbox-eslint")
     argv = es.build_argv(
         Path("/repo"),
         Path("/tb"),
         ["a.js"],
         (("rep.js", "myReport", "capture"), ("cli.js", "usage", "usage")),
+        tmp_path,
     )
     assert "--reporters=rep.js#myReport" in argv
     assert not any("cli.js" in a for a in argv)

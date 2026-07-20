@@ -41,6 +41,10 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 		return 0, err
 	}
 
+	args, err = expandPathsFrom(args)
+	if err != nil {
+		return 0, err
+	}
 	machine, scanArgs := splitMachine(args)
 
 	rulesDir, err := os.MkdirTemp("", "erclint-rules-*")
@@ -64,11 +68,37 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 		return 0, fmt.Errorf("write empty .semgrepignore: %w", err)
 	}
 
+	// opengrep has no targets-from-file flag, so a huge file set is split under an
+	// argv byte budget and scanned in batches; the merged exit code is the max (2
+	// opengrep-error > 1 findings > 0 clean). The bundled rules are per-file, so a
+	// file lives in exactly one batch and the batched result equals one scan -
+	// machine dedup keys on (file,line,rule), which never spans batches.
+	targets := wrapcli.ToAbs(origCwd, scanArgs)
+	maxCode := 0
+	for _, batch := range chunkByArgvBytes(targets, maxScanArgvBytes) {
+		code, err := scanBatch(batch, rulesDir, scanCwd, machine, origCwd, stdout, stderr)
+		if err != nil {
+			return 0, err
+		}
+		if code > maxCode {
+			maxCode = code
+		}
+	}
+	return maxCode, nil
+}
+
+// maxScanArgvBytes caps the target bytes per opengrep invocation, well under
+// ARG_MAX once the small base args and the environment are added.
+const maxScanArgvBytes = 128 * 1024
+
+// scanBatch runs opengrep over one batch of targets and writes its (translated,
+// path-rewritten) output to stdout/stderr, returning opengrep's exit code.
+func scanBatch(targets []string, rulesDir, scanCwd string, machine bool, origCwd string, stdout, stderr io.Writer) (int, error) {
 	full := []string{"scan", "--config", rulesDir, "--error"}
 	if machine {
 		full = append(full, "--json")
 	}
-	full = append(full, wrapcli.ToAbs(origCwd, scanArgs)...)
+	full = append(full, targets...)
 	cmd := exec.Command("opengrep", full...)
 	cmd.Dir = scanCwd
 	var outBuf, errBuf bytes.Buffer
@@ -99,6 +129,29 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 		return 0, fmt.Errorf("invoke opengrep (must be on PATH): %w", runErr)
 	}
 	return cmd.ProcessState.ExitCode(), nil
+}
+
+// chunkByArgvBytes splits targets into batches each within budget bytes of argv.
+// Empty input yields one empty batch so opengrep still runs once (scanning the
+// empty scan cwd), preserving the no-target behavior.
+func chunkByArgvBytes(targets []string, budget int) [][]string {
+	if len(targets) == 0 {
+		return [][]string{nil}
+	}
+	var chunks [][]string
+	var cur []string
+	curBytes := 0
+	for _, t := range targets {
+		n := len(t) + 1
+		if len(cur) > 0 && curBytes+n > budget {
+			chunks = append(chunks, cur)
+			cur = nil
+			curBytes = 0
+		}
+		cur = append(cur, t)
+		curBytes += n
+	}
+	return append(chunks, cur)
 }
 
 func rejectSemgrepignore(dir string) error {
@@ -146,6 +199,28 @@ func extractRules(dst string) error {
 		}
 		return os.WriteFile(target, data, 0o644)
 	})
+}
+
+// expandPathsFrom replaces a `--paths-from <file>` pair with the scan targets
+// the list-file holds, injected where positional files went (ARG_MAX safety).
+func expandPathsFrom(args []string) ([]string, error) {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--paths-from" {
+			if i+1 >= len(args) {
+				return nil, errors.New("--paths-from requires a file argument")
+			}
+			i++
+			paths, err := wrapcli.ReadPathList(args[i])
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, paths...)
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out, nil
 }
 
 // splitMachine strips the internal --machine flag (opengrep JSON translated to

@@ -1,11 +1,25 @@
 #!/usr/bin/env node
+const fs = require('fs')
 const { lint } = require('markdownlint/promise')
 const noNonAscii = require('../js/markdownlint-rules/no-non-ascii')
+
+// readFilesFrom reads a newline-separated UTF-8 list-file into its non-empty
+// paths. Additive to positional paths - the bin is public on npm.
+function readFilesFrom(listPath) {
+  return fs.readFileSync(listPath, 'utf8').split('\n').filter(Boolean)
+}
 
 async function run() {
   const argv = process.argv.slice(2)
   const machine = argv.includes('--machine')
-  const files = argv.filter(a => a !== '--machine')
+  const files = []
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]
+    if (a === '--machine') continue
+    // The file set rides a list-file, not positional argv (ARG_MAX safety).
+    if (a === '--files-from') { files.push(...readFilesFrom(argv[++i])); continue }
+    files.push(a)
+  }
   if (files.length === 0) {
     process.stderr.write('tackbox-mdlint: no files supplied\n')
     process.exit(2)

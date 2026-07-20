@@ -62,6 +62,18 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 	}
 	defer os.RemoveAll(outDir)
 
+	// jscpd 5.0.12 has no targets-from-file flag, and batching is unsound here
+	// (duplication is cross-file - a clone split across batches is missed). Its
+	// config `path` array is equivalent to positional paths (verified against the
+	// vendored binary), so the file list rides a temp config and the inner argv
+	// stays bounded; the full set on argv would E2BIG on a large repo. The config
+	// lives in outDir (cleaned with it) and is never itself a scan target.
+	absFiles := wrapcli.ToAbs(cwd, files)
+	configPath := filepath.Join(outDir, "jscpd.config.json")
+	if err := writePathConfig(configPath, absFiles); err != nil {
+		return 0, err
+	}
+
 	// --absolute keeps report paths independent of the base jscpd would infer;
 	// the wrapper relativizes them to cwd. --no-gitignore stops jscpd dropping
 	// an explicitly-passed file (the caller's source set already excludes it).
@@ -72,8 +84,8 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 		"--absolute",
 		"--no-gitignore",
 		"--no-colors", "--no-tips", "--silent",
+		"--config", configPath,
 	}
-	full = append(full, wrapcli.ToAbs(cwd, files)...)
 	cmd := exec.Command(jscpdBin, full...)
 	var jstderr bytes.Buffer
 	cmd.Stderr = &jstderr
@@ -91,7 +103,7 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	banned, err := emitIgnoreBans(fl, wrapcli.ToAbs(cwd, files), cwd, machine, stdout)
+	banned, err := emitIgnoreBans(fl, absFiles, cwd, machine, stdout)
 	if err != nil {
 		return 0, err
 	}
@@ -124,6 +136,22 @@ func (fl *fileLines) get(path string) ([]string, error) {
 	return lines, nil
 }
 
+// writePathConfig writes a jscpd config file whose `path` array carries the file
+// list (equivalent to positional paths, but off the argv), returning nothing but
+// an error. Absolute paths make it independent of jscpd's inferred base.
+func writePathConfig(path string, files []string) error {
+	data, err := json.Marshal(struct {
+		Path []string `json:"path"`
+	}{Path: files})
+	if err != nil {
+		return fmt.Errorf("marshal jscpd config: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write jscpd config %s: %w", path, err)
+	}
+	return nil
+}
+
 func parseArgs(args []string) (machine bool, jscpdBin string, files []string, err error) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -138,6 +166,17 @@ func parseArgs(args []string) (machine bool, jscpdBin string, files []string, er
 			jscpdBin = args[i]
 		case strings.HasPrefix(a, "--jscpd="):
 			jscpdBin = strings.TrimPrefix(a, "--jscpd=")
+		case a == "--paths-from":
+			if i+1 >= len(args) {
+				return false, "", nil, errors.New("--paths-from requires a path argument")
+			}
+			i++
+			// The file set rides a list-file, not positional argv (ARG_MAX safety).
+			paths, rerr := wrapcli.ReadPathList(args[i])
+			if rerr != nil {
+				return false, "", nil, rerr
+			}
+			files = append(files, paths...)
 		default:
 			files = append(files, a)
 		}
