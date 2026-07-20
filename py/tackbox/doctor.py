@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TextIO
 
 from . import engines as engines_mod
+from . import scopes
 from .cache import sha256_tree
 from .gitfiles import collect_source_set
 from .hashing import sha256_file
@@ -196,12 +197,13 @@ _AST_GREP_VERSION = "0.44.1"
 
 
 def _check_ast_grep() -> CheckResult:
-    """The outline engine (D015): a pip runtime dependency, so `ast-grep` shares
-    the wheel's env. Gate presence AND the pinned version - a grammar bump can
-    silently change resolved scope chains (residual A7)."""
-    found = shutil.which("ast-grep")
+    """The outline engine (D015): a pip runtime dependency, resolved exactly as
+    the engine resolves it (interpreter dir first, then PATH). Gate presence AND
+    the pinned version - a grammar bump can silently change resolved scope
+    chains (residual A7)."""
+    found = scopes.ast_grep_exe()
     if not found:
-        return CheckResult("ast-grep", False, "ast-grep not found in PATH")
+        return CheckResult("ast-grep", False, "ast-grep not found (interpreter dir or PATH)")
     try:
         completed = subprocess.run(
             [found, "--version"], capture_output=True, text=True, timeout=60

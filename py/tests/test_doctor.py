@@ -238,7 +238,7 @@ def test_java_major_version_parses_modern_and_legacy(monkeypatch, banner, major)
 
 
 def test_ast_grep_ok_when_pinned_version_present(monkeypatch):
-    monkeypatch.setattr(doctor.shutil, "which", lambda n: "/usr/bin/ast-grep" if n == "ast-grep" else None)
+    monkeypatch.setattr(doctor.scopes, "ast_grep_exe", lambda: "/usr/bin/ast-grep")
 
     class _P:
         stdout = f"ast-grep {doctor._AST_GREP_VERSION}\n"
@@ -250,7 +250,7 @@ def test_ast_grep_ok_when_pinned_version_present(monkeypatch):
 
 
 def test_ast_grep_fails_when_absent(monkeypatch):
-    monkeypatch.setattr(doctor.shutil, "which", lambda n: None)
+    monkeypatch.setattr(doctor.scopes, "ast_grep_exe", lambda: None)
     r = doctor._check_ast_grep()
     assert not r.ok and "not found" in r.detail
 
@@ -258,7 +258,7 @@ def test_ast_grep_fails_when_absent(monkeypatch):
 def test_ast_grep_fails_on_version_drift(monkeypatch):
     # Adversarial: a grammar-bearing version bump can silently shift resolved
     # scope chains (A7); the pin must fail loudly, not pass on any ast-grep.
-    monkeypatch.setattr(doctor.shutil, "which", lambda n: "/usr/bin/ast-grep")
+    monkeypatch.setattr(doctor.scopes, "ast_grep_exe", lambda: "/usr/bin/ast-grep")
 
     class _P:
         stdout = "ast-grep 0.45.0\n"
