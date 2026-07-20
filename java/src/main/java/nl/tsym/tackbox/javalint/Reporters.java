@@ -6,7 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** Parses the `--reporters=<file>#<Class.method>,...` transport the python CLI
- *  builds from `.tackbox-reporters`, and resolves each declared file to the
+ *  builds from `.tackbox/reporters`, and resolves each declared file to the
  *  package it lives in. Recognition is package-aware: a same-named class in
  *  another package is not the declared reporter, so the declaration is pinned to
  *  the package parsed from its own file, not to the class name alone. */

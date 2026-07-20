@@ -5,7 +5,7 @@ import (
 	"net/http"
 )
 
-// myReport is declared in .tackbox-reporters (installed by the test). Its
+// myReport is declared in .tackbox/reporters (installed by the test). Its
 // signature is unknown to ERC006, so dedupkey never applies to it; user-input
 // still scrubs its arguments.
 func myReport(ctx context.Context, msg string, err error, key string) {}

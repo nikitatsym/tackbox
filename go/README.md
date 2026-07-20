@@ -116,7 +116,7 @@ and validated (msg/dedupKey) by ERC006. Other exports of that package
 (`Init`, `Flush`, `Crumb`, ...) are not captures, and a bare local
 `Error(...)` that merely shares the name is not trusted.
 
-A repo may also declare its own sinks in a root `.tackbox-reporters`
+A repo may also declare its own sinks in a root `.tackbox/reporters`
 file (`file#function: reason`); a declared call counts only when the
 caught error flows into its arguments. Declarations are validated every
 run - a dead file or symbol is a hard error.

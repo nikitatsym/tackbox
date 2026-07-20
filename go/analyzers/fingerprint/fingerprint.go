@@ -4,7 +4,7 @@
 //
 // A capture is recognized by ORIGIN, not by name: the callee must resolve
 // (type info) to the go/report package (Error/Warn/Panic) or to a
-// `.tackbox-reporters`-declared sink. A bare local `Error` that shares
+// `.tackbox/reporters`-declared sink. A bare local `Error` that shares
 // the name but not the origin is not a capture and is never scanned.
 //
 // Three checks, mirroring the retired opengrep rules:

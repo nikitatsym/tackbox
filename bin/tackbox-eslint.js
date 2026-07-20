@@ -42,7 +42,7 @@ function parseModule(file, code) {
 }
 
 // hasBinding: the AST defines a function or const-arrow named `name`. Existence
-// check for `.tackbox-reporters` symbol validation; a deep walk keeps it parser
+// check for `.tackbox/reporters` symbol validation; a deep walk keeps it parser
 // shape-agnostic across espree / ts / svelte.
 function hasBinding(ast, name) {
   const seen = new Set()
@@ -86,16 +86,16 @@ function validateDeclarations(decls) {
     try {
       code = fs.readFileSync(abs, 'utf8')
     } catch (e) {
-      throw new Error(`.tackbox-reporters: cannot read ${d.file}: ${e.message}`, { cause: e })
+      throw new Error(`.tackbox/reporters: cannot read ${d.file}: ${e.message}`, { cause: e })
     }
     let ast
     try {
       ast = parseModule(d.file, code)
     } catch (e) {
-      throw new Error(`.tackbox-reporters: cannot parse ${d.file}: ${e.message}`, { cause: e })
+      throw new Error(`.tackbox/reporters: cannot parse ${d.file}: ${e.message}`, { cause: e })
     }
     if (!hasBinding(ast, d.fn)) {
-      throw new Error(`.tackbox-reporters: no top-level function ${d.fn} in ${d.file}`)
+      throw new Error(`.tackbox/reporters: no top-level function ${d.fn} in ${d.file}`)
     }
   }
 }

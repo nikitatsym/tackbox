@@ -877,7 +877,7 @@ def _partition_findings(
 def _hook_pre(event: dict) -> int:
     """PreToolUse Edit/Write/MultiEdit: the manifest and reporters declaration
     gates. Adding a `.tackbox/approvals` line asks (quoting the entry); adding a
-    `.tackbox-reporters` line asks (unchanged). Removals are free. Code markers no
+    `.tackbox/reporters` line asks (unchanged). Removals are free. Code markers no
     longer ask here - approval rides the manifest, and an unapproved marker
     surfaces at the next Post consistency event."""
     root = _hook_repo_root(event)
@@ -895,7 +895,7 @@ def _hook_pre(event: dict) -> int:
         added = _reporters_added_line(old, new)
         if added is not None:
             return _hook_ask(
-                f".tackbox-reporters line added: {added}", _hook_rel(target, root)
+                f".tackbox/reporters line added: {added}", _hook_rel(target, root)
             )
     return 0
 
@@ -945,7 +945,7 @@ def _manifest_ask(old: str, new: str) -> str | None:
 
 
 def _reporters_added_line(old: str, new: str) -> str | None:
-    """A `.tackbox-reporters` line in new but not old (trim-normalized), or
+    """A `.tackbox/reporters` line in new but not old (trim-normalized), or
     None when the change only removes lines."""
     old_c = Counter(s.strip() for s in old.splitlines() if s.strip())
     new_c = Counter(s.strip() for s in new.splitlines() if s.strip())

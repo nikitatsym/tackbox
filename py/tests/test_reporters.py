@@ -1,4 +1,4 @@
-"""Parsing and path-validation of `.tackbox-reporters` (pure CLI layer).
+"""Parsing and path-validation of `.tackbox/reporters` (pure CLI layer).
 
 Symbol existence (dead `file#function`) is validated by the resolving
 engine, so it lives in the end-to-end fixture (test_cli_fixture.py), not
@@ -87,7 +87,8 @@ def test_load_absent_file_no_declarations(tmp_path):
 
 def test_load_parses_and_validates(tmp_path):
     (tmp_path / "rep.go").write_text("package x\nfunc Report() {}\n")
-    (tmp_path / ".tackbox-reporters").write_text("rep.go#Report: sink\n")
+    (tmp_path / ".tackbox").mkdir()
+    (tmp_path / ".tackbox/reporters").write_text("rep.go#Report: sink\n")
     assert reporters.load(tmp_path) == [Declaration("rep.go", "Report", "sink")]
 
 

@@ -12,7 +12,7 @@ import (
 )
 
 // source declares an unexported top-level function and a call site that
-// hands the guarded err into it - the shape a `.tackbox-reporters`
+// hands the guarded err into it - the shape a `.tackbox/reporters`
 // declaration names.
 const source = `package fixture
 

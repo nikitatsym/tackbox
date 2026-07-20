@@ -3,7 +3,7 @@ import nl.tsym.tackbox.report.Report;
 // Tier-1 positive (DECISIONS D004): error/warn/panic on the tackbox runtime
 // capture helper are recognized by origin (package nl.tsym.tackbox.report, class
 // Report). A catch reaching one, with the caught flowing in, is credited - no
-// `// no-report:` marker and no `.tackbox-reporters` entry. Both the imported
+// `// no-report:` marker and no `.tackbox/reporters` entry. Both the imported
 // spelling and the fully-qualified static spelling resolve to the same origin.
 class ReportCapture {
     void errorViaImport() {

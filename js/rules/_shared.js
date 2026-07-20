@@ -4,7 +4,7 @@ const fs = require('fs')
 // Canonical reporter names. A call counts as a reporter only when its
 // callee resolves (scope analysis) to an import of `tackbox`/`tackbox/report`
 // carrying one of these names (tier-1), or to a function declared in
-// `.tackbox-reporters` (tier-2). A bare identifier that merely shares the
+// `.tackbox/reporters` (tier-2). A bare identifier that merely shares the
 // name is not trusted - name-only matching is dead.
 const REPORTER_NAMES = new Set([
   'reportError',
@@ -151,7 +151,7 @@ function isTier1ReporterCall(context, call) {
   return tier1ReporterName(context, call) !== null
 }
 
-// --- tier-2: .tackbox-reporters declarations -----------------------------
+// --- tier-2: .tackbox/reporters declarations -----------------------------
 
 function declaredReporters(context) {
   const s = context.settings && context.settings.tackbox && context.settings.tackbox.reporters
@@ -280,7 +280,7 @@ function argFlows(call, errName) {
 }
 
 // resolvesToDeclaredReporter: `call`'s callee resolves to a function declared in
-// `.tackbox-reporters` for its origin file. Pure origin recognition - the single
+// `.tackbox/reporters` for its origin file. Pure origin recognition - the single
 // declared-reporter resolver. no-swallow layers an argument-flow gate on top
 // (the caught err must reach the call).
 function resolvesToDeclaredReporter(context, call) {
@@ -297,7 +297,7 @@ function isDeclaredReporterCall(context, call, errName) {
 }
 
 // isInDeclaredReporterBody: `node` is lexically inside a function declared in
-// `.tackbox-reporters` for this file - no-console-error does not apply there
+// `.tackbox/reporters` for this file - no-console-error does not apply there
 // (the declared function is itself the reporter).
 function isInDeclaredReporterBody(context, node) {
   const decls = declaredReporters(context)

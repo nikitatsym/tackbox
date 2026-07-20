@@ -5,12 +5,12 @@ off the paved road, so review tooling of any harness can consume it in one
 cheap command:
 
 * suppression markers (with their reason),
-* `.tackbox-reporters` tier-2 declarations,
+* `.tackbox/reporters` tier-2 declarations,
 * notify / quiet lane choices (call sites).
 
 Each entry carries file, line, the source text, and a context window of the
 surrounding lines. The scan covers the lintable source set (the D012
-predicate, `engines.lintable`) plus the root `.tackbox-reporters`. Verb-site
+predicate, `engines.lintable`) plus the root `.tackbox/reporters`. Verb-site
 detection is textual per language, so it may over-report - that is
 observability, not a lint (D013). `--since <rev>` keeps only entries new
 against that revision by content identity (kind, file, text); it over-reports
@@ -124,7 +124,7 @@ def _scan_tree(
     window: int,
 ) -> list[dict]:
     """Entries for the working tree: the lintable source set plus the root
-    `.tackbox-reporters` (read from the worktree)."""
+    `.tackbox/reporters` (read from the worktree)."""
     files, _warnings = collect_source_set(root, ".", None)
     entries: list[dict] = []
     for rel in files:
@@ -187,7 +187,7 @@ def _scan_content(
 
 
 def _reporter_entries(content: str, window: int) -> list[dict]:
-    """One reporter-decl per non-empty trimmed line. `.tackbox-reporters` has no
+    """One reporter-decl per non-empty trimmed line. `.tackbox/reporters` has no
     comment syntax - `#` is the file#function separator - so every non-blank line
     is a declaration."""
     lines = content.split("\n")

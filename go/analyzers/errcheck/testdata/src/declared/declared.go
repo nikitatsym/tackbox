@@ -2,7 +2,7 @@ package declared
 
 import "errors"
 
-// myReport is declared in .tackbox-reporters (installed by the test). A call
+// myReport is declared in .tackbox/reporters (installed by the test). A call
 // captures only when the caught error flows into its arguments.
 func myReport(err error) {}
 

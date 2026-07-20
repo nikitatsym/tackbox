@@ -36,7 +36,7 @@ from .source_set import (
 )
 
 # (repo_root, tackbox_root, args, reporters) -> argv.
-# reporters = (repo-relative-file, function, kind) triples from .tackbox-reporters.
+# reporters = (repo-relative-file, function, kind) triples from .tackbox/reporters.
 ArgvBuilder = Callable[
     [Path, Path, list[str], "tuple[tuple[str, str, str], ...]"], list[str]
 ]

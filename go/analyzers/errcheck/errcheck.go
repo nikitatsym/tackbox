@@ -1,6 +1,6 @@
 // Package errcheck implements ERC001: every execution path through an
 // `err != nil` branch must propagate the error, capture it (a go/report call or
-// a `.tackbox-reporters` sink), route it to the user lane via a go/report.Notify
+// a `.tackbox/reporters` sink), route it to the user lane via a go/report.Notify
 // carrying it (whether that notify is narrow enough is ERC009's call, not this
 // one), report it via a printing terminal exit (`log.Fatal*`/`die` carrying the
 // error - a reported death; `os.Exit` prints nothing and is excluded), or the

@@ -1,4 +1,4 @@
-"""Tier-2 `.tackbox-reporters` resolution for the python engine.
+"""Tier-2 `.tackbox/reporters` resolution for the python engine.
 
 Tier-1 verbs resolve by import origin (see origin.py); tier-2 declarations stay
 name-based. Unlike Go/JS/Java, which resolve a call's callee back to the

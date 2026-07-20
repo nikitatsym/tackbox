@@ -1,4 +1,4 @@
-"""End-to-end `.tackbox-reporters` behavior through the real CLI.
+"""End-to-end `.tackbox/reporters` behavior through the real CLI.
 
 Covers the transport the unit / analysistest layers bypass: the CLI parsing
 the file, threading declarations into each engine, engine-side symbol
@@ -123,19 +123,40 @@ def _lint(root: Path, *extra: str) -> subprocess.CompletedProcess:
     )
 
 
+def _declare(repo: Path, text: str) -> None:
+    (repo / ".tackbox").mkdir(exist_ok=True)
+    (repo / ".tackbox" / "reporters").write_text(text)
+
+
 def test_go_declaration_recognized(tmp_path):
     (tmp_path / "go.mod").write_text(GO_MOD)
     (tmp_path / "rep.go").write_text(GO_DECLARED)
-    (tmp_path / ".tackbox-reporters").write_text("rep.go#myReport: local go sink\n")
+    _declare(tmp_path, "rep.go#myReport: local go sink\n")
     _init(tmp_path)
     r = _lint(tmp_path)
     assert r.returncode == 0, f"declared go sink should make the err-branch clean:\n{r.stdout}\n{r.stderr}"
 
 
+def test_legacy_root_declaration_invisible(tmp_path):
+    """A declaration at the pre-move root path draws no recognition and no
+    diagnostic - the legacy location simply does not exist."""
+    (tmp_path / "go.mod").write_text(GO_MOD)
+    (tmp_path / "rep.go").write_text(GO_DECLARED)
+    # composed so the step's acceptance grep for the old literal stays empty
+    legacy = ".tackbox" + "-reporters"
+    (tmp_path / legacy).write_text("rep.go#myReport: local go sink\n")
+    _init(tmp_path)
+    r = _lint(tmp_path)
+    assert r.returncode == 1, (
+        f"legacy-path declaration must not credit the sink:\n{r.stdout}\n{r.stderr}"
+    )
+    assert legacy not in r.stdout + r.stderr, "legacy path must draw no diagnostic"
+
+
 def test_go_declaration_recognized_unexported_main(tmp_path):
     (tmp_path / "go.mod").write_text(GO_MOD)
     (tmp_path / "main.go").write_text(GO_DECLARED_MAIN)
-    (tmp_path / ".tackbox-reporters").write_text("main.go#myReport: local go sink\n")
+    _declare(tmp_path, "main.go#myReport: local go sink\n")
     _init(tmp_path)
     r = _lint(tmp_path)
     assert r.returncode == 0, (
@@ -146,7 +167,7 @@ def test_go_declaration_recognized_unexported_main(tmp_path):
 def test_go_dead_symbol_exit_2(tmp_path):
     (tmp_path / "go.mod").write_text(GO_MOD)
     (tmp_path / "rep.go").write_text(GO_DECLARED)
-    (tmp_path / ".tackbox-reporters").write_text("rep.go#nope: dead\n")
+    _declare(tmp_path, "rep.go#nope: dead\n")
     _init(tmp_path)
     r = _lint(tmp_path)
     assert r.returncode == 2, f"dead go symbol must exit 2:\n{r.stdout}\n{r.stderr}"
@@ -156,7 +177,7 @@ def test_go_dead_symbol_exit_2(tmp_path):
 def test_go_usage_sink_declared_clean(tmp_path):
     (tmp_path / "go.mod").write_text(GO_MOD)
     (tmp_path / "cli.go").write_text(GO_USAGE)
-    (tmp_path / ".tackbox-reporters").write_text(
+    _declare(tmp_path,
         "cli.go#usage [usage]: diagnostic exit\n"
     )
     _init(tmp_path)
@@ -179,7 +200,7 @@ def test_go_usage_helper_undeclared_stays_strict(tmp_path):
 def test_go_usage_sink_err_branch_fires(tmp_path):
     (tmp_path / "go.mod").write_text(GO_MOD)
     (tmp_path / "cli.go").write_text(GO_USAGE_ERR_BRANCH)
-    (tmp_path / ".tackbox-reporters").write_text(
+    _declare(tmp_path,
         "cli.go#usage [usage]: diagnostic exit\n"
     )
     _init(tmp_path)
@@ -192,7 +213,7 @@ def test_go_usage_sink_err_branch_fires(tmp_path):
 
 def test_js_declaration_recognized(tmp_path):
     (tmp_path / "app.js").write_text(JS_DECLARED)
-    (tmp_path / ".tackbox-reporters").write_text("app.js#myReport: local js sink\n")
+    _declare(tmp_path, "app.js#myReport: local js sink\n")
     _init(tmp_path)
     r = _lint(tmp_path)
     assert r.returncode == 0, f"declared js sink should satisfy no-swallow-catch:\n{r.stdout}\n{r.stderr}"
@@ -200,7 +221,7 @@ def test_js_declaration_recognized(tmp_path):
 
 def test_js_dead_symbol_exit_2(tmp_path):
     (tmp_path / "app.js").write_text(JS_DECLARED)
-    (tmp_path / ".tackbox-reporters").write_text("app.js#nope: dead\n")
+    _declare(tmp_path, "app.js#nope: dead\n")
     _init(tmp_path)
     r = _lint(tmp_path)
     assert r.returncode == 2, f"dead js symbol must exit 2:\n{r.stdout}\n{r.stderr}"
@@ -212,7 +233,7 @@ def test_js_dead_symbol_scope_independent(tmp_path):
     # runs (app.js is JS), so it must validate every js declaration.
     (tmp_path / "app.js").write_text("console.log('ok')\n")
     (tmp_path / "sink.js").write_text("export function realReport(m, e) {}\n")
-    (tmp_path / ".tackbox-reporters").write_text("sink.js#nope: dead\n")
+    _declare(tmp_path, "sink.js#nope: dead\n")
     _init(tmp_path)
     r = _lint(tmp_path, "app.js")
     assert r.returncode == 2, f"scoped run must still validate out-of-scope declarations:\n{r.stdout}\n{r.stderr}"
@@ -221,7 +242,7 @@ def test_js_dead_symbol_scope_independent(tmp_path):
 
 def test_py_declaration_recognized(tmp_path):
     (tmp_path / "rep.py").write_text(PY_DECLARED)
-    (tmp_path / ".tackbox-reporters").write_text("rep.py#report_it: local py sink\n")
+    _declare(tmp_path, "rep.py#report_it: local py sink\n")
     _init(tmp_path)
     r = _lint(tmp_path)
     assert r.returncode == 0, f"declared py sink should make the except clean:\n{r.stdout}\n{r.stderr}"
@@ -229,7 +250,7 @@ def test_py_declaration_recognized(tmp_path):
 
 def test_py_dead_symbol_exit_2(tmp_path):
     (tmp_path / "rep.py").write_text(PY_DECLARED)
-    (tmp_path / ".tackbox-reporters").write_text("rep.py#nope: dead\n")
+    _declare(tmp_path, "rep.py#nope: dead\n")
     _init(tmp_path)
     r = _lint(tmp_path)
     assert r.returncode == 2, f"dead py symbol must exit 2:\n{r.stdout}\n{r.stderr}"

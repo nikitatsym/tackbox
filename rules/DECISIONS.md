@@ -107,7 +107,7 @@ recognition.
 Decision: the runtime capture helpers' public capture APIs are
 recognized as tier-1 reporters: a consumer's catch that hands the
 caught error to one is credited with no `no-report` marker and no
-`.tackbox-reporters` entry - adopting the blessed path costs zero
+`.tackbox/reporters` entry - adopting the blessed path costs zero
 lint ceremony. Tier-1 recognition covers direct reporting verbs. The
 capture set is error / warn / quiet / panic in each language's naming;
 quiet skips only the user lane, so it is a capture and carries the
@@ -289,7 +289,7 @@ applies to tier-2 only.
 Facades: a consumer module that re-exports helper verbs
 (`from tackbox_report import report_error` in app/reporting.py)
 breaks file-local tier-1 origin for its importers; the fix is
-declaring the facade in `.tackbox-reporters`. Tier-2 validation
+declaring the facade in `.tackbox/reporters`. Tier-2 validation
 therefore loosens from "top-level def" to "top-level def or a
 top-level import binding of the declared name". Plain assignments
 stay invalid.
@@ -373,7 +373,7 @@ plus the engine's own path filter, e.g. Go's testdata/ convention),
 plus the Markdown lang marker in lintable Markdown. A marker in a
 file no engine lints is dead text: nothing reads it, so it needs no
 approval, and an entry for it would approve a no-op. The
-`.tackbox-reporters` gate is exempt from the predicate and stays
+`.tackbox/reporters` gate is exempt from the predicate and stays
 unconditional - the file itself is unlintable by design.
 
 The predicate is evaluated against the current tree. Planting a
@@ -405,11 +405,11 @@ gates are unchanged.
 
 Decision: `tackbox escapes` prints the repo's bypass surface as JSON
 on stdout - the harness-agnostic interface. Entries: suppression
-markers with their reasons, `.tackbox-reporters` declarations, and
+markers with their reasons, `.tackbox/reporters` declarations, and
 notify / quiet call sites, each with file, line, and a context window
 of surrounding source (default 3 lines, `--context N`). The scan
 covers lintable files (the D012 predicate) plus the root
-`.tackbox-reporters`; verb-site detection is textual per language -
+`.tackbox/reporters`; verb-site detection is textual per language -
 an inventory may over-report, it is observability, not a lint.
 `--since <rev>` prints only entries new against that revision, by
 content identity (kind, file, text): over-reports on moved code,
