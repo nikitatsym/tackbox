@@ -24,6 +24,7 @@ from .engines import (
     erclint_base_import_path,
     erclint_compile_broken_pkgs,
     is_hermetic,
+    iter_json_objects,
     lintable,
     located_findings,
     parse_erclint_findings,
@@ -31,10 +32,12 @@ from .engines import (
     resolve_hermetic_versions,
     run_engines,
 )
-from .gitfiles import collect_source_set
+from .gitfiles import AttributeResolutionError, collect_snapshot
 from .source_set import (
     PathspecMagicError,
+    Snapshot,
     group_go_packages_by_module,
+    narrow_files,
     parse_git_diff_names,
     parse_ls_files_untracked,
 )
@@ -78,6 +81,7 @@ def _dispatch(argv: list[str] | None) -> int:
             reporters.ReportersError,
             approvals.ApprovalsError,
             scopes.ScopesError,
+            AttributeResolutionError,
             EnginesStoreError,
         ) as e:
             # no-report: CLI boundary: surface as message + exit 2; a traceback here is the bug
@@ -91,6 +95,7 @@ def _dispatch(argv: list[str] | None) -> int:
             reporters.ReportersError,
             approvals.ApprovalsError,
             scopes.ScopesError,
+            AttributeResolutionError,
             subprocess.CalledProcessError,
         ) as e:
             # no-report: standalone approvals infra failure -> exit 1 (as everywhere)
@@ -109,8 +114,13 @@ def _dispatch(argv: list[str] | None) -> int:
             err=sys.stderr,
         )
     if args.command == "doctor":
-        _print_banner(_tackbox_root())
-        return doctor.run(sys.stdout)
+        try:
+            _print_banner(_tackbox_root())
+            return doctor.run(sys.stdout)
+        except (AttributeResolutionError, subprocess.CalledProcessError) as e:
+            # no-report: CLI boundary: a resolution failure is loud (exit 1), never a traceback
+            print(f"tackbox: {e}", file=sys.stderr)
+            return 1
     if args.command == "hook":
         return _run_hook()
     print(f"tackbox: unknown command {args.command!r}", file=sys.stderr)
@@ -188,26 +198,37 @@ def _lint_results(
     scope: str,
     no_cache: bool,
     changed_scope: set[str] | None,
+    snapshot: Snapshot | None = None,
     machine: bool = False,
 ):
     """Run the lint pipeline for `scope`; return (results, warnings, orphans).
 
-    results is None when the scope matched no files (nothing to lint), []
-    when files matched but no engine applies, else the EngineResult list.
-    Prints nothing - callers own the banner / warning / findings output.
-    Infra failures (PathspecMagicError, GoListError, ReportersError, git)
-    propagate to the caller.
+    results is None when the scope matched no candidates (nothing to lint), []
+    when candidates matched but no engine applies (an all-excluded scope lands
+    here too), else the EngineResult list. `snapshot` is the whole-tree
+    inventory; when omitted one is resolved. Prints nothing - callers own the
+    banner / warning / findings output. Infra failures (PathspecMagicError,
+    GoListError, ReportersError, AttributeResolutionError, git) propagate.
     """
+    if snapshot is None:
+        snapshot = collect_snapshot(repo_root)
     reporter_pairs = reporters.pairs(reporters.load(repo_root))
     policy = cache.policy_digest(reporter_pairs)
-    files, warnings = collect_source_set(repo_root, scope, changed_scope)
-    if not files:
-        return None, warnings, []
+
+    # Narrow the whole-tree snapshot to this scope. Exit-2 ("matched no files")
+    # is decided on the pre-exclusion candidate set, so a scope whose candidates
+    # exist but are all attribute-excluded is a success (empty dispatch), not an
+    # error; excluded files then leave the per-file engines' argv here.
+    scope_candidates = narrow_files(snapshot.candidate_files(), scope, changed_scope)
+    if not scope_candidates:
+        return None, snapshot.warnings, []
+    excluded = snapshot.excluded_files
+    files = [f for f in scope_candidates if f not in excluded]
 
     plan = dispatch(files, active_engines())
     plan, go_orphans = _drop_go_orphans(plan, repo_root)
     if not plan:
-        return [], warnings, go_orphans
+        return [], snapshot.warnings, go_orphans
 
     # Materialize the engine store once before the parallel run so worker
     # threads find it in place (dev mode has no store).
@@ -228,9 +249,19 @@ def _lint_results(
 
         filtered_plan, pending = _apply_cache(plan, repo_root, engines_hash, cache_root, policy)
         results = run_engines(filtered_plan, repo_root, tackbox_root, reporter_pairs, machine)
+        # Cache attribution reads RAW erclint truth, BEFORE the exclusion filter:
+        # a mixed package whose only findings sit in excluded files is not marked
+        # clean, so removing the attribute (content untouched) brings them back.
         _mark_clean_units(results, pending, engines_hash, cache_root)
         cache.gc_soft_cap(engines_hash, cache.SOFT_CAP, cache_root)
-    return results, warnings, go_orphans
+
+    # Pinned order: raw erclint result -> cache attribution (above) -> exclusion
+    # filter -> console/codequality verdict. erclint compiles whole Go packages,
+    # so a dispatched mixed package's excluded file is analyzed; its findings drop
+    # here. A compile/type error is not filtered (the package cannot build without
+    # the file) - it stays loud.
+    results = _filter_excluded_findings(results, repo_root, excluded)
+    return results, snapshot.warnings, go_orphans
 
 
 def _run_lint(
@@ -247,8 +278,13 @@ def _run_lint(
     if changed or since is not None:
         changed_scope = _compute_changed_scope(repo_root, since)
 
+    # One inventory snapshot per command: lint (scope-narrowed) and the
+    # whole-tree approvals predicate share it, so a scoped run performs ONE
+    # attribute resolution, never a second check-attr.
+    snapshot = collect_snapshot(repo_root)
+
     results, warnings, go_orphans = _lint_results(
-        repo_root, tackbox_root, scope, no_cache, changed_scope
+        repo_root, tackbox_root, scope, no_cache, changed_scope, snapshot=snapshot
     )
     for w in warnings:
         print(f"tackbox: warning: {w.reason}: {w.path}", file=sys.stderr)
@@ -284,10 +320,21 @@ def _run_lint(
         sys.stdout.flush()
         exit_code = _aggregate_exit(results)
 
+    # Scope-local, stateless: count excluded files the current scope touches, so
+    # routine scoped runs are not wallpapered with a global constant. Absent when
+    # the scope count is zero; the full inventory lives in `tackbox escapes`.
+    excluded_in_scope = _excluded_in_scope(snapshot, scope, changed_scope)
+    if excluded_in_scope:
+        sys.stdout.write(
+            f"excluded by attributes: {len(excluded_in_scope)} files in scope "
+            "(tackbox escapes lists all)\n"
+        )
+        sys.stdout.flush()
+
     # The approvals predicate always covers the whole tree, regardless of lint
     # scope - a scope-following check would be a bypass for scoped CI. Its
     # inconsistencies count as findings (nonzero exit), same wall as the engines.
-    report = _approvals_report(repo_root)
+    report = _approvals_report(repo_root, snapshot=snapshot)
     for line in approvals.render_blocks(report):
         sys.stdout.write(line + "\n")
     sys.stdout.flush()
@@ -300,7 +347,7 @@ def _run_lint(
     if codequality_path is not None:
         findings = (
             _codequality_findings(
-                repo_root, tackbox_root, scope, no_cache, changed_scope
+                repo_root, tackbox_root, scope, no_cache, changed_scope, snapshot
             )
             if results
             else []
@@ -312,14 +359,27 @@ def _run_lint(
     return exit_code
 
 
-def _approvals_report(repo_root: Path) -> approvals.Report:
+def _approvals_report(repo_root: Path, snapshot: Snapshot | None = None) -> approvals.Report:
     """The whole-tree consistency report (D014/D015): resolve every marker to an
-    address, load the manifest, and pair them. Always whole-tree."""
-    files, _warnings = collect_source_set(repo_root)
+    address, load the manifest, and pair them. Always whole-tree. Runs over the
+    snapshot's included files, so an attribute-excluded file's markers leave the
+    inventory (D012 cascade) and a manifest entry addressing it orphans."""
+    if snapshot is None:
+        snapshot = collect_snapshot(repo_root)
     engines = active_engines()
     return approvals.check(
-        repo_root, files, _MARKER_RE, lambda rel: lintable(rel, engines)
+        repo_root, snapshot.included, _MARKER_RE, lambda rel: lintable(rel, engines)
     )
+
+
+def _excluded_in_scope(
+    snapshot: Snapshot, scope: str, changed_scope: set[str] | None
+) -> list[str]:
+    """Unique attribute-excluded files the current scope's candidates touch. The
+    same narrow the lint uses, so the summary count and the excluded dispatch
+    agree on the scope."""
+    scope_candidates = narrow_files(snapshot.candidate_files(), scope, changed_scope)
+    return sorted(set(scope_candidates) & snapshot.excluded_files)
 
 
 def _approvals_findings(report: approvals.Report):
@@ -370,9 +430,11 @@ def _codequality_findings(
     scope: str,
     no_cache: bool,
     changed_scope: set[str] | None,
+    snapshot: Snapshot | None = None,
 ) -> list:
     results, _warnings, _orphans = _lint_results(
-        repo_root, tackbox_root, scope, no_cache, changed_scope, machine=True
+        repo_root, tackbox_root, scope, no_cache, changed_scope,
+        snapshot=snapshot, machine=True,
     )
     if not results:
         return []
@@ -524,6 +586,75 @@ def _clean_args(r: EngineResult, info: dict) -> list[str]:
     if r.exit_code == 0:
         return args
     return []
+
+
+# -- attribute-exclusion post-filter (erclint only) -----------------------
+
+
+def _filter_excluded_findings(
+    results: list[EngineResult], repo_root: Path, excluded: frozenset[str]
+) -> list[EngineResult]:
+    """Drop findings located in attribute-excluded files. Only erclint needs it:
+    it is the sole package-mode engine, so it compiles a dispatched mixed
+    package's excluded neighbor; every per-file engine already had the excluded
+    files removed from its argv at dispatch. A compile/type error (payload
+    `{"error": ...}`) is not a located finding and stays - an excluded file that
+    breaks its dispatched package still fails loudly."""
+    if not excluded:
+        return results
+    return [
+        _filter_erclint_result(r, repo_root, excluded) if r.engine_id == "erclint" else r
+        for r in results
+    ]
+
+
+def _filter_erclint_result(
+    r: EngineResult, repo_root: Path, excluded: frozenset[str]
+) -> EngineResult:
+    """erclint's -json tree with excluded-file findings removed. Byte-identical
+    when nothing is dropped (the common no-exclusion path never reparses)."""
+    # An excluded file's repo-relative path is a substring of its absolute erclint
+    # posn, so if none appears there is nothing to drop: skip the reparse (and the
+    # pathological non-JSON crash dump, which the verdict path surfaces loudly).
+    if not any(ef in r.stdout for ef in excluded):
+        return r
+    changed = False
+    kept_objs: list[dict] = []
+    for obj in iter_json_objects(r.stdout):
+        kept_pkgs: dict = {}
+        for pkg, analyzers in obj.items():
+            kept_analyzers: dict = {}
+            for analyzer, payload in analyzers.items():
+                if not isinstance(payload, list):
+                    kept_analyzers[analyzer] = payload  # {"error": ...} stays loud
+                    continue
+                kept = [
+                    it for it in payload if not _posn_excluded(it, repo_root, excluded)
+                ]
+                if len(kept) != len(payload):
+                    changed = True
+                if kept:
+                    kept_analyzers[analyzer] = kept
+            if kept_analyzers:
+                kept_pkgs[pkg] = kept_analyzers
+        if kept_pkgs:
+            kept_objs.append(kept_pkgs)
+    if not changed:
+        return r
+    stdout = "".join(json.dumps(o, indent="\t") + "\n" for o in kept_objs)
+    return EngineResult(r.engine_id, r.exit_code, stdout, r.stderr)
+
+
+def _posn_excluded(item: dict, repo_root: Path, excluded: frozenset[str]) -> bool:
+    posn = item.get("posn") or ""
+    # erclint posn is `abs/path:line:col`; rsplit keeps a Windows drive colon.
+    path = posn.rsplit(":", 2)[0]
+    if not path:
+        return False
+    # Same lexical relpath as erclint_located_findings; erclint posns sit under
+    # the repo root, so no cross-drive ValueError arises in practice.
+    rel = os.path.relpath(path, repo_root).replace(os.sep, "/")
+    return rel in excluded
 
 
 _JSON_FINDING_ENGINES = frozenset({"erclint", "javalint"})
@@ -709,9 +840,11 @@ def _hook_post(event: dict) -> int:
     if root is None:
         return 0
     try:
+        # One snapshot for both the whole-tree wall and the diff-scoped lint arm.
+        snapshot = collect_snapshot(root)
         # [1:] drops the lint-section header: the hook payload is the canonical
         # block texts alone (render_blocks returns [] when clean).
-        blocks = approvals.render_blocks(_approvals_report(root))[1:]
+        blocks = approvals.render_blocks(_approvals_report(root, snapshot=snapshot))[1:]
         target, tool_input = _hook_target(event)
         if target is None:
             # Bash / non-edit tool: the consistency wall is its only arm
@@ -728,7 +861,8 @@ def _hook_post(event: dict) -> int:
             # no-report: edited file resolves outside the repo - nothing in scope to lint
             return 0
         results, _warnings, _orphans = _lint_results(
-            root, _tackbox_root(), rel, no_cache=False, changed_scope=None, machine=True
+            root, _tackbox_root(), rel, no_cache=False, changed_scope=None,
+            snapshot=snapshot, machine=True,
         )
         if results is None:
             return 0  # scope matched no files
@@ -747,6 +881,7 @@ def _hook_post(event: dict) -> int:
         reporters.ReportersError,
         approvals.ApprovalsError,
         scopes.ScopesError,
+        AttributeResolutionError,
         EnginesStoreError,
         subprocess.CalledProcessError,
         ValueError,  # a non-compile erclint analyzer-load error

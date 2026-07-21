@@ -30,6 +30,13 @@ SYMLINK_MODE = 0o120000
 _GLOB_CHARS = frozenset("*?[")
 _PATHSPEC_MAGIC_PREFIXES = (":",)
 
+# The three git attributes that exclude a file from the whole lint, in the
+# deterministic (lexicographic) order used for every excluded-pair listing and
+# the check-attr query. Extending this set is a plan-level change (R4).
+EXCLUSION_ATTRIBUTES = ("gitlab-generated", "linguist-generated", "linguist-vendored")
+# `set` and an explicit `=true` exclude; `false`, `unset`, `unspecified` do not.
+_ATTR_SET_VALUES = frozenset({"set", "true"})
+
 
 class PathspecMagicError(ValueError):
     """Raised when scope is a glob, pathspec magic, or otherwise unsafe."""
@@ -75,6 +82,41 @@ def parse_ls_files_untracked(raw: bytes) -> list[str]:
     return [p.decode("utf-8") for p in raw.split(b"\0") if p]
 
 
+def parse_check_attr(
+    raw: bytes, attributes: tuple[str, ...] = EXCLUSION_ATTRIBUTES
+) -> dict[str, list[str]]:
+    """Parse `git check-attr -z --stdin <attr>...` into {path: [set attrs]}.
+
+    The `-z` stream is flat NUL-terminated `path\\0attr\\0value\\0` triples. A
+    path is listed only when a queried attribute resolved to `set` or `true`;
+    `false`, `unset`, `unspecified` leave it out. Set attributes keep the query
+    order (deterministic). A stream that is not a whole number of triples, or a
+    triple naming an attribute we did not query, is malformed - a git bug, raised
+    as ValueError (gitfiles turns it into the loud resolution-error type), never
+    hidden.
+    """
+    order = {attr: i for i, attr in enumerate(attributes)}
+    fields = raw.split(b"\0")
+    if fields and fields[-1] == b"":
+        fields.pop()  # trailing NUL terminates the last value
+    if len(fields) % 3 != 0:
+        raise ValueError(
+            f"check-attr output is not whole triples: {len(fields)} fields"
+        )
+    result: dict[str, list[str]] = {}
+    for i in range(0, len(fields), 3):
+        path = fields[i].decode("utf-8")
+        attr = fields[i + 1].decode("utf-8")
+        value = fields[i + 2].decode("utf-8")
+        if attr not in order:
+            raise ValueError(f"check-attr returned unqueried attribute {attr!r}")
+        if value in _ATTR_SET_VALUES:
+            result.setdefault(path, []).append(attr)
+    for attrs in result.values():
+        attrs.sort(key=lambda a: order[a])
+    return result
+
+
 def parse_git_diff_names(raw: bytes) -> list[str]:
     """Parse `git diff --name-only -z` output (NUL-separated paths)."""
     return [p.decode("utf-8") for p in raw.split(b"\0") if p]
@@ -114,6 +156,63 @@ def narrow_by_path(paths: Iterable[str], scope: str) -> list[str]:
     exact = scope.rstrip("/")
     dir_prefix = exact + "/"
     return [p for p in paths if p == exact or p.startswith(dir_prefix)]
+
+
+def narrow_files(
+    files: Iterable[str], scope: str, changed_scope: set[str] | None = None
+) -> list[str]:
+    """Narrow an already-pruned file list by `changed_scope` then `scope`.
+
+    The snapshot is resolved once whole-tree; a scoped command narrows that list
+    in Python rather than re-resolving. Same order as filter_source_set
+    (changed_scope intersect, then directory-boundary narrow) and the same
+    validate_path refusal, so the two agree on every scope.
+    """
+    validate_path(scope)
+    pool = set(files)
+    if changed_scope is not None:
+        pool &= changed_scope
+    return narrow_by_path(sorted(pool), scope)
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    """One tree inventory: included files (post-exclusion), the excluded
+    `(path, attribute)` pairs, and the source warnings, all from one resolution.
+    Whole-tree; scoped commands narrow `included` / `candidate_files()` in
+    Python (narrow_files) with no second attribute resolution."""
+
+    included: list[str]
+    excluded_pairs: list[tuple[str, str]]
+    warnings: list[SourceWarning]
+
+    @property
+    def excluded_files(self) -> frozenset[str]:
+        return frozenset(path for path, _attr in self.excluded_pairs)
+
+    def candidate_files(self) -> list[str]:
+        """The pre-exclusion candidate set (included plus excluded), sorted. Used
+        for scope semantics: a scope matching only excluded files is a success,
+        so the exit-2 'matched nothing' test runs against this set."""
+        return sorted(set(self.included) | self.excluded_files)
+
+
+def build_snapshot(
+    candidate_files: Iterable[str],
+    excluded_map: dict[str, list[str]],
+    warnings: list[SourceWarning],
+) -> Snapshot:
+    """Split the pruned candidate source set into a Snapshot. `excluded_map` is
+    {path: [set attrs]} from the resolution seam over those same candidates;
+    included files are sorted, pairs sorted by (path, attribute)."""
+    excluded_pairs = sorted(
+        (path, attr) for path, attrs in excluded_map.items() for attr in attrs
+    )
+    excluded = {path for path, _attr in excluded_pairs}
+    included = sorted(f for f in candidate_files if f not in excluded)
+    return Snapshot(
+        included=included, excluded_pairs=excluded_pairs, warnings=list(warnings)
+    )
 
 
 def filter_source_set(

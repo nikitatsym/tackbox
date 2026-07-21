@@ -79,3 +79,18 @@ def tackbox_env(**overrides: str) -> dict[str, str]:
     env["PYTHONPATH"] = str(_PY_DIR)
     env.update(overrides)
     return env
+
+
+def count_calls(monkeypatch, module, name: str) -> dict:
+    """Wrap `module.name` to count its invocations; returns a {'n': int} counter.
+    Shared so the seam-spy blocks across the attribute tests do not clone each
+    other (jscpd)."""
+    counter = {"n": 0}
+    real = getattr(module, name)
+
+    def wrapper(*args, **kwargs):
+        counter["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(module, name, wrapper)
+    return counter
