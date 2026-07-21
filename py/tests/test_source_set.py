@@ -9,15 +9,20 @@ from __future__ import annotations
 import pytest
 
 from tackbox.source_set import (
+    EXCLUSION_ATTRIBUTES,
     GITLINK_MODE,
     SYMLINK_MODE,
     IndexEntry,
     PathspecMagicError,
+    Snapshot,
     SourceWarning,
+    build_snapshot,
     files_to_go_packages,
     filter_source_set,
     group_go_packages_by_module,
     narrow_by_path,
+    narrow_files,
+    parse_check_attr,
     parse_git_diff_names,
     parse_ls_files_stage,
     parse_ls_files_untracked,
@@ -542,3 +547,145 @@ def test_group_no_module_anywhere_all_orphans():
     )
     assert groups == {}
     assert orphans == ["a", "b/c"]
+
+
+# -- parse_check_attr (pure) ----------------------------------------------
+# Stream shape verified against git 2.50.1: flat NUL-terminated triples
+# `path\0attr\0value\0`, path-major with attributes in query order.
+
+
+def _triples(*records: tuple[str, str, str]) -> bytes:
+    return b"".join(
+        f"{p}\0{a}\0{v}\0".encode("utf-8") for p, a, v in records
+    )
+
+
+def test_check_attr_empty_is_empty():
+    assert parse_check_attr(b"") == {}
+
+
+def test_check_attr_set_value_excludes():
+    raw = _triples(("gen/api.pb.go", "linguist-generated", "set"))
+    assert parse_check_attr(raw) == {"gen/api.pb.go": ["linguist-generated"]}
+
+
+def test_check_attr_true_value_excludes():
+    raw = _triples(("special.go", "linguist-generated", "true"))
+    assert parse_check_attr(raw) == {"special.go": ["linguist-generated"]}
+
+
+def test_check_attr_false_unset_unspecified_kept_in():
+    raw = _triples(
+        ("keep.go", "linguist-generated", "false"),
+        ("unset.go", "linguist-generated", "unset"),
+        ("plain.go", "linguist-generated", "unspecified"),
+    )
+    assert parse_check_attr(raw) == {}
+
+
+def test_check_attr_multiple_set_attrs_deterministic_order():
+    # Records may arrive unsorted; the returned attr list is the query order,
+    # which is lexicographic (EXCLUSION_ATTRIBUTES).
+    raw = _triples(
+        ("both.go", "linguist-generated", "set"),
+        ("both.go", "gitlab-generated", "set"),
+        ("both.go", "linguist-vendored", "unspecified"),
+    )
+    assert parse_check_attr(raw) == {
+        "both.go": ["gitlab-generated", "linguist-generated"]
+    }
+
+
+def test_check_attr_vendored_and_gitlab_spellings():
+    raw = _triples(
+        ("v/x.go", "linguist-vendored", "set"),
+        ("g/y.go", "gitlab-generated", "set"),
+    )
+    assert parse_check_attr(raw) == {
+        "v/x.go": ["linguist-vendored"],
+        "g/y.go": ["gitlab-generated"],
+    }
+
+
+def test_check_attr_malformed_dangling_field_rejected():
+    # Two fields where a triple is expected - a git bug, not silently dropped.
+    with pytest.raises(ValueError):
+        parse_check_attr(b"path\0linguist-generated\0")
+
+
+def test_check_attr_unqueried_attribute_rejected():
+    raw = _triples(("x.go", "linguist-documentation", "set"))
+    with pytest.raises(ValueError):
+        parse_check_attr(raw)
+
+
+def test_check_attr_query_order_is_lexicographic():
+    assert list(EXCLUSION_ATTRIBUTES) == sorted(EXCLUSION_ATTRIBUTES)
+
+
+# -- narrow_files ----------------------------------------------------------
+
+
+def test_narrow_files_dot_returns_all_sorted():
+    assert narrow_files(["b.go", "a.go"], ".") == ["a.go", "b.go"]
+
+
+def test_narrow_files_subtree_boundary():
+    files = ["src/a.go", "src/nested/c.go", "srcfoo/d.go"]
+    assert narrow_files(files, "src") == ["src/a.go", "src/nested/c.go"]
+
+
+def test_narrow_files_changed_scope_intersects_then_narrows():
+    files = ["src/a.go", "src/b.go", "other/c.go"]
+    assert narrow_files(files, "src", changed_scope={"src/a.go", "other/c.go"}) == [
+        "src/a.go"
+    ]
+
+
+def test_narrow_files_rejects_pathspec_magic():
+    with pytest.raises(PathspecMagicError):
+        narrow_files(["a.go"], "*.go")
+
+
+# -- build_snapshot --------------------------------------------------------
+
+
+def test_build_snapshot_splits_included_and_excluded_pairs():
+    snap = build_snapshot(
+        ["a.go", "gen/x.pb.go", "b.py"],
+        {"gen/x.pb.go": ["linguist-generated"]},
+        [],
+    )
+    assert snap.included == ["a.go", "b.py"]
+    assert snap.excluded_pairs == [("gen/x.pb.go", "linguist-generated")]
+    assert snap.excluded_files == frozenset({"gen/x.pb.go"})
+
+
+def test_build_snapshot_multi_attr_one_pair_per_attr_sorted():
+    snap = build_snapshot(
+        ["both.go"],
+        {"both.go": ["gitlab-generated", "linguist-generated"]},
+        [],
+    )
+    assert snap.excluded_pairs == [
+        ("both.go", "gitlab-generated"),
+        ("both.go", "linguist-generated"),
+    ]
+    # A two-attribute file is one excluded file.
+    assert snap.excluded_files == frozenset({"both.go"})
+
+
+def test_build_snapshot_candidate_files_is_pre_exclusion_union():
+    snap = build_snapshot(
+        ["a.go", "gen/x.pb.go"],
+        {"gen/x.pb.go": ["linguist-generated"]},
+        [],
+    )
+    assert snap.candidate_files() == ["a.go", "gen/x.pb.go"]
+
+
+def test_build_snapshot_carries_warnings():
+    warn = [SourceWarning(path="gone.go", reason="tracked file missing from worktree")]
+    snap = build_snapshot(["a.go"], {}, warn)
+    assert snap.warnings == warn
+    assert isinstance(snap, Snapshot)

@@ -8,9 +8,11 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+from conftest import count_calls
 
 from tackbox import doctor
 from tackbox import engines as engines_mod
+from tackbox import gitfiles
 from tackbox.cache import sha256_tree
 
 
@@ -168,8 +170,9 @@ def test_go_toolchain_ok_when_source_set_has_no_go(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _commit_one_file(tmp_path, "hello.py", "print('hi')\n")
 
+    snap = doctor._resolve_source_snapshot()
     with mock.patch("shutil.which", side_effect=lambda name: {"git": "/usr/bin/git", "go": None}.get(name)):
-        result = doctor._check_go_toolchain()
+        result = doctor._check_go_toolchain(snap)
     assert result.ok is True
     assert "not needed" in result.detail
 
@@ -185,8 +188,9 @@ def _java_repo(tmp_path: Path) -> None:
 def test_java_toolchain_ok_when_source_set_has_no_java(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _commit_one_file(tmp_path, "hello.py", "print('hi')\n")
+    snap = doctor._resolve_source_snapshot()
     with mock.patch("shutil.which", side_effect=lambda n: {"git": "/usr/bin/git", "java": None}.get(n)):
-        result = doctor._check_java_toolchain()
+        result = doctor._check_java_toolchain(snap)
     assert result.ok is True
     assert "not needed" in result.detail
 
@@ -196,8 +200,9 @@ def test_java_toolchain_fails_when_needed_but_absent(tmp_path, monkeypatch):
     # never a silent pass that lets javalint be skipped.
     monkeypatch.chdir(tmp_path)
     _java_repo(tmp_path)
+    snap = doctor._resolve_source_snapshot()
     with mock.patch("shutil.which", side_effect=lambda n: {"git": "/usr/bin/git", "java": None}.get(n)):
-        result = doctor._check_java_toolchain()
+        result = doctor._check_java_toolchain(snap)
     assert result.ok is False
     assert "not on PATH" in result.detail
 
@@ -207,11 +212,61 @@ def test_java_toolchain_fails_on_old_version(tmp_path, monkeypatch):
     # fail here rather than as an opaque UnsupportedClassVersionError mid-lint.
     monkeypatch.chdir(tmp_path)
     _java_repo(tmp_path)
+    snap = doctor._resolve_source_snapshot()
     monkeypatch.setattr(doctor, "_java_major_version", lambda java: 11)
     with mock.patch("shutil.which", side_effect=lambda n: {"git": "/usr/bin/git", "java": "/usr/bin/java"}.get(n)):
-        result = doctor._check_java_toolchain()
+        result = doctor._check_java_toolchain(snap)
     assert result.ok is False
     assert "17" in result.detail and "11" in result.detail
+
+
+# -- shared snapshot: one resolution, and loud resolution failure ---------
+
+
+def test_go_toolchain_excludes_attribute_marked_go(tmp_path, monkeypatch):
+    # A tree whose only .go file is attribute-excluded needs no go toolchain: the
+    # snapshot's included set drops it.
+    monkeypatch.chdir(tmp_path)
+    # `.gitattributes` is added by _commit_one_file's `git add -A`.
+    (tmp_path / ".gitattributes").write_text("gen.go linguist-generated\n")
+    _commit_one_file(tmp_path, "gen.go", "package p\n")
+    snap = doctor._resolve_source_snapshot()
+    with mock.patch("shutil.which", side_effect=lambda n: {"git": "/usr/bin/git", "go": None}.get(n)):
+        result = doctor._check_go_toolchain(snap)
+    assert result.ok is True
+    assert "not needed" in result.detail
+
+
+def test_go_and_java_sections_share_one_resolution(tmp_path, monkeypatch):
+    # Both toolchain sections read one snapshot: attributes resolve exactly once
+    # per doctor run (seam spy), not once per section.
+    _needs_git()
+    monkeypatch.chdir(tmp_path)
+    _commit_one_file(tmp_path, "hello.py", "print('hi')\n")
+    calls = count_calls(monkeypatch, gitfiles, "resolve_attributes")
+    out = io.StringIO()
+    with mock.patch.object(engines_mod, "is_hermetic", return_value=False):
+        doctor.run(out)
+    assert calls["n"] == 1, f"expected one attribute resolution, got {calls['n']}"
+
+
+def test_resolution_failure_surfaces_loudly_not_no_such_sources(tmp_path, monkeypatch):
+    # Adversarial: a genuine check-attr failure must NOT degrade to "no such
+    # sources" - it travels as AttributeResolutionError, loud.
+    _needs_git()
+    monkeypatch.chdir(tmp_path)
+    _commit_one_file(tmp_path, "hello.py", "print('hi')\n")
+
+    def boom(*a, **k):
+        raise gitfiles.AttributeResolutionError("check-attr exploded")
+
+    monkeypatch.setattr(gitfiles, "resolve_attributes", boom)
+    out = io.StringIO()
+    with pytest.raises(gitfiles.AttributeResolutionError):
+        with mock.patch.object(engines_mod, "is_hermetic", return_value=False):
+            doctor.run(out)
+    assert "no such sources" not in out.getvalue()
+    assert "not needed" not in out.getvalue()
 
 
 @pytest.mark.parametrize(

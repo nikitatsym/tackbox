@@ -19,8 +19,9 @@ from typing import TextIO
 from . import engines as engines_mod
 from . import scopes
 from .cache import sha256_tree
-from .gitfiles import collect_source_set
+from .gitfiles import collect_snapshot
 from .hashing import sha256_file
+from .source_set import Snapshot
 
 
 @dataclass(frozen=True)
@@ -41,16 +42,43 @@ def run(out: TextIO) -> int:
 
 
 def _run_all_checks() -> list[CheckResult]:
+    # One shared source snapshot feeds both toolchain sections: attributes
+    # resolve once per doctor run, not once per section.
+    snapshot = _resolve_source_snapshot()
     return [
         _check_platform(),
         _check_engines_store(),
         _check_payload_checksums(),
         _check_binaries_start(),
         _check_git_in_path(),
-        _check_go_toolchain(),
-        _check_java_toolchain(),
+        _check_go_toolchain(snapshot),
+        _check_java_toolchain(snapshot),
         _check_ast_grep(),
     ]
+
+
+def _resolve_source_snapshot() -> Snapshot | None:
+    """The one source inventory the Go and Java sections share. git absent or
+    not-a-repo degrades to None (the toolchain probes then read 'not needed'); a
+    genuine attribute-resolution failure is NOT degraded here - it travels as
+    AttributeResolutionError, loud, never swallowed into 'no such sources'. git
+    presence is guarded up front (not via a swallowing try/except) so this
+    degradation carries no suppression marker."""
+    if shutil.which("git") is None:
+        return None
+    completed = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
+    )
+    if completed.returncode != 0:
+        return None
+    return collect_snapshot(Path(completed.stdout.strip()))
+
+
+def _snapshot_has_ext(snapshot: Snapshot | None, ext: str) -> bool:
+    """True iff the shared snapshot's INCLUDED files carry `ext`. An
+    attribute-excluded file is not a lint target, so a tree whose only sources of
+    a language are excluded needs no toolchain for it."""
+    return snapshot is not None and any(f.endswith(ext) for f in snapshot.included)
 
 
 def _check_platform() -> CheckResult:
@@ -221,8 +249,8 @@ def _check_ast_grep() -> CheckResult:
     return CheckResult("ast-grep", True, f"{found} ({version})")
 
 
-def _check_go_toolchain() -> CheckResult:
-    needed = _source_set_has_ext(".go")
+def _check_go_toolchain(snapshot: Snapshot | None) -> CheckResult:
+    needed = _snapshot_has_ext(snapshot, ".go")
     found = shutil.which("go")
     if not needed:
         return CheckResult(
@@ -240,11 +268,11 @@ def _check_go_toolchain() -> CheckResult:
 _JAVA_MIN_MAJOR = 17
 
 
-def _check_java_toolchain() -> CheckResult:
+def _check_java_toolchain(snapshot: Snapshot | None) -> CheckResult:
     """javalint runs on the system `java` (like erclint on `go`); the jar targets
     Java 17. Gate presence AND version so a too-old JVM fails loudly here rather
     than as an opaque class-version error mid-lint."""
-    needed = _source_set_has_ext(".java")
+    needed = _snapshot_has_ext(snapshot, ".java")
     found = shutil.which("java")
     if not needed:
         return CheckResult(
@@ -289,22 +317,3 @@ def _java_major_version(java: str) -> int | None:
     if major == 1 and m.group(2):
         return int(m.group(2))
     return major
-
-
-def _source_set_has_ext(ext: str) -> bool:
-    try:
-        repo_root = Path(
-            subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                capture_output=True, check=True, text=True,
-            ).stdout.strip()
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        # no-report: git absent or failed - treat as no such sources; the toolchain probe surfaces it
-        return False
-    try:
-        files, _ = collect_source_set(repo_root)
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        # no-report: git ls-files failed - doctor degrades to "no such sources", not a run failure
-        return False
-    return any(f.endswith(ext) for f in files)

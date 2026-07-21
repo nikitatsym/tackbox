@@ -23,6 +23,7 @@ py/tackbox/cli.py#_clean_args: no-report: crashed run never produced json -> att
 py/tackbox/cli.py#_clean_args: no-report: nonzero = reporter-resolution crash, no json -> attribute nothing
 py/tackbox/cli.py#_clean_args: no-report: unparseable erclint json -> attribute nothing, never a false clean
 py/tackbox/cli.py#_clean_args: no-report: unparseable javalint json -> attribute nothing, never a false clean
+py/tackbox/cli.py#_dispatch: no-report: CLI boundary: a resolution failure is loud (exit 1), never a traceback
 py/tackbox/cli.py#_dispatch: no-report: CLI boundary: surface as message + exit 2; a traceback here is the bug
 py/tackbox/cli.py#_dispatch: no-report: standalone approvals infra failure -> exit 1 (as everywhere)
 py/tackbox/cli.py#_erclint_has_findings: no-report: unparseable erclint output -> failing aggregate, never a false clean
@@ -38,8 +39,6 @@ py/tackbox/doctor.py#_check_ast_grep: no-report: doctor reports the ast-grep pro
 py/tackbox/doctor.py#_check_binaries_start: no-report: doctor collects every failure to report them all (no short-circuit)
 py/tackbox/doctor.py#_check_engines_store: no-report: doctor reports the store error via CheckResult (no short-circuit)
 py/tackbox/doctor.py#_java_major_version: no-report: doctor reports the unparseable/absent java via CheckResult
-py/tackbox/doctor.py#_source_set_has_ext: no-report: git absent or failed - treat as no such sources; the toolchain probe surfaces it
-py/tackbox/doctor.py#_source_set_has_ext: no-report: git ls-files failed - doctor degrades to "no such sources", not a run failure
 py/tackbox/engines.py#_erclint_dev_version: no-report: no go toolchain - the dev binary builds on demand, so the
 py/tackbox/engines.py#_fetch_and_install: no-report: lost the init race - the winner's store is committed
 py/tackbox/engines.py#_version_from_binary: no-report: binary missing or non-zero exit - the version banner degrades to "?"
