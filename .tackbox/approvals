@@ -24,6 +24,7 @@ py/tackbox/cli.py#_clean_args: no-report: nonzero = reporter-resolution crash, n
 py/tackbox/cli.py#_clean_args: no-report: unparseable erclint json -> attribute nothing, never a false clean
 py/tackbox/cli.py#_clean_args: no-report: unparseable javalint json -> attribute nothing, never a false clean
 py/tackbox/cli.py#_dispatch: no-report: CLI boundary: a resolution failure is loud (exit 1), never a traceback
+py/tackbox/cli.py#_dispatch: no-report: CLI boundary: a resolution failure is loud (exit 1), never a traceback
 py/tackbox/cli.py#_dispatch: no-report: CLI boundary: surface as message + exit 2; a traceback here is the bug
 py/tackbox/cli.py#_dispatch: no-report: standalone approvals infra failure -> exit 1 (as everywhere)
 py/tackbox/cli.py#_erclint_has_findings: no-report: unparseable erclint output -> failing aggregate, never a false clean
@@ -32,6 +33,7 @@ py/tackbox/cli.py#_hook_post: no-report: hook contract: infra error -> exit 1 + 
 py/tackbox/cli.py#_hook_rel: no-report: unresolvable path - fall back to the raw target for the message
 py/tackbox/cli.py#_hook_repo_root: no-report: git rev-parse cannot run here - not a git repo, the hook is a deliberate no-op
 py/tackbox/cli.py#_run_hook: no-report: hook contract: bad stdin -> exit 1 + one stderr line, non-blocking
+py/tackbox/cli.py#_run_hook: no-report: hook contract: infra error -> exit 1 + stderr, non-blocking
 py/tackbox/cli.py#_same_path: no-report: unresolvable path is simply not the reporters file - guard
 py/tackbox/cli.py#main: no-report: best-effort devnull redirect for the atexit flush; nothing to report
 py/tackbox/cli.py#main: no-report: downstream pipe closed (lint | head) - exit 141, no traceback

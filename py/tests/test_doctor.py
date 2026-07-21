@@ -377,3 +377,105 @@ def test_engines_store_reports_ensure_failure(monkeypatch):
     r = doctor._check_engines_store()
     assert not r.ok
     assert "https://pypi.org" in r.detail
+
+
+# -- attributes section (informational, not a check) -----------------------
+
+
+def _commit(root: Path) -> None:
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
+        cwd=root, check=True, capture_output=True,
+    )
+
+
+def _attr_conditions_repo(root: Path) -> None:
+    """A repo exercising all four attributes-section condition classes, in the
+    order the canonical block pins them."""
+    subprocess.run(["git", "init", "-b", "main"], cwd=root, check=True, capture_output=True)
+    # class 1: info/attributes mentions an exclusion attribute.
+    (root / ".git" / "info").mkdir(parents=True, exist_ok=True)
+    (root / ".git" / "info" / "attributes").write_text("*.gen linguist-generated\n")
+    # class 3: a tracked carrier with a skip-worktree bit (mentions an attribute).
+    (root / "vendor").mkdir()
+    (root / "vendor" / ".gitattributes").write_text("** linguist-vendored\n")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
+    _commit(root)
+    subprocess.run(
+        ["git", "update-index", "--skip-worktree", "vendor/.gitattributes"],
+        cwd=root, check=True, capture_output=True,
+    )
+    # class 2: an untracked carrier that mentions an attribute.
+    (root / "gen").mkdir()
+    (root / "gen" / ".gitattributes").write_text("** linguist-generated\n")
+    # class 4: a neutralized attribute source override.
+    subprocess.run(["git", "config", "attr.tree", "HEAD"], cwd=root, check=True, capture_output=True)
+
+
+CANON_ATTR_BLOCK = (
+    "attributes: local divergence conditions (informational, not a check):\n"
+    "  info/attributes mentions exclusion attributes: .git/info/attributes\n"
+    "  untracked .gitattributes mentions exclusion attributes: gen/.gitattributes\n"
+    "  carrier index state hides content from diff: vendor/.gitattributes (skip-worktree)\n"
+    "  neutralized attribute source override: attr.tree=HEAD\n"
+)
+
+
+def test_attributes_section_renders_canonical_block(tmp_path, monkeypatch):
+    _needs_git()
+    _attr_conditions_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    out = io.StringIO()
+    doctor._attributes_section(out)
+    assert out.getvalue() == CANON_ATTR_BLOCK
+
+
+def test_attributes_section_absent_when_no_condition(tmp_path, monkeypatch):
+    _needs_git()
+    _commit_one_file(tmp_path, "hello.py", "print('hi')\n")
+    monkeypatch.chdir(tmp_path)
+    out = io.StringIO()
+    doctor._attributes_section(out)
+    assert out.getvalue() == "", "section must be entirely absent when nothing holds"
+
+
+def test_doctor_exit0_with_oddities_and_count_unaffected(tmp_path, monkeypatch):
+    # The informational lines never affect the exit code or the N-checks tally: a
+    # run with all four oddities present is still exit 0 with the pinned 8 checks.
+    _needs_git()
+    _attr_conditions_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    out = io.StringIO()
+    with mock.patch.object(engines_mod, "is_hermetic", return_value=False):
+        rc = doctor.run(out)
+    text = out.getvalue()
+    assert rc == 0, text
+    assert "doctor: 8 checks, 0 failed" in text
+    assert "attributes: local divergence conditions (informational, not a check):" in text
+    assert "vendor/.gitattributes (skip-worktree)" in text
+
+
+def test_attributes_linked_worktree_info_attributes_common_dir(tmp_path, monkeypatch):
+    # In a linked worktree the effective info/attributes lives in the COMMON git
+    # dir; `--git-path` resolves it there (an absolute path into the main .git),
+    # never a literal per-worktree $GIT_DIR join.
+    _needs_git()
+    main = tmp_path / "main"
+    main.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=main, check=True, capture_output=True)
+    (main / ".git" / "info").mkdir(parents=True, exist_ok=True)
+    (main / ".git" / "info" / "attributes").write_text("*.gen linguist-generated\n")
+    (main / "f.txt").write_text("x\n")
+    subprocess.run(["git", "add", "-A"], cwd=main, check=True, capture_output=True)
+    _commit(main)
+    wt = tmp_path / "wt"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", str(wt)], cwd=main, check=True, capture_output=True
+    )
+    monkeypatch.chdir(wt)
+    out = io.StringIO()
+    doctor._attributes_section(out)
+    text = out.getvalue()
+    assert "info/attributes mentions exclusion attributes:" in text
+    common = str((main / ".git" / "info" / "attributes").resolve())
+    assert common in text, f"expected common-dir path {common!r} in:\n{text}"

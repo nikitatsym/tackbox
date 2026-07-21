@@ -457,6 +457,74 @@ event, `dev.py check`, and CI reports until the entry lands or the
 marker is reverted. Removing a manifest line is free; a marker whose
 text, scope, or count changes needs its entry updated the same way.
 
+## Generated and vendored code
+
+Committed code that carries a generated or vendored git attribute is
+excluded from the whole lint - findings there are not fixable in the
+file (they belong in the generator), and a suppression marker cannot
+survive regeneration. tackbox honors exactly three attributes,
+`linguist-generated`, `gitlab-generated`, and `linguist-vendored`,
+read from `.gitattributes` the same way the host (GitHub, GitLab)
+reads them - no exclude surface of tackbox's own. The best fix stays
+organizational: generated code should normally not be committed at
+all; this serves the forced residue.
+
+A file is excluded when `git check-attr` reports one of the three as
+set. Semantics by example:
+
+```text
+gen/**       linguist-generated
+vendor/**    linguist-vendored
+gen/keep.go  linguist-generated=false
+```
+
+`gen/**` excludes everything under `gen/`; `vendor/**` the same for
+vendored. Note `dir/**`, not `dir/` - gitattributes patterns, unlike
+gitignore, do not match a trailing-slash directory form. `=false`
+re-includes a single file inside an excluded tree (`gen/keep.go` above
+is linted normally); `-attr` and `!attr` also leave a file in. Only
+`set` / `=true` excludes.
+
+The exclusion covers everything: per-file engines, the erclint Go
+package run (a mixed package's excluded file is compiled but its
+findings drop; a compile break still fails loudly), duplication, the
+CodeClimate report, and the marker inventory - an excluded file's
+markers are dead, so a manifest entry addressing one orphans. A lint
+run whose scope touches excluded files prints one summary line:
+
+```text
+excluded by attributes: 12 files in scope (tackbox escapes lists all)
+```
+
+It counts unique excluded files in the current scope (absent at zero),
+so scoped runs are not wallpapered with a global constant;
+`tackbox escapes` lists the full population as `attribute-excluded`
+entries.
+
+Because the excluded population is where the lint, the marker
+inventory, and host diff review are all blind, the agent hook makes
+the two ways into it loud:
+
+- adding a positive exclusion line (a bare `<attr>` or `<attr>=true`)
+  to any `.gitattributes` draws a PreToolUse ask, one joint ask per
+  edit listing every added line; removals, `=false`, `-attr`, and
+  non-exclusion lines are free;
+- editing (or creating) a file that is effective-excluded draws an
+  ask naming the attributes.
+
+Generators run through Bash and are unaffected - the boundary is that
+the change stays in the commit/PR diff, and hosts collapse
+excluded-file diffs, so reviewers must expand them.
+
+`tackbox doctor` adds an informational `attributes` section (never a
+check, no exit-code effect) naming local conditions that can make a
+run diverge from a clean CI clone - an `info/attributes` or an
+untracked/index-hidden `.gitattributes` carrier mentioning the
+attributes, or a neutralized attribute source override. `tackbox
+escapes --since <rev>` resolves the baseline's attributes as of the
+rev and so needs git >= 2.40 (older git is a named infra error on the
+`--since` path only; the plain listing needs no version bump).
+
 ## Runtime reporting helpers
 
 Direct reporting helpers ship per language; their shared runtime behavior -
@@ -483,9 +551,11 @@ Claude Code hook event on stdin and dispatches by `hook_event_name`:
   nothing, and the block repeats on every event until the tree is
   consistent. The authoritative gate stays pre-commit / CI.
 - **PreToolUse** asks for approval before a new `.tackbox/approvals`
-  line or a new `.tackbox/reporters` line lands; removing one is
-  free. Editing markers in code draws no Pre ask - the consistency
-  check owns them.
+  line or a new `.tackbox/reporters` line lands, before a positive
+  exclusion line is added to any `.gitattributes`, and before an edit
+  to an attribute-excluded file (see "Generated and vendored code");
+  removing a line is free. Editing markers in code draws no Pre ask -
+  the consistency check owns them.
 
 Only markers in files an engine would lint participate in the check
 (D012): a marker in a Go `testdata/` path or a non-lintable fixture
@@ -543,9 +613,11 @@ uvx tackbox@latest escapes --since origin/main --context 5
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "since": null,
   "entries": [
+    {"kind": "attribute-excluded", "file": "gen/api.pb.go",
+     "attribute": "linguist-generated"},
     {"kind": "marker", "file": "a/b.py", "line": 12,
      "text": "no-report: central boundary already captures it",
      "reason": "central boundary already captures it",
@@ -559,13 +631,19 @@ uvx tackbox@latest escapes --since origin/main --context 5
     {"kind": "quiet-site", "file": "go/x.go", "line": 9,
      "text": "report.Quiet(ctx, ...)", "context": ["..."]}
   ],
-  "counts": {"marker": 1, "reporter-decl": 1, "notify-site": 1, "quiet-site": 1}
+  "counts": {"marker": 1, "reporter-decl": 1, "notify-site": 1,
+             "quiet-site": 1, "attribute-excluded": 1}
 }
 ```
 
-- `version` is the schema version (`1`); `counts` always carries all four
-  kinds, even at zero, so consumers see a stable shape.
+- `version` is the schema version (`2`); `counts` always carries all five
+  kinds, even at zero, so consumers see a stable shape. Every count is an
+  entry count except `attribute-excluded`, which counts unique files.
 - `since` echoes the `--since` rev, or `null`.
+- `attribute-excluded` entries carry only `kind` / `file` / `attribute` (no
+  line or text): the whole file is the bypass, one entry per set attribute
+  of the three (`linguist-generated`, `gitlab-generated`,
+  `linguist-vendored`). See "Generated and vendored code".
 - `text` is the trimmed source line; for a marker it runs from the marker
   keyword to end of line.
 - `reason` (markers only) is what follows the keyword's colon, trimmed -
@@ -574,14 +652,18 @@ uvx tackbox@latest escapes --since origin/main --context 5
   (default 3), inclusive of the entry line itself - the window
   `[line-N, line+N]`, clipped at file edges, each line trimmed of trailing
   whitespace. It is plain source; the entry line is not marked.
-- `entries` are sorted by `(file, line)` for stable output.
+- `entries` are sorted by `(file, kind, kind-subkey)` - the subkey is
+  `(line, text)` for the line-bearing kinds and `(attribute,)` for
+  `attribute-excluded`.
 
 ### Scope and detection
 
 The scan covers the same lintable source set the linter would scan (the
 D012 predicate: extension match plus each engine's path filter, so a Go
-`testdata/` file is out), plus the root `.tackbox/reporters` (every
-non-empty line is one declaration - the file has no comment syntax).
+`testdata/` file is out) minus the attribute-excluded files, plus the root
+`.tackbox/reporters` (every non-empty line is one declaration - the file has
+no comment syntax). An attribute-excluded file's own markers are dead, so it
+surfaces only as its `attribute-excluded` entries.
 notify / quiet call sites are detected **textually per language**
 (`report_quiet` / `notify` in Python, `reportQuiet` / `notify` in the JS
 family, `.Quiet(` / `.Notify(` in Go, `.quiet(` / `.notify(` in Java),
@@ -592,12 +674,19 @@ this is observability, not a lint.
 ### `--since <rev>`
 
 `--since <rev>` prints only entries **new against `<rev>`**, compared by
-content identity `(kind, file, text)` - the same extraction run against
-the tree at `<rev>` (via `git ls-tree` + `git show`) subtracted, count
-aware, from the current tree's entries. It over-reports on moved code (a
-new file path is a new identity) but never silently drops an entry - the
-conservative direction for a review aid. A bad rev is the one infra error:
-one stderr line, exit 1.
+content identity (`(kind, file, text)`, or `(kind, file, attribute)` for
+attribute-excluded) - the same extraction run against the tree at `<rev>`
+(via `git ls-tree` + `git show`) subtracted, count aware, from the current
+tree's entries. The baseline is attribute-aware: it resolves the attributes
+as of `<rev>` (via the seam's `git check-attr --source`), so an attribute
+added since the rev reports its newly-excluded files, a removed one
+re-activates its markers as new (never a silent subtraction), and an
+unchanged one adds no noise. Because `--source` needs git >= 2.40, an older
+git is a named infra error on the `--since` path only (the plain listing
+needs no version bump). It over-reports on moved code (a new file path is a
+new identity) but never silently drops an entry - the conservative direction
+for a review aid. A bad rev is the other infra error: one stderr line,
+exit 1.
 
 ## Layout
 
