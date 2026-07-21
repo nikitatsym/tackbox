@@ -10,12 +10,17 @@ cheap command:
 
 Each entry carries file, line, the source text, and a context window of the
 surrounding lines. The scan covers the lintable source set (the D012
-predicate, `engines.lintable`) plus the root `.tackbox/reporters`. Verb-site
+predicate, `engines.lintable`) minus the attribute-excluded files, plus the
+root `.tackbox/reporters`; every attribute-excluded file surfaces instead as
+`attribute-excluded` entries (one per set attribute) - the whole-file bypass,
+so its markers are dead (D012 cascade) and not listed as markers. Verb-site
 detection is textual per language, so it may over-report - that is
 observability, not a lint (D013). `--since <rev>` keeps only entries new
-against that revision by content identity (kind, file, text); it over-reports
-on moved code but never drops one silently. Exit is 0 whenever the command
-runs, entries or not; a bad `--since` rev is the reported nonzero - exit 1,
+against that revision by content identity (kind, file, text/attribute); it
+over-reports on moved code but never drops one silently, and the baseline is
+attribute-aware (attributes as of the rev, via the seam's source override).
+Exit is 0 whenever the command runs, entries or not; a bad `--since` rev, or a
+git older than 2.40 on the `--since` path, is the reported nonzero - exit 1,
 one stderr line.
 
 No version banner (like the hook): stdout stays pure JSON and the command
@@ -32,13 +37,19 @@ from pathlib import Path
 from typing import TextIO
 
 from .engines import EngineSpec, active_engines, lintable
-from .gitfiles import collect_source_set
+from .gitfiles import collect_snapshot, resolve_attributes
 from .reporters import FILENAME as REPORTERS_FILE
 
-JSON_VERSION = 1
+JSON_VERSION = 2
 
-# The counts block always carries all four kinds (a stable schema), even absent.
-_KINDS = ("marker", "reporter-decl", "notify-site", "quiet-site")
+# The counts block always carries every kind (a stable schema), even absent.
+# attribute-excluded counts unique files (one file may set several attributes);
+# the others count entries.
+_KINDS = ("marker", "reporter-decl", "notify-site", "quiet-site", "attribute-excluded")
+
+# `git check-attr --source=<rev>` (the attribute-aware --since baseline) needs
+# git >= 2.40; older git is an infra error on the --since path only.
+_GIT_ATTR_SOURCE_MIN = (2, 40)
 
 
 # -- verb-site detection (textual, per language; D013) --------------------
@@ -84,22 +95,32 @@ def run(
     out: TextIO,
     err: TextIO,
 ) -> int:
-    """Emit the inventory JSON to `out`; return 0. A bad `--since` rev writes one
-    line to `err` and returns 1 - the inventory is not a gate, so entries or not
-    is still exit 0. `marker_re` is injected by the CLI, which owns the canonical
-    suppression-marker set, so escapes stays a leaf (no cli<->escapes cycle)."""
+    """Emit the inventory JSON to `out`; return 0. A `--since` infra error (a bad
+    rev, or a git < 2.40 that cannot resolve the attribute-aware baseline) writes
+    one line to `err` and returns 1 - the inventory is not a gate, so entries or
+    not is still exit 0. `marker_re` is injected by the CLI, which owns the
+    canonical suppression-marker set, so escapes stays a leaf (no cli<->escapes
+    cycle)."""
     window = max(0, context)
     engines = active_engines()
     verbs = _verb_patterns(engines)
     baseline = None
     if since is not None:
+        version = _git_version()
+        if version is not None and version < _GIT_ATTR_SOURCE_MIN:
+            print(
+                "tackbox: escapes --since needs git >= 2.40 for the "
+                f"attribute-aware baseline (found {version[0]}.{version[1]})",
+                file=err,
+            )
+            return 1
         paths, error = _ls_tree(repo_root, since)
         if error is not None:
             print(f"tackbox: {error}", file=err)
             return 1
         baseline = _rev_identities(repo_root, since, paths, engines, verbs, marker_re)
     current = _scan_tree(repo_root, engines, verbs, marker_re, window)
-    current.sort(key=lambda x: (x["file"], x["line"], x["kind"], x["text"]))
+    current.sort(key=_sort_key)
     if baseline is not None:
         current = _keep_new(current, baseline)
     doc = {
@@ -123,11 +144,13 @@ def _scan_tree(
     marker_re: re.Pattern[str],
     window: int,
 ) -> list[dict]:
-    """Entries for the working tree: the lintable source set plus the root
-    `.tackbox/reporters` (read from the worktree)."""
-    files, _warnings = collect_source_set(root, ".", None)
+    """Entries for the working tree from one attribute-aware snapshot: markers /
+    verb sites in the included lintable files plus the root `.tackbox/reporters`,
+    and one `attribute-excluded` entry per (file, attribute) of the excluded
+    population. Excluded files' own markers are dead (D012) - not scanned."""
+    snapshot = collect_snapshot(root)
     entries: list[dict] = []
-    for rel in files:
+    for rel in snapshot.included:
         if not lintable(rel, engines):
             continue
         content = _read_worktree(root, rel)
@@ -136,7 +159,18 @@ def _scan_tree(
     rep = _read_worktree(root, REPORTERS_FILE)
     if rep is not None:
         entries += _reporter_entries(rep, window)
+    entries += _attribute_entries(snapshot.excluded_pairs)
     return entries
+
+
+def _attribute_entries(excluded_pairs: list[tuple[str, str]]) -> list[dict]:
+    """One `attribute-excluded` entry per (file, attribute). No line / text /
+    context: the whole file is the bypass, and the source location carries no
+    single line."""
+    return [
+        {"kind": "attribute-excluded", "file": file, "attribute": attr}
+        for file, attr in excluded_pairs
+    ]
 
 
 def _rev_identities(
@@ -147,12 +181,17 @@ def _rev_identities(
     verbs: dict,
     marker_re: re.Pattern[str],
 ) -> Counter:
-    """The (kind, file, text) multiset of the baseline `<rev>` - the same
-    extraction run against that tree. Context is irrelevant to identity, so it
-    runs with a zero window."""
+    """The identity multiset of the baseline `<rev>`, attribute-aware: markers /
+    verb sites in the files that were lintable AND not attribute-excluded as of
+    the rev, plus one attribute-excluded identity per (file, attribute) excluded
+    then. A file excluded at the rev has its markers left out of the baseline, so
+    removing the attribute since surfaces them as new (never a silent
+    subtraction). Context is irrelevant to identity, so it runs at zero window."""
+    rev_excluded = resolve_attributes(root, paths, source=rev)
+    excluded_files = set(rev_excluded)
     entries: list[dict] = []
     for rel in paths:
-        if not lintable(rel, engines):
+        if rel in excluded_files or not lintable(rel, engines):
             continue
         content = _git_show(root, rev, rel)
         if content is not None:
@@ -160,6 +199,9 @@ def _rev_identities(
     rep = _git_show(root, rev, REPORTERS_FILE)
     if rep is not None:
         entries += _reporter_entries(rep, 0)
+    for rel in sorted(rev_excluded):
+        for attr in rev_excluded[rel]:
+            entries.append({"kind": "attribute-excluded", "file": rel, "attribute": attr})
     return Counter(_identity(e) for e in entries)
 
 
@@ -270,15 +312,48 @@ def _keep_new(entries: list[dict], baseline: Counter) -> list[dict]:
 
 
 def _identity(e: dict) -> tuple[str, str, str]:
+    """Content identity for --since diffing: (kind, file, text) for the
+    line-bearing kinds, (kind, file, attribute) for attribute-excluded."""
+    if e["kind"] == "attribute-excluded":
+        return (e["kind"], e["file"], e["attribute"])
     return (e["kind"], e["file"], e["text"])
 
 
+def _sort_key(e: dict) -> tuple:
+    """Total ordering over mixed entries: (file, kind, kind-subkey). kinds are
+    lexicographic; the subkey is (line, text) for the line-bearing kinds and
+    (attribute,) for attribute-excluded. Two entries sharing file and kind always
+    carry the same subkey shape, so the mixed shapes never compare."""
+    if e["kind"] == "attribute-excluded":
+        subkey: tuple = (e["attribute"],)
+    else:
+        subkey = (e["line"], e["text"])
+    return (e["file"], e["kind"], subkey)
+
+
 def _counts(entries: list[dict]) -> dict[str, int]:
-    c = Counter(e["kind"] for e in entries)
-    return {k: c.get(k, 0) for k in _KINDS}
+    c = Counter(e["kind"] for e in entries if e["kind"] != "attribute-excluded")
+    attr_files = {e["file"] for e in entries if e["kind"] == "attribute-excluded"}
+    return {
+        k: (len(attr_files) if k == "attribute-excluded" else c.get(k, 0))
+        for k in _KINDS
+    }
 
 
 # -- git / io --------------------------------------------------------------
+
+
+def _git_version() -> tuple[int, int] | None:
+    """(major, minor) of the host git, or None when it cannot be run or parsed
+    (then the --since path proceeds and any real --source incompatibility fails
+    loud at the seam)."""
+    completed = subprocess.run(["git", "--version"], capture_output=True, text=True)
+    if completed.returncode != 0:
+        return None
+    m = re.search(r"(\d+)\.(\d+)", completed.stdout)
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2))
 
 
 def _ls_tree(root: Path, rev: str) -> tuple[list[str], str | None]:

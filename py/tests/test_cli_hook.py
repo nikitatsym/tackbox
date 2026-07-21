@@ -10,6 +10,7 @@ and points `cwd` at the fixture instead.
 
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
@@ -17,6 +18,7 @@ from pathlib import Path
 
 from conftest import commit_all, git, init_repo, tackbox_env
 
+from tackbox import cli, gitfiles
 from tackbox.cli import _finding_line, _partition_findings, _span_lines
 from tackbox.engines import Finding, active_engines, lintable
 
@@ -824,3 +826,219 @@ def test_lintable_normalizes_backslash_paths():
     eng = active_engines()
     assert lintable("go\\analyzers\\x\\testdata\\src\\x\\x.go", eng) is False
     assert lintable("app\\svc.py", eng) is True
+
+
+# -- PreToolUse: .gitattributes exclusion-line arm ------------------------
+# The two canonical ask texts (plan, user-approved) - fixed verbatim.
+CANON_ATTR_SINGLE = ".gitattributes exclusion line added: gen/*.pb.go linguist-generated"
+CANON_ATTR_MULTI = (
+    "add 2 .gitattributes exclusion lines (Allow = all, Deny = none;"
+    " re-add one by one to decide individually):\n"
+    "  gen/*.pb.go linguist-generated\n"
+    "  vendor/** linguist-vendored"
+)
+
+
+def test_pre_gitattributes_exclusion_line_ask(tmp_path):
+    # Adding a positive exclusion line to the root .gitattributes draws the
+    # canonical single ask.
+    _dev_py(tmp_path)
+    _init(tmp_path)
+    r = _pre_write(tmp_path, ".gitattributes", "gen/*.pb.go linguist-generated\n")
+    assert _ask(r)["permissionDecisionReason"] == CANON_ATTR_SINGLE
+
+
+def test_pre_gitattributes_subdir_ask(tmp_path):
+    # Attributes govern their subtree, so a subdirectory .gitattributes asks too
+    # (root-only would be a hole).
+    _dev_py(tmp_path)
+    (tmp_path / "vendor").mkdir()
+    _init(tmp_path)
+    r = _pre_write(tmp_path, "vendor/.gitattributes", "** linguist-vendored\n")
+    assert (
+        _ask(r)["permissionDecisionReason"]
+        == ".gitattributes exclusion line added: ** linguist-vendored"
+    )
+
+
+def test_pre_gitattributes_multi_line_joint_ask(tmp_path):
+    # One edit adding two exclusion lines draws ONE joint ask listing both,
+    # lexicographic (manifest multi-entry precedent).
+    _dev_py(tmp_path)
+    _init(tmp_path)
+    r = _pre_write(
+        tmp_path,
+        ".gitattributes",
+        "gen/*.pb.go linguist-generated\nvendor/** linguist-vendored\n",
+    )
+    out = _ask(r)
+    assert out["permissionDecisionReason"] == CANON_ATTR_MULTI
+    assert r.stdout.strip().count("\n") == 0, f"expected one ask object:\n{r.stdout}"
+
+
+def test_pre_gitattributes_free_forms_no_ask(tmp_path):
+    # ADVERSARIAL: only the widening direction gates. `=false`, `-attr`, `!attr`,
+    # a non-honored attribute, and a plain non-exclusion line are all free.
+    _dev_py(tmp_path)
+    _init(tmp_path)
+    r = _pre_write(
+        tmp_path,
+        ".gitattributes",
+        "keep.go linguist-generated=false\n"
+        "unset.go -linguist-generated\n"
+        "bang.go !linguist-generated\n"
+        "docs.go linguist-documentation\n"
+        "*.bin binary\n"
+        "*.psd filter=lfs diff=lfs merge=lfs -text\n",
+    )
+    assert r.returncode == 0 and r.stdout == "", f"free-form lines must not ask:\n{r.stdout}"
+
+
+def test_pre_gitattributes_removal_free(tmp_path):
+    # Removing an exclusion line is free - only added lines gate.
+    _dev_py(tmp_path)
+    (tmp_path / ".gitattributes").write_text(
+        "gen/*.pb.go linguist-generated\nvendor/** linguist-vendored\n"
+    )
+    _init(tmp_path)
+    r = _pre_write(tmp_path, ".gitattributes", "vendor/** linguist-vendored\n")
+    assert r.returncode == 0 and r.stdout == "", f"removing a line is free:\n{r.stdout}"
+
+
+def test_pre_gitattributes_true_form_ask(tmp_path):
+    # The explicit `=true` form is a positive set and asks.
+    _dev_py(tmp_path)
+    _init(tmp_path)
+    r = _pre_write(tmp_path, ".gitattributes", "x.go gitlab-generated=true\n")
+    assert (
+        _ask(r)["permissionDecisionReason"]
+        == ".gitattributes exclusion line added: x.go gitlab-generated=true"
+    )
+
+
+# -- PreToolUse: excluded-target arm --------------------------------------
+
+
+def _attr_repo(tmp_path: Path, attrs: str, files: dict[str, str]) -> None:
+    _dev_py(tmp_path)
+    (tmp_path / ".gitattributes").write_text(attrs)
+    for rel, content in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+    _init(tmp_path)
+
+
+def test_pre_edit_excluded_file_ask(tmp_path):
+    # Editing an effective-excluded file draws the canonical ask naming the
+    # attribute; the excluded population is where lint and review are blind.
+    _attr_repo(
+        tmp_path, "gen/*.pb.go linguist-generated\n", {"gen/api.pb.go": "package gen\n"}
+    )
+    r = _pre_edit(tmp_path, "gen/api.pb.go", "package gen", "package gen // touched")
+    assert (
+        _ask(r)["permissionDecisionReason"]
+        == "edit attribute-excluded file (linguist-generated): gen/api.pb.go"
+    )
+
+
+def test_pre_write_new_file_under_excluded_glob_ask(tmp_path):
+    # Creating a file that does not exist yet under an existing excluded glob
+    # asks (attributes match by path, the file need not exist).
+    _attr_repo(
+        tmp_path, "gen/*.pb.go linguist-generated\n", {"gen/api.pb.go": "package gen\n"}
+    )
+    assert not (tmp_path / "gen" / "brandnew.pb.go").exists()
+    r = _pre_write(tmp_path, "gen/brandnew.pb.go", "package gen\n")
+    assert (
+        _ask(r)["permissionDecisionReason"]
+        == "edit attribute-excluded file (linguist-generated): gen/brandnew.pb.go"
+    )
+
+
+def test_pre_edit_two_attributes_one_ask_lexicographic(tmp_path):
+    # A file excluded by two attributes draws ONE ask naming both in
+    # lexicographic order.
+    _attr_repo(
+        tmp_path,
+        "both.go linguist-generated gitlab-generated\n",
+        {"both.go": "package p\n"},
+    )
+    r = _pre_edit(tmp_path, "both.go", "package p", "package p // x")
+    assert (
+        _ask(r)["permissionDecisionReason"]
+        == "edit attribute-excluded file (gitlab-generated, linguist-generated): both.go"
+    )
+
+
+def test_pre_edit_included_neighbor_no_ask(tmp_path):
+    # A `=false` re-included file inside an excluded tree is a normal file - no
+    # ask (attributes match by path, and this path is not excluded).
+    _attr_repo(
+        tmp_path,
+        "gen/** linguist-generated\ngen/keep.go linguist-generated=false\n",
+        {"gen/api.pb.go": "package gen\n", "gen/keep.go": "package gen\n"},
+    )
+    r = _pre_edit(tmp_path, "gen/keep.go", "package gen", "package gen // ok")
+    assert r.returncode == 0 and r.stdout == "", f"included neighbor must not ask:\n{r.stdout}"
+
+
+def test_pre_edit_plain_file_no_ask(tmp_path):
+    # A file with no exclusion attribute is free.
+    _attr_repo(
+        tmp_path, "gen/*.pb.go linguist-generated\n", {"src/app.go": "package app\n"}
+    )
+    r = _pre_edit(tmp_path, "src/app.go", "package app", "package app // x")
+    assert r.returncode == 0 and r.stdout == "", f"a plain file must not ask:\n{r.stdout}"
+
+
+# -- PostToolUse: no block for a marker planted in an excluded file -------
+
+
+def test_post_marker_in_excluded_file_no_block(tmp_path):
+    # ADVERSARIAL D012 cascade at the Post arm: a marker in an attribute-excluded
+    # file is dead (outside the inventory), so editing an unrelated clean file
+    # draws no consistency block for it.
+    _dev_py(tmp_path)
+    (tmp_path / ".gitattributes").write_text("gen/** linguist-generated\n")
+    (tmp_path / "gen").mkdir()
+    (tmp_path / "gen" / "a.py").write_text(
+        "# no-report: marker planted in an excluded generated file\nx = 1\n"
+    )
+    (tmp_path / "b.py").write_text("y = 1\n")
+    _init(tmp_path)
+    r = _post_edit(tmp_path, "b.py", old="y = 1", new="y = 2")
+    assert r.returncode == 0 and r.stdout == "", (
+        f"a marker in an excluded file must not block:\n{r.stdout}\n{r.stderr}"
+    )
+
+
+def test_pre_resolution_failure_is_loud_not_traceback(tmp_path, monkeypatch, capsys):
+    # ADVERSARIAL hook contract: a genuine check-attr failure during a Pre event
+    # (the excluded-target arm resolves attributes) must surface as
+    # `tackbox hook: <msg>` + exit 1, non-blocking - never an uncaught traceback.
+    # The call RETURNING (not raising) is the proof no traceback escapes.
+    _dev_py(tmp_path)
+    (tmp_path / "svc.py").write_text("x = 1\n")
+    _init(tmp_path)
+
+    def boom(*a, **k):
+        raise gitfiles.AttributeResolutionError("check-attr exploded")
+
+    monkeypatch.setattr(cli, "resolve_attributes", boom)
+    event = {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Edit",
+        "cwd": str(tmp_path),
+        "tool_input": {
+            "file_path": str(tmp_path / "svc.py"),
+            "old_string": "x = 1",
+            "new_string": "x = 2",
+        },
+    }
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(event)))
+    rc = cli._run_hook()
+    assert rc == 1
+    err = capsys.readouterr().err.strip()
+    assert err == "tackbox hook: check-attr exploded", err
+    assert err.count("\n") == 0  # exactly one line

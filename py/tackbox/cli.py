@@ -32,8 +32,9 @@ from .engines import (
     resolve_hermetic_versions,
     run_engines,
 )
-from .gitfiles import AttributeResolutionError, collect_snapshot
+from .gitfiles import AttributeResolutionError, collect_snapshot, resolve_attributes
 from .source_set import (
+    EXCLUSION_ATTRIBUTES,
     PathspecMagicError,
     Snapshot,
     group_go_packages_by_module,
@@ -105,14 +106,19 @@ def _dispatch(argv: list[str] | None) -> int:
         # Inventory, not a gate (D013): exit 0 with entries or not; a bad --since
         # rev is exit 1 + one stderr line (handled inside run). _MARKER_RE is
         # injected so escapes stays a leaf (no cli<->escapes import cycle).
-        return escapes.run(
-            _find_repo_root(),
-            since=args.since,
-            context=args.context,
-            marker_re=_MARKER_RE,
-            out=sys.stdout,
-            err=sys.stderr,
-        )
+        try:
+            return escapes.run(
+                _find_repo_root(),
+                since=args.since,
+                context=args.context,
+                marker_re=_MARKER_RE,
+                out=sys.stdout,
+                err=sys.stderr,
+            )
+        except AttributeResolutionError as e:
+            # no-report: CLI boundary: a resolution failure is loud (exit 1), never a traceback
+            print(f"tackbox: {e}", file=sys.stderr)
+            return 1
     if args.command == "doctor":
         try:
             _print_banner(_tackbox_root())
@@ -780,7 +786,12 @@ def _run_hook() -> int:
         return 1
     name = event.get("hook_event_name")
     if name == "PreToolUse":
-        return _hook_pre(event)
+        try:
+            return _hook_pre(event)
+        except (AttributeResolutionError, subprocess.CalledProcessError) as e:
+            # no-report: hook contract: infra error -> exit 1 + stderr, non-blocking
+            print(f"tackbox hook: {e}", file=sys.stderr)
+            return 1
     if name == "PostToolUse":
         return _hook_post(event)
     return 0
@@ -1010,11 +1021,13 @@ def _partition_findings(
 
 
 def _hook_pre(event: dict) -> int:
-    """PreToolUse Edit/Write/MultiEdit: the manifest and reporters declaration
-    gates. Adding a `.tackbox/approvals` line asks (quoting the entry); adding a
-    `.tackbox/reporters` line asks (unchanged). Removals are free. Code markers no
-    longer ask here - approval rides the manifest, and an unapproved marker
-    surfaces at the next Post consistency event."""
+    """PreToolUse Edit/Write/MultiEdit: the manifest, reporters, and generated /
+    vendored exclusion gates. Adding a `.tackbox/approvals` line asks (quoting the
+    entry); adding a `.tackbox/reporters` line asks; adding a positive exclusion
+    line to any `.gitattributes` asks; editing an effective-excluded file asks.
+    Removals are free. Code markers no longer ask here - approval rides the
+    manifest, and an unapproved marker surfaces at the next Post consistency
+    event."""
     root = _hook_repo_root(event)
     if root is None:
         return 0
@@ -1032,7 +1045,80 @@ def _hook_pre(event: dict) -> int:
             return _hook_ask(
                 f".tackbox/reporters line added: {added}", _hook_rel(target, root)
             )
+        return 0
+    # Attributes govern their subtree, so any-directory `.gitattributes` gates -
+    # root-only would be a hole.
+    if target.name == ".gitattributes":
+        ask = _gitattributes_exclusion_ask(old, new)
+        return _hook_ask_reason(ask) if ask is not None else 0
+    # The excluded population is exactly where lint, the marker inventory, and
+    # host diff review are all blind, so the agent's write channel into it is loud.
+    rel = _hook_rel_strict(target, root)
+    if rel is not None:
+        attrs = resolve_attributes(root, [rel]).get(rel)
+        if attrs:
+            return _hook_ask_reason(
+                f"edit attribute-excluded file ({', '.join(attrs)}): {rel}"
+            )
     return 0
+
+
+def _gitattributes_exclusion_ask(old: str, new: str) -> str | None:
+    """The ask for a `.gitattributes` edit that adds line(s) positively setting one
+    of the three honored attributes (bare `<attr>` or `<attr>=true`), or None when
+    it adds none. Removals, `=false`, `-attr`, `!attr`, and non-exclusion lines are
+    free - only the widening direction gates. One edit adding several such lines
+    draws ONE joint ask (the permission is per-edit and indivisible), lines listed
+    in deterministic lexicographic order. Prediction is textual over the edit
+    fragment, a superset, and recognizes literal attribute names only (a
+    macro-referencing line is R2's plane)."""
+    old_c = Counter(s.strip() for s in old.splitlines() if s.strip())
+    new_c = Counter(s.strip() for s in new.splitlines() if s.strip())
+    added = Counter(
+        {ln: n for ln, n in (new_c - old_c).items() if _is_exclusion_line(ln)}
+    )
+    if not added:
+        return None
+    ordered = sorted(added)
+    total = sum(added.values())
+    if total == 1:
+        return f".gitattributes exclusion line added: {ordered[0]}"
+    header = (
+        f"add {total} .gitattributes exclusion lines (Allow = all, Deny = none;"
+        " re-add one by one to decide individually):"
+    )
+    body = [
+        f"  {ln}" + (f" x{added[ln]}" if added[ln] > 1 else "") for ln in ordered
+    ]
+    return "\n".join([header, *body])
+
+
+def _is_exclusion_line(line: str) -> bool:
+    """True iff a `.gitattributes` line positively sets one of the three honored
+    attributes for its pattern. The first whitespace token is the pattern; a later
+    token that is a bare honored name or `<name>=true` sets it. `-name`, `!name`,
+    `<name>=false`, a comment, and a non-honored attribute do not."""
+    if line.startswith("#"):
+        return False
+    tokens = line.split()
+    for tok in tokens[1:]:
+        name, sep, value = tok.partition("=")
+        if name not in EXCLUSION_ATTRIBUTES:
+            continue
+        if sep == "" or value == "true":
+            return True
+    return False
+
+
+def _hook_rel_strict(target: Path, root: Path) -> str | None:
+    """Repo-relative POSIX path for `target`, or None when it resolves outside the
+    repo - the excluded-target arm resolves attributes by this path. os.path.relpath
+    (not relative_to) so an outside path is a `..` return, not an exception - same
+    lexical relpath as _posn_excluded, symlink-normalized via resolve()."""
+    rel = os.path.relpath(target.resolve(), root.resolve()).replace(os.sep, "/")
+    if rel == ".." or rel.startswith("../"):
+        return None
+    return rel
 
 
 def _hook_pre_content(tool_name: str, tool_input: dict, target: Path) -> tuple[str, str]:

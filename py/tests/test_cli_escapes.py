@@ -12,12 +12,16 @@ predicate), so these run without a go/node/java toolchain.
 
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
 from pathlib import Path
 
 from conftest import commit_all, git, init_repo, tackbox_env
+
+from tackbox import escapes
+from tackbox.cli import _MARKER_RE
 
 
 def _run(repo: Path, *flags: str) -> subprocess.CompletedProcess:
@@ -106,13 +110,14 @@ def test_full_inventory_every_kind(tmp_path):
     repo = _full_repo(tmp_path)
     doc = _doc(_run(repo))
 
-    assert doc["version"] == 1
+    assert doc["version"] == 2
     assert doc["since"] is None
     assert doc["counts"] == {
         "marker": 5,
         "reporter-decl": 2,
         "notify-site": 2,
         "quiet-site": 2,
+        "attribute-excluded": 0,
     }
 
     # Markers: kind, file, line, reason for each keyword.
@@ -202,6 +207,7 @@ def test_since_lists_only_new_entries(tmp_path):
         "reporter-decl": 0,
         "notify-site": 1,
         "quiet-site": 0,
+        "attribute-excluded": 0,
     }
 
 
@@ -303,3 +309,148 @@ def test_verb_word_boundaries(tmp_path):
     assert notify_lines == [1], f"only the real notify( should match: {doc['entries']}"
     assert doc["counts"]["notify-site"] == 1
     assert doc["counts"]["quiet-site"] == 0
+
+
+# -- attribute-excluded entries (schema v2) -------------------------------
+
+
+def _attr_entries(doc: dict) -> set[tuple[str, str]]:
+    return {
+        (e["file"], e["attribute"])
+        for e in doc["entries"]
+        if e["kind"] == "attribute-excluded"
+    }
+
+
+def test_attribute_excluded_entries_shape_and_counts(tmp_path):
+    """Exact JSON shape (kind/file/attribute, no line/text/context); one entry
+    per set attribute; the count is unique files (a two-attribute file once)."""
+    _write(tmp_path, "gen/api.pb.go", "package gen\n")
+    _write(tmp_path, "both.go", "package p\n")
+    _write(tmp_path, "src/app.go", "package app\n")
+    _write(
+        tmp_path,
+        ".gitattributes",
+        "gen/*.pb.go linguist-generated\nboth.go linguist-generated gitlab-generated\n",
+    )
+    init_repo(tmp_path, commit=True)
+    doc = _doc(_run(tmp_path))
+    assert doc["version"] == 2
+    assert _attr_entries(doc) == {
+        ("gen/api.pb.go", "linguist-generated"),
+        ("both.go", "gitlab-generated"),
+        ("both.go", "linguist-generated"),
+    }
+    for e in doc["entries"]:
+        if e["kind"] == "attribute-excluded":
+            assert set(e) == {"kind", "file", "attribute"}
+    assert doc["counts"]["attribute-excluded"] == 2  # both.go counted once
+
+
+def test_excluded_file_markers_are_dead_not_listed(tmp_path):
+    """ADVERSARIAL D012 cascade: a marker in an attribute-excluded file is dead -
+    it never appears as a marker entry; the file appears only as attribute-excluded."""
+    _write(
+        tmp_path,
+        "gen/a.go",
+        "// no-report: dead marker inside an excluded file zzzz\npackage gen\n",
+    )
+    _write(tmp_path, ".gitattributes", "gen/*.go linguist-generated\n")
+    init_repo(tmp_path, commit=True)
+    doc = _doc(_run(tmp_path))
+    reasons = [e.get("reason") for e in doc["entries"] if e["kind"] == "marker"]
+    assert "dead marker inside an excluded file zzzz" not in reasons
+    assert doc["counts"]["marker"] == 0
+    assert ("gen/a.go", "linguist-generated") in _attr_entries(doc)
+
+
+def test_mixed_entry_total_ordering_is_stable(tmp_path):
+    """The pinned sort key (file, kind, kind-subkey) is total across kinds with
+    differently-shaped subkeys - attribute-excluded ((attribute,)) and line-bearing
+    ((line, text)). On one file with both kinds, attribute-excluded sorts first
+    (kind lexicographic), and the mixed subkey shapes never raise."""
+    entries = [
+        {"kind": "marker", "file": "z.go", "line": 5, "text": "no-report: later mmmm"},
+        {"kind": "attribute-excluded", "file": "z.go", "attribute": "linguist-vendored"},
+        {"kind": "attribute-excluded", "file": "a.go", "attribute": "linguist-generated"},
+        {"kind": "marker", "file": "z.go", "line": 2, "text": "no-report: earlier nnnn"},
+    ]
+    ordered = sorted(entries, key=escapes._sort_key)
+    assert [(e["file"], e["kind"]) for e in ordered] == [
+        ("a.go", "attribute-excluded"),
+        ("z.go", "attribute-excluded"),
+        ("z.go", "marker"),
+        ("z.go", "marker"),
+    ]
+    z_markers = [e for e in ordered if e["file"] == "z.go" and e["kind"] == "marker"]
+    assert [e["line"] for e in z_markers] == [2, 5]  # (line, text) subkey
+
+
+# -- attr-aware --since ----------------------------------------------------
+
+
+def test_since_attribute_added_reports_newly_excluded(tmp_path):
+    """An attribute added since the rev reports the newly-excluded file as a new
+    attribute-excluded entry."""
+    _write(tmp_path, "gen/a.go", "package gen\n")
+    _write(tmp_path, ".gitattributes", "# nothing excluded at baseline\n")
+    init_repo(tmp_path, commit=True)
+    _write(tmp_path, ".gitattributes", "gen/*.go linguist-generated\n")
+    doc = _doc(_run(tmp_path, "--since", "HEAD"))
+    assert ("gen/a.go", "linguist-generated") in _attr_entries(doc)
+    assert doc["counts"]["attribute-excluded"] == 1
+
+
+def test_since_attribute_removed_reactivates_markers(tmp_path):
+    """ADVERSARIAL no silent subtraction: a marker-bearing file excluded at the
+    baseline (its marker dead there) is re-included now - the re-activated marker
+    is reported as new."""
+    _write(
+        tmp_path,
+        "gen/a.go",
+        "// no-report: re-activated after unmarking wxyz\npackage gen\n",
+    )
+    _write(tmp_path, ".gitattributes", "gen/*.go linguist-generated\n")
+    init_repo(tmp_path, commit=True)
+    _write(tmp_path, ".gitattributes", "# attribute removed after baseline\n")
+    doc = _doc(_run(tmp_path, "--since", "HEAD"))
+    reasons = [e.get("reason") for e in doc["entries"] if e["kind"] == "marker"]
+    assert "re-activated after unmarking wxyz" in reasons
+    assert doc["counts"]["attribute-excluded"] == 0  # the attribute is gone now
+
+
+def test_since_attribute_unchanged_no_noise(tmp_path):
+    """An unchanged attribute adds no noise: the still-excluded file's
+    attribute-excluded entry is in both baseline and current, and its dead marker
+    is scanned in neither."""
+    _write(
+        tmp_path,
+        "gen/a.go",
+        "// no-report: still dead in an excluded file qqqq\npackage gen\n",
+    )
+    _write(tmp_path, ".gitattributes", "gen/*.go linguist-generated\n")
+    init_repo(tmp_path, commit=True)
+    _write(tmp_path, "src/b.go", "package src\n")  # an unrelated untracked change
+    doc = _doc(_run(tmp_path, "--since", "HEAD"))
+    assert ("gen/a.go", "linguist-generated") not in _attr_entries(doc)
+    reasons = [e.get("reason") for e in doc["entries"] if e["kind"] == "marker"]
+    assert "still dead in an excluded file qqqq" not in reasons
+
+
+def test_since_git_below_240_is_named_infra_error(tmp_path, monkeypatch):
+    """ADVERSARIAL: --since needs git >= 2.40 for the attribute-aware baseline
+    (--source). An older git is a named infra error on the --since path only:
+    exit 1, one stderr line, empty stdout."""
+    _write(tmp_path, "a.go", "package p\n")
+    init_repo(tmp_path, commit=True)
+    monkeypatch.setattr(escapes, "_git_version", lambda: (2, 39))
+    out, err = io.StringIO(), io.StringIO()
+    rc = escapes.run(
+        tmp_path, since="HEAD", context=3, marker_re=_MARKER_RE, out=out, err=err
+    )
+    assert rc == 1
+    assert out.getvalue() == ""  # nothing on stdout
+    msg = err.getvalue().strip()
+    assert msg.startswith("tackbox: ")
+    assert "2.40" in msg and "--since" in msg
+    assert msg.count("\n") == 0  # exactly one line

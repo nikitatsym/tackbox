@@ -362,7 +362,7 @@ Svelte template HTML-comment marker suppresses within the whole
 element that follows - wider than line-adjacent, accepted
 deliberately.
 
-## D012 - only lintable files' markers participate (2026-07-19)
+## D012 - only lintable files' markers participate (2026-07-21)
 
 Rules affected: none. A `tackbox hook` / `tackbox lint` contract;
 engine dispatch is unchanged.
@@ -372,9 +372,12 @@ covers only files the engine dispatch would lint (extension match
 plus the engine's own path filter, e.g. Go's testdata/ convention),
 plus the Markdown lang marker in lintable Markdown. A marker in a
 file no engine lints is dead text: nothing reads it, so it needs no
-approval, and an entry for it would approve a no-op. The
-`.tackbox/reporters` gate is exempt from the predicate and stays
-unconditional - the file itself is unlintable by design.
+approval, and an entry for it would approve a no-op. An
+attribute-excluded file (D016) is outside the source set entirely, so
+its markers leave the inventory the same way and a manifest entry
+addressing it orphans until removed. The `.tackbox/reporters` gate is
+exempt from the predicate and stays unconditional - the file itself is
+unlintable by design.
 
 The predicate is evaluated against the current tree. Planting a
 marker in a dead file (fixture.py.txt) is free and stays dead; the
@@ -398,23 +401,34 @@ own release review's job; files generated at runtime by tests are
 outside a static model - escape-inventory tooling, not the gate, is
 the net for both.
 
-## D013 - tackbox escapes: the bypass surface in one command (2026-07-16)
+## D013 - tackbox escapes: the bypass surface in one command (2026-07-21)
 
 Rules affected: none. This is the escapes-command contract; rules and
 gates are unchanged.
 
 Decision: `tackbox escapes` prints the repo's bypass surface as JSON
 on stdout - the harness-agnostic interface. Entries: suppression
-markers with their reasons, `.tackbox/reporters` declarations, and
-notify / quiet call sites, each with file, line, and a context window
-of surrounding source (default 3 lines, `--context N`). The scan
-covers lintable files (the D012 predicate) plus the root
-`.tackbox/reporters`; verb-site detection is textual per language -
-an inventory may over-report, it is observability, not a lint.
-`--since <rev>` prints only entries new against that revision, by
-content identity (kind, file, text): over-reports on moved code,
-never a silent drop. Exit 0 with entries present - the inventory is
-not a gate; nonzero only for infra errors.
+markers with their reasons, `.tackbox/reporters` declarations, notify
+/ quiet call sites (each with file, line, and a context window of
+surrounding source, default 3 lines, `--context N`), and one
+`attribute-excluded` entry `{kind, file, attribute}` per set attribute
+of every attribute-excluded file (D016). The scan covers the included
+lintable files (the D012 predicate) plus the root `.tackbox/reporters`;
+an excluded file's own markers are dead, so it surfaces only as its
+`attribute-excluded` entries. Verb-site detection is textual per
+language - an inventory may over-report, it is observability, not a
+lint. The schema is version 2; the counts block gains an
+`attribute-excluded` count of unique files. Total ordering over mixed
+entries is pinned: sort key `(file, kind, kind-subkey)`, subkey
+`(line, text)` for the line-bearing kinds and `(attribute,)` for
+`attribute-excluded`. `--since <rev>` prints only entries new against
+that revision by content identity (kind, file, text/attribute):
+over-reports on moved code, never a silent drop; the baseline is
+attribute-aware (attributes as of the rev via the seam's source
+override, so a removed attribute re-activates its markers as new and an
+unchanged attribute adds no noise), which needs git >= 2.40 - older git
+is a named infra error on the `--since` path only. Exit 0 with entries
+present - the inventory is not a gate; nonzero only for infra errors.
 
 Rationale: the paved road is enforced by rules and gates; everything
 that legitimately steps off it (a marker, a tier-2 declaration, a
@@ -510,3 +524,80 @@ pack - its Svelte grammar returns script content as raw_text (the
 same two-phase work, no gain) and reintroduces per-platform grammar
 binaries via a runtime download - more dependency and less
 determinism.
+
+## D016 - generated/vendored exclusion rides .gitattributes (2026-07-21)
+
+Rules affected: none. A source-set / `tackbox lint` / `tackbox hook`
+contract; rule behavior and marker semantics are unchanged.
+
+Decision: a committed file carrying a generated or vendored git
+attribute is excluded from the whole lint. The honored set is exactly
+three - `linguist-generated`, `gitlab-generated`, `linguist-vendored`;
+a path is excluded when `git check-attr` reports any as `set` or
+`true`, while `false`, `unset`, and `unspecified` leave it in. No
+other attribute participates. Resolution goes through
+`git check-attr -z --stdin` over the candidate list (paths via stdin,
+ARG_MAX-safe), never a manual pattern parse; it reads the worktree, so
+untracked files resolve by path the same as tracked. Excluded files
+leave the per-file engines' argv before dispatch and leave the marker
+inventory (the D012 cascade); erclint still compiles a dispatched
+mixed Go package whole and drops the excluded file's findings
+post-run, while a compile break stays loud.
+
+Rationale: generated code sometimes must be committed, its findings
+are not fixable in the file (they are fixed in the generator), and a
+marker cannot survive regeneration - the granular marker + manifest
+channel physically cannot cover it. tackbox follows the declaration
+that already lives in the git plane rather than adding a surface of
+its own: `.gitattributes` has external consumers (host diff folding,
+language stats), is reviewed in ordinary diffs, and should exist in a
+repo with committed codegen regardless of tackbox - the same move as
+the approvals manifest riding the Edit gate (reuse a controlled
+channel, own nothing new). The outermost fix stays organizational and
+out of scope: generated code should normally not be committed at all;
+this serves the forced residue.
+
+Rejected alternatives: a tackbox-own exclude surface
+(`.tackboxignore`, config globs) - a new channel whose only consumer
+is bypass, asserting nothing and checkable against nothing.
+Generated-header verification (`DO NOT EDIT` / `@generated`
+cross-check) - a heuristic, not verification: it dies on generators
+that emit no marking, and "attribute without header" has no good
+resolution. A provenance firewall (attr.tree / `GIT_ATTR_SOURCE`
+detection, info/attributes and macro scans, carrier and index-state
+preflights) - rolled back deliberately: tackbox is a guardrail, not a
+security boundary (D011 A1), against the lazy agent every exotic path
+is dominated by the accepted Bash residual (R2), and the firewall's
+false-positive surface (merge conflicts, sparse checkout) hit
+legitimate work.
+
+Guardrail doctrine, what replaced the firewall: sanitization over
+detection - the check-attr subprocess runs with `GIT_ATTR_NOSYSTEM=1`,
+`core.attributesFile` neutralized, `GIT_ATTR_SOURCE` dropped, and a
+trailing `-c attr.tree=` (fixed semantics, verified on git 2.50.1: it
+neutralizes any preceding `attr.tree`, which would otherwise redirect
+reading to the committed tree and make an approved worktree edit
+silently inert). Effect visibility over provenance proof - a
+scope-local lint summary line counts excluded files in scope, `tackbox
+escapes` lists the whole excluded population (the `attribute-excluded`
+kind, D013), and an informational `tackbox doctor` section names the
+local divergence conditions. The firewall's reproduced git behaviors
+live on there as diagnostics, not as errors.
+
+Named residuals: (R1) local-only attribute sources (`info/attributes`,
+untracked or index-hidden carriers) make a local run diverge from a
+clean-CI run in analyzable directions - local widening is local-green
+CI-red (the wall holds, CI resolves from a fresh sanitized clone),
+local narrowing is merely stricter than CI, a committed macro applies
+identically both places; the doctor section names the sources, nothing
+blocks. (R2) the Pre asks cover only the Edit/Write/MultiEdit channel
+with literal attribute names; Bash, checkout, and merge can write into
+excluded targets or add/widen exclusion rules, and an Edit referencing
+a pre-existing macro widens without the ask - by design (no second
+manifest, no Bash parsing); the integrated change stays in the
+commit/PR diff, the summary line and escapes name the population, and
+review owns the rest (hosts collapse excluded diffs - reviewers must
+expand them). (R3) textual Pre prediction over-asks on lookalikes
+inside `.gitattributes`; superset on literal names. (R4) host
+attribute spellings drift; the honored set is pinned here - extending
+it is a plan-level change, not an executor call.
