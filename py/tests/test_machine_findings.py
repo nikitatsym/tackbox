@@ -118,8 +118,8 @@ GO_BAD = (
 PY_BAD = "def h():\n    try:\n        work()\n    except ValueError as e:\n        pass\n"
 # no-swallow-catch fires on line 1.
 JS_BAD = "try { f() } catch (e) {}\n"
-# no-non-ascii fires on the em-dash line (line 3).
-MD_BAD = "# T\n\nem dash — here\n"
+# declared-chars fires on the em-dash line (line 4) under a chars=ascii carrier.
+MD_BAD = "<!-- tackbox: chars=ascii -->\n# T\n\nem dash \u2014 here\n"
 
 
 @pytest.fixture(scope="module")
@@ -160,6 +160,6 @@ def test_eslint_machine_location(machine_findings):
 
 
 def test_mdlint_machine_location(machine_findings):
-    hits = _hit(machine_findings, "MD-ASCII", "bad.md")
-    assert hits and hits[0].line == 3, machine_findings
+    hits = _hit(machine_findings, "MD-CHARS", "bad.md")
+    assert hits and hits[0].line == 4, machine_findings
     assert hits[0].message, hits

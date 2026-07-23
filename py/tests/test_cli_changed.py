@@ -28,8 +28,9 @@ from conftest import commit_all, git, init_repo, tackbox_env
 
 
 MD_CLEAN = "# Notes\n\nAll ASCII here.\n"
-# U+2014 em-dash triggers MD-ASCII/no-non-ascii.
-MD_VIOLATE = "# Notes\n\nSome text — with em-dash.\n"
+# A chars=ascii carrier declares the check; the U+2014 em-dash then triggers
+# MD-CHARS / declared-chars.
+MD_VIOLATE = "<!-- tackbox: chars=ascii -->\n# Notes\n\nSome text \u2014 with em-dash.\n"
 
 GO_MOD = "module changedfixture\n\ngo 1.24\n"
 

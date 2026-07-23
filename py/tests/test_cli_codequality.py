@@ -34,20 +34,24 @@ PY_SWALLOW = """def cleanup():
         pass
 """
 
-# Em-dash (U+2014) on line 3 (markdownlint no-non-ascii) - located via the
-# engine's machine NDJSON. Two engines, two parse paths into one report.
-MD_NON_ASCII = "# Notes\n\nSome text — dash.\n"
+# Em-dash (U+2014) on line 4, under a chars=ascii carrier (declared-chars) -
+# located via the engine's machine NDJSON. Two engines, two parse paths into
+# one report.
+MD_NON_ASCII = "<!-- tackbox: chars=ascii -->\n# Notes\n\nSome text \u2014 dash.\n"
 
 # Golden: sorted by (path, line, rule); fingerprint = sha256("rule:path:line"),
 # message excluded; description = "rule: message" carried from the engine.
 EXPECTED = [
     {
         "type": "issue",
-        "check_name": "MD-ASCII",
-        "description": "MD-ASCII: Non-ASCII character [Non-ASCII character U+2014 (—)]",
+        "check_name": "MD-CHARS",
+        "description": (
+            "MD-CHARS: Character outside declared repertoire "
+            "[U+2014 (\u2014) is not in the declared character set]"
+        ),
         "categories": ["Bug Risk"],
-        "location": {"path": "docs/notes.md", "lines": {"begin": 3}},
-        "fingerprint": "c577a943053a272ef58ecb3aa515e721cb5eca4264535186a8903cfe538e6c0c",
+        "location": {"path": "docs/notes.md", "lines": {"begin": 4}},
+        "fingerprint": "ffbd277dceddd470ec30804a0eb55d6984db44a0cb6fae91cdf98d4e95432834",
         "severity": "major",
     },
     {

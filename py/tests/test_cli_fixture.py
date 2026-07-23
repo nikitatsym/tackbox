@@ -44,11 +44,6 @@ JS_SWALLOW = """try {
 }
 """
 
-MD_NON_ASCII = """# Notes
-
-Some line with an em-dash: hello - world.
-"""
-
 PY_VIOLATIONS = PY_ONE_PER_RULE
 
 # One violation per javalint rule; also pins .java dispatch to the javalint engine.
@@ -138,8 +133,10 @@ def fixture_repo(tmp_path_factory) -> Path:
     (root / "src").mkdir()
     (root / "src" / "swallow.js").write_text(JS_SWALLOW)
     (root / "docs").mkdir()
-    # em-dash (U+2014) triggers no-non-ascii
-    (root / "docs" / "notes.md").write_text("# Notes\n\nSome text — dash.\n")
+    # chars=ascii declares the check; the em-dash (U+2014) then triggers MD-CHARS.
+    (root / "docs" / "notes.md").write_text(
+        "<!-- tackbox: chars=ascii -->\n# Notes\n\nSome text \u2014 dash.\n"
+    )
     (root / "pkg" / "recover.go").write_text(GO_EXIT_IN_RECOVER)
     (root / "py").mkdir()
     (root / "py" / "violations.py").write_text(PY_VIOLATIONS)
@@ -256,10 +253,10 @@ def test_eslint_reports_swallow_catch(fixture_repo):
     assert "swallow.js" in section
 
 
-def test_mdlint_reports_non_ascii(fixture_repo):
+def test_mdlint_reports_declared_chars(fixture_repo):
     result = _run_tackbox(fixture_repo)
     section = _split_engine_sections(result.stdout)["tackbox-mdlint"]
-    assert "MD-ASCII" in section or "no-non-ascii" in section
+    assert "MD-CHARS" in section or "declared-chars" in section
     assert "notes.md" in section
 
 

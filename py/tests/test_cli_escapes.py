@@ -228,14 +228,14 @@ def test_since_moved_file_over_reports(tmp_path):
     assert _find(doc, "marker", "old.go", "survives the move dddd") is None
 
 
-def test_reason_extraction_trailing_ws_crlf_and_lang(tmp_path):
-    """Reason trimmed of trailing spaces and CRLF; the markdown `tackbox: lang=`
-    marker yields an empty reason."""
+def test_reason_extraction_trailing_ws_and_crlf(tmp_path):
+    """Reason trimmed of trailing spaces and CRLF. The chars marker is not a
+    suppression (D017) and never appears in the escapes inventory."""
     _write(tmp_path, "spaces.go", "// no-report: reason with trailing spaces eeee   \n")
     (tmp_path / "crlf.go").write_bytes(
         b"package p\r\n// no-report: crlf reason should trim ffff  \r\n"
     )
-    _write(tmp_path, "guide.md", "# Guide\n\ntackbox: lang=go\n")
+    _write(tmp_path, "guide.md", "<!-- tackbox: chars=cyrillic -->\n# Guide\n")
     init_repo(tmp_path, commit=True)
 
     doc = _doc(_run(tmp_path))
@@ -243,10 +243,8 @@ def test_reason_extraction_trailing_ws_crlf_and_lang(tmp_path):
     assert "reason with trailing spaces eeee" in reasons  # no trailing spaces
     assert "crlf reason should trim ffff" in reasons  # no trailing \r or spaces
 
-    lang = _find(doc, "marker", "guide.md", "tackbox: lang=go")
-    assert lang is not None
-    assert lang["text"] == "tackbox: lang=go"
-    assert lang["reason"] == ""
+    # The chars marker is not a bypass, so it is absent from the inventory.
+    assert _find(doc, "marker", "guide.md", "chars=cyrillic") is None
 
 
 def test_exit_semantics(tmp_path):

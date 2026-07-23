@@ -243,8 +243,8 @@ def test_hermetic_lint_finds_all_engine_violations(hermetic_venv, fixture_repo, 
     assert "javasub\\Deep.java" not in result.stdout
     # eslint no-swallow-catch on swallow.js
     assert "no-swallow-catch" in result.stdout
-    # markdownlint MD-ASCII on notes.md
-    assert "MD-ASCII" in result.stdout or "no-non-ascii" in result.stdout
+    # markdownlint declared-chars (MD-CHARS) on notes.md, under its chars=ascii carrier
+    assert "MD-CHARS" in result.stdout or "declared-chars" in result.stdout
 
 
 def test_doctor_fails_on_patched_vendored_transitive_dep(hermetic_venv, fixture_repo, engines_payload):

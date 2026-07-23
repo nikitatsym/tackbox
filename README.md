@@ -323,29 +323,40 @@ every lint and writes no clean-cache markers. A `java`-format clone that
 lies entirely within both files' headers (package, imports, leading
 comments) has no extractable code and is dropped before it is reported.
 
-### Markdown: ASCII and the language marker
+### Markdown: declared charset
 
-The Markdown engine runs the standard markdownlint rules plus `MD-ASCII`,
-which flags any non-ASCII character (any codepoint above U+007F) - em
-dashes, curly quotes, other scripts, emoji - keeping docs portable and
-grep-friendly.
+The Markdown engine does not enforce Markdown or prose style. It runs the
+four link-reference built-ins - `MD011` (reversed links), `MD042` (empty
+links), `MD051` (in-file link fragments), `MD052` (reference links
+defined) - plus `MD-CHARS`, which checks a file's character repertoire
+against a declaration the file makes about itself.
 
-One HTML comment on one of the first five lines widens the alphabet for
-a single file:
+The check is opt-in and declaration-driven. With no marker, the charset
+is not checked. One HTML comment on one of the first five lines turns it
+on and names the allowed sets:
 
 ```text
-<!-- tackbox: lang=ru personal experimental repo -->
+<!-- tackbox: chars=cyrillic,punct -->
 ```
 
-It widens the allowed set to that language's script plus its typographic
-punctuation - `ru` today: Cyrillic, guillemets, em/en dash, ellipsis,
-curly quotes, NBSP - and nothing else: every other non-ASCII character,
-emoji and other scripts included, is still flagged.
+With a marker present, every codepoint must be in the always-allowed
+ASCII base (U+0000-U+007F) or in one of the declared sets; anything else
+is a finding. The sets are named by character repertoire, not language:
 
-The marker is single-use and never disables the rule. A second marker, a
-marker past the fifth line, a missing code, or an unknown language code
-is itself a finding and leaves the whole file strict ASCII. Any text
-after the code (as above) is a free-form note.
+- `ascii` adds nothing (it declares the check with no extension);
+- `cyrillic` adds the Cyrillic block U+0400-U+04FF;
+- `punct` adds em/en dash, guillemets, ellipsis, curly and low quotes,
+  and NBSP.
+
+Sets are comma-joined and unioned; a space after a comma is fine
+(`chars=ascii, cyrillic`). Russian prose declares `chars=cyrillic,punct`;
+a grep-friendly zone declares `chars=cyrillic`.
+
+The marker strengthens the check, so it is not a suppression: it draws no
+approval and does not appear in the escapes inventory. An invalid marker
+(an unknown set, an empty list, a duplicate set, a duplicate marker, or a
+marker past the fifth line) is itself a finding, and the content charset
+is then not checked - a broken declaration does not pass silently.
 
 ## No configuration
 
@@ -396,8 +407,6 @@ ordinary comment token:
   engine also accepts a standalone single-line `/* ... */` (see its
   section).
 - Python: a `#` comment.
-- Markdown: the `tackbox: lang=` HTML comment (see the Markdown
-  engine section) is the only Markdown marker.
 - Svelte: inside `<script>` blocks the `//` form works as in JS/TS;
   the template adds two forms - a `//` comment inside a `{...}`
   expression (line-adjacent, as ever) and an HTML comment
@@ -592,8 +601,8 @@ cheap command that review tooling of any harness can consume (D013). It
 enumerates:
 
 - **suppression markers** (`// no-report`, `// parse-skip`,
-  `// nil-return`, `// long-comment`, `// test-skip`, `// dup-ok`, plus
-  the markdown `tackbox: lang=` marker), each with its reason;
+  `// nil-return`, `// long-comment`, `// test-skip`, `// dup-ok`), each
+  with its reason;
 - **`.tackbox/reporters` declarations** - the tier-2 sinks;
 - **notify / quiet lane choices** - the call sites of the user-lane-only
   `notify` and the telemetry-only `quiet` verbs.
@@ -647,7 +656,7 @@ uvx tackbox@latest escapes --since origin/main --context 5
 - `text` is the trimmed source line; for a marker it runs from the marker
   keyword to end of line.
 - `reason` (markers only) is what follows the keyword's colon, trimmed -
-  possibly empty (the `tackbox: lang=` marker carries none).
+  possibly empty.
 - `context` is the surrounding source, `--context N` lines each side
   (default 3), inclusive of the entry line itself - the window
   `[line-N, line+N]`, clipped at file edges, each line trimmed of trailing

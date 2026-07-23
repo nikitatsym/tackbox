@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 const fs = require('fs')
 const { lint } = require('markdownlint/promise')
-const noNonAscii = require('../js/markdownlint-rules/no-non-ascii')
+const declaredChars = require('../js/markdownlint-rules/declared-chars')
 
 // readFilesFrom reads a newline-separated UTF-8 list-file into its non-empty
 // paths. Additive to positional paths - the bin is public on npm.
@@ -26,8 +26,17 @@ async function run() {
   }
   const result = await lint({
     files,
-    config: { default: true, 'no-non-ascii': true },
-    customRules: [noNonAscii],
+    // Style preset off; only the link-reference built-ins plus the declared-
+    // charset rule run (D017). noInlineConfig blocks in-file rule toggles.
+    config: {
+      default: false,
+      MD011: true,
+      MD042: true,
+      MD051: true,
+      MD052: true,
+      'declared-chars': true,
+    },
+    customRules: [declaredChars],
     noInlineConfig: true,
   })
   let count = 0

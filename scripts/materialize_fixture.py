@@ -79,7 +79,8 @@ JAVA_SWALLOW_NESTED = """class Deep {
 }
 """
 
-MD_NON_ASCII = "# Title \u2014 dash goes here\n"
+# chars=ascii declares the check; the em-dash then trips declared-chars (MD-CHARS).
+MD_NON_ASCII = "<!-- tackbox: chars=ascii -->\n# Title \u2014 dash goes here\n"
 
 
 def materialize(root: Path) -> None:

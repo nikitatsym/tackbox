@@ -253,7 +253,7 @@ def _iter_markers(content: str, marker_re: re.Pattern[str]):
     """(line, text, reason) per marker occurrence. text runs from the marker
     keyword to end of line (trimmed), the same extraction as the hook's
     `_markers`; reason is what follows the keyword's colon (trimmed, possibly
-    empty - the `tackbox: lang=` marker carries none)."""
+    empty)."""
     for m in marker_re.finditer(content):
         nl = content.find("\n", m.start())
         eol = len(content) if nl < 0 else nl
