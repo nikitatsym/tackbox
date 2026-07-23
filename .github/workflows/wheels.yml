@@ -128,7 +128,7 @@ jobs:
           set -e
           echo "lint exit=$rc"
           if [ "$rc" != "1" ]; then
-            echo "expected exit 1 (planted ERC001+no-swallow-catch+MD-ASCII), got $rc" >&2
+            echo "expected exit 1 (planted ERC001+no-swallow-catch+MD-CHARS), got $rc" >&2
             exit 1
           fi
 

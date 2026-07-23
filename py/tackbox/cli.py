@@ -761,11 +761,11 @@ def _print_banner(tackbox_root: Path) -> None:
 # -- Claude Code hook -----------------------------------------------------
 
 _HOOK_TOOLS = frozenset({"Edit", "Write", "MultiEdit"})
-# Suppression markers plus the markdown tackbox lang marker: the pattern the
-# approvals check (scopes / approvals) matches against the tree inventory.
+# Suppression markers: the pattern the approvals check (scopes / approvals)
+# matches against the tree inventory. The markdown chars marker is not a
+# suppression (D017), so it is deliberately absent here.
 _MARKER_RE = re.compile(
     r"(?:no-report|parse-skip|nil-return|long-comment|test-skip|dup-ok):"
-    r"|tackbox:\s*lang=\S*"
 )
 
 

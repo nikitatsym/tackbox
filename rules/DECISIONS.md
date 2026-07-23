@@ -16,12 +16,18 @@ kept).
 
 ## Scope
 
-tackbox enforces a minimal, structural discipline for how code handles
-failure and keeps tests honest: properties decidable from the AST,
-uniform in intent across languages. It does not analyze values or data
-content.
+tackbox enforces a minimal, structural discipline across a fixed set of
+lanes, each decidable from the source without value or taint analysis and
+uniform in intent across languages:
 
-Inclusion test for a candidate rule:
+- failure-handling shape - how code handles an error (swallow, chain,
+  terminal, capture recognition);
+- test integrity - a skipped or focused test must be declared;
+- duplication - copy-paste blocks across files (the DUP engine);
+- declared-charset conformance - a Markdown file whose codepoints must
+  match the character repertoire it declares (D017).
+
+Inclusion test for a candidate rule in the failure-handling / test lanes:
 
 - About the SHAPE of error handling or test integrity -> in.
   About the CONTENT of a value (is this data a secret, is it PII, is
@@ -30,8 +36,11 @@ Inclusion test for a candidate rule:
   Needs to know what a value contains -> out.
 
 Out of scope, by design: secret detection, PII scanning, business
-correctness. Those are a dedicated tool's job (a secret scanner on
-values, a type checker, business tests), not tackbox's.
+correctness, Markdown and prose style, and the choice of natural
+language. Those are a dedicated tool's job (a secret scanner on values, a
+type checker, business tests) or a review convention, not tackbox's. A
+new lane is added only by its own decision entry here, never inferred
+from the word "convention".
 
 ## Design principles
 
@@ -362,15 +371,16 @@ Svelte template HTML-comment marker suppresses within the whole
 element that follows - wider than line-adjacent, accepted
 deliberately.
 
-## D012 - only lintable files' markers participate (2026-07-21)
+## D012 - only lintable files' markers participate (2026-07-23)
 
 Rules affected: none. A `tackbox hook` / `tackbox lint` contract;
 engine dispatch is unchanged.
 
 Decision: the marker inventory behind the approvals check (D011)
 covers only files the engine dispatch would lint (extension match
-plus the engine's own path filter, e.g. Go's testdata/ convention),
-plus the Markdown lang marker in lintable Markdown. A marker in a
+plus the engine's own path filter, e.g. Go's testdata/ convention).
+The Markdown chars marker is not a suppression (D017), so it is not in
+the inventory. A marker in a
 file no engine lints is dead text: nothing reads it, so it needs no
 approval, and an entry for it would approve a no-op. An
 attribute-excluded file (D016) is outside the source set entirely, so
@@ -601,3 +611,49 @@ expand them). (R3) textual Pre prediction over-asks on lookalikes
 inside `.gitattributes`; superset on literal names. (R4) host
 attribute spellings drift; the honored set is pinned here - extending
 it is a plan-level change, not an executor call.
+
+## D017 - declared-charset conformance lane (2026-07-23)
+
+Rules affected: the Markdown character rule, now MD-CHARS /
+declared-chars; its semantics are inverted from the former strict-ASCII
+default.
+
+Decision: a Markdown file's character repertoire is checked only when the
+file declares one, and the declaration widens nothing it does not name.
+An `<!-- tackbox: chars=... -->` HTML comment within the first five lines
+lists named character sets, comma-joined (union); with a marker present,
+every codepoint in the file must fall in the always-allowed ASCII base
+(U+0000-U+007F, the Markdown syntax alphabet) or in one of the declared
+sets, else it is a finding. With no marker, the charset is not checked at
+all - the pre-flip strict-ASCII default is gone.
+
+Sets are named by repertoire, not by language (a set proves nothing about
+the prose's language, so a language name would mislead): `ascii` (adds
+nothing - its role is to declare the check with no extension), `cyrillic`
+(the U+0400-U+04FF block), `punct` (typographic punctuation: em/en dash,
+guillemets, ellipsis, curly and low quotes, NBSP). Russian prose declares
+`chars=cyrillic,punct`; a grep-friendly zone declares `chars=cyrillic`. A
+new set is one added entry on real need. Negation ("everything but X") is
+unsupported: it breaks the allowlist model, and "almost anything goes"
+asserts nothing.
+
+Marker parsing: tokens are trimmed (a space after a comma is allowed); an
+empty token, a duplicate set, an unknown set, a duplicate marker, or a
+marker below the fifth line is an invalid declaration - a finding on the
+marker itself, and the content charset is then not checked (no default to
+fall back to; a broken declaration does not pass silently).
+
+The marker strengthens the check rather than weakening it, so it is not a
+suppression: it stays out of the marker inventory (D012), the approvals
+manifest, the hook Pre gate, and `tackbox escapes` - it is not a bypass
+and draws no approval. Named residual: removing a chars marker drops the
+check silently for the linter; it is a visible diff and review's to own.
+
+The style markdownlint preset (its `default: true` rule bank - line
+length, heading style, and the rest) is off: it was scope picked up by
+accident. The Markdown engine keeps only the four link-reference
+built-ins (MD011, MD042, MD051, MD052) plus this charset rule; Markdown
+and prose style are not enforced.
+
+Formulation: ASCII base plus explicit per-document script declaration;
+natural-language choice remains a review convention.

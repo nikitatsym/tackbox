@@ -550,6 +550,20 @@ def test_pre_code_marker_write_no_ask(tmp_path):
     assert r.returncode == 0 and r.stdout == "", f"a new file with a marker must not ask:\n{r.stdout}"
 
 
+def test_pre_chars_marker_edit_no_ask(tmp_path):
+    # MD2a (D017): the chars marker strengthens the charset check, not a
+    # suppression, so introducing it in a markdown file draws no Pre ask.
+    _dev_py(tmp_path)
+    _init(tmp_path)
+    r = _pre_edit(
+        tmp_path,
+        "notes.md",
+        "plain\n",
+        "<!-- tackbox: chars=cyrillic -->\nplain\n",
+    )
+    assert r.returncode == 0 and r.stdout == "", f"a chars marker edit must not ask:\n{r.stdout}"
+
+
 def test_pre_plain_edit_allow(tmp_path):
     _dev_py(tmp_path)
     _init(tmp_path)
@@ -790,22 +804,18 @@ def test_bash_unresolvable_file_blocks(tmp_path):
     assert "  Bad.java" in reason, reason
 
 
-def test_bash_lang_marker_needs_entry(tmp_path):
-    # The markdown lang marker is part of the inventory: shelled in, it blocks
-    # until covered; its entry text runs through the comment's closing `-->`.
+def test_bash_chars_marker_not_in_inventory(tmp_path):
+    # MD2a flip (D017): the chars marker strengthens the charset check, so it is
+    # not a suppression - it left the marker inventory (D012). Shelled into a
+    # markdown file it does NOT block, and needs no approval entry.
     _dev_py(tmp_path)
     (tmp_path / "notes.md").write_text("plain\n")
     _init(tmp_path)
-    (tmp_path / "notes.md").write_text("<!-- tackbox: lang=ru personal repo -->\nplain\n")
-    reason = _block(_bash(tmp_path))
-    assert "Unapproved suppression marker" in reason, reason
-    assert "notes.md: tackbox: lang=ru personal repo -->" in reason, reason
-    (tmp_path / ".tackbox").mkdir()
-    (tmp_path / ".tackbox" / "approvals").write_text(
-        "notes.md: tackbox: lang=ru personal repo -->\n"
-    )
+    (tmp_path / "notes.md").write_text("<!-- tackbox: chars=cyrillic -->\nplain\n")
     r = _bash(tmp_path)
-    assert r.returncode == 0 and r.stdout == "", f"a covering entry silences it:\n{r.stdout}"
+    assert r.returncode == 0 and r.stdout == "", (
+        f"a chars marker is not an inventory marker:\n{r.stdout}\n{r.stderr}"
+    )
 
 
 def test_bash_marker_in_unlintable_txt_silent(tmp_path):
