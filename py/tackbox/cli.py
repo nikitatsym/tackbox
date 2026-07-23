@@ -32,7 +32,12 @@ from .engines import (
     resolve_hermetic_versions,
     run_engines,
 )
-from .gitfiles import AttributeResolutionError, collect_snapshot, resolve_attributes
+from .gitfiles import (
+    AttributeResolutionError,
+    collect_link_targets,
+    collect_snapshot,
+    resolve_attributes,
+)
 from .source_set import (
     EXCLUSION_ATTRIBUTES,
     PathspecMagicError,
@@ -236,6 +241,14 @@ def _lint_results(
     if not plan:
         return [], snapshot.warnings, go_orphans
 
+    # The Markdown link rule needs the whole-tree target inventory (built from the
+    # raw git listing before source-set filtering, since that drops the symlinks /
+    # gitlinks the inventory must record). Built only when mdlint is dispatched, so
+    # a non-Markdown run pays no extra `git ls-files`.
+    link_targets: tuple[tuple[str, str], ...] = ()
+    if any(engine.wants_link_targets for engine, _ in plan):
+        link_targets = tuple(collect_link_targets(repo_root))
+
     # Materialize the engine store once before the parallel run so worker
     # threads find it in place (dev mode has no store).
     if is_hermetic():
@@ -247,14 +260,14 @@ def _lint_results(
         no_cache = True
 
     if no_cache:
-        results = run_engines(plan, repo_root, tackbox_root, reporter_pairs, machine)
+        results = run_engines(plan, repo_root, tackbox_root, reporter_pairs, machine, link_targets)
     else:
         cache_root = cache.default_cache_root()
         engines_hash = engines_hash_hermetic() if is_hermetic() else cache.engines_hash_dev(tackbox_root)
         cache.gc_stale_engines(engines_hash, cache_root)
 
         filtered_plan, pending = _apply_cache(plan, repo_root, engines_hash, cache_root, policy)
-        results = run_engines(filtered_plan, repo_root, tackbox_root, reporter_pairs, machine)
+        results = run_engines(filtered_plan, repo_root, tackbox_root, reporter_pairs, machine, link_targets)
         # Cache attribution reads RAW erclint truth, BEFORE the exclusion filter:
         # a mixed package whose only findings sit in excluded files is not marked
         # clean, so removing the attribute (content untouched) brings them back.

@@ -16,6 +16,7 @@ from tackbox.source_set import (
     PathspecMagicError,
     Snapshot,
     SourceWarning,
+    build_link_targets,
     build_snapshot,
     files_to_go_packages,
     filter_source_set,
@@ -689,3 +690,70 @@ def test_build_snapshot_carries_warnings():
     snap = build_snapshot(["a.go"], {}, warn)
     assert snap.warnings == warn
     assert isinstance(snap, Snapshot)
+
+
+# -- build_link_targets (Markdown link-target inventory) -------------------
+
+
+def _lt_env(present: set[str], symlinks: set[str]):
+    return (
+        lambda p: p in present,
+        lambda p: p in symlinks,
+    )
+
+
+def test_link_targets_regular_file_is_F():
+    exists, is_symlink = _lt_env({"a.md", "b.md"}, set())
+    stage = [IndexEntry("a.md", 0o100644), IndexEntry("b.md", 0o100755)]
+    assert build_link_targets(stage, [], exists, is_symlink) == [("F", "a.md"), ("F", "b.md")]
+
+
+def test_link_targets_tracked_symlink_is_L_not_dereferenced():
+    exists, is_symlink = _lt_env({"real.md"}, {"link.md"})
+    stage = [IndexEntry("real.md", 0o100644), IndexEntry("link.md", SYMLINK_MODE)]
+    # Sorted by (path, kind): "link.md" precedes "real.md".
+    assert build_link_targets(stage, [], exists, is_symlink) == [("L", "link.md"), ("F", "real.md")]
+
+
+def test_link_targets_gitlink_is_G():
+    exists, is_symlink = _lt_env(set(), set())
+    stage = [IndexEntry("vendor/sub", GITLINK_MODE)]
+    assert build_link_targets(stage, [], exists, is_symlink) == [("G", "vendor/sub")]
+
+
+def test_link_targets_untracked_non_symlink_is_F():
+    exists, is_symlink = _lt_env({"tracked.md"}, set())
+    stage = [IndexEntry("tracked.md", 0o100644)]
+    assert build_link_targets(stage, ["new.md"], exists, is_symlink) == [
+        ("F", "new.md"),
+        ("F", "tracked.md"),
+    ]
+
+
+def test_link_targets_untracked_symlink_dropped():
+    # L is tracked-only; an untracked symlink mirrors the source set, which drops it.
+    exists, is_symlink = _lt_env(set(), {"dangle.md"})
+    assert build_link_targets([], ["dangle.md"], exists, is_symlink) == []
+
+
+def test_link_targets_tracked_missing_from_worktree_dropped():
+    # Same case the source set skips with a SourceWarning: not present -> not a target.
+    exists, is_symlink = _lt_env(set(), set())
+    stage = [IndexEntry("gone.md", 0o100644)]
+    assert build_link_targets(stage, [], exists, is_symlink) == []
+
+
+def test_link_targets_sorted_by_path_then_kind():
+    exists, is_symlink = _lt_env({"z.md", "a.md"}, {"m.link"})
+    stage = [
+        IndexEntry("z.md", 0o100644),
+        IndexEntry("m.link", SYMLINK_MODE),
+        IndexEntry("a.md", 0o100644),
+        IndexEntry("sub", GITLINK_MODE),
+    ]
+    assert build_link_targets(stage, [], exists, is_symlink) == [
+        ("F", "a.md"),
+        ("L", "m.link"),
+        ("G", "sub"),
+        ("F", "z.md"),
+    ]

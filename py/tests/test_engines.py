@@ -14,6 +14,7 @@ import pytest
 import tackbox.engines as engines
 from tackbox.engines import (
     DEV_ENGINES,
+    HERMETIC_ENGINES,
     EngineSpec,
     dispatch,
     normalize_exit_code,
@@ -354,6 +355,16 @@ def test_dev_engines_eslint_covers_ts_and_svelte():
 def test_dev_engines_mdlint_extension_is_only_md():
     md = next(e for e in DEV_ENGINES if e.id == "tackbox-mdlint")
     assert md.extensions == frozenset([".md"])
+
+
+def test_mdlint_is_non_cacheable_and_wants_link_targets():
+    # Cross-file link rule (D018): a per-file digest cannot express the target
+    # dependency, so mdlint always re-runs (jscpd precedent) and receives the
+    # whole-tree inventory. Both registries must agree.
+    for registry in (DEV_ENGINES, HERMETIC_ENGINES):
+        md = next(e for e in registry if e.id == "tackbox-mdlint")
+        assert md.cacheable is False
+        assert md.wants_link_targets is True
 
 
 # -- resolve_dev_versions ---------------------------------------------------

@@ -262,6 +262,43 @@ def filter_source_set(
     return narrow_by_path(sorted(combined), scope), warnings
 
 
+def build_link_targets(
+    stage_entries: list[IndexEntry],
+    untracked_paths: list[str],
+    exists: Callable[[str], bool],
+    is_symlink: Callable[[str], bool],
+) -> list[tuple[str, str]]:
+    """The Markdown link-target inventory, built from the RAW git listing before
+    source-set filtering drops symlinks and gitlinks (that filtering is exactly
+    why candidate_files is not enough here). Returns sorted `(kind, path)` pairs:
+
+    - F: a source-set file - a tracked regular file present in the worktree, or an
+      untracked non-symlink - taken BEFORE attribute exclusion (D016). An
+      attribute-excluded file is still a valid link target: a target existing does
+      not mean it is linted.
+    - L: a tracked symlink (index mode 120000). Its target exists, is not
+      dereferenced, and its fragment is never checked.
+    - G: a gitlink root (index mode 160000, a submodule). A link target under such
+      a prefix is skipped - a submodule is unverifiable from the superproject.
+
+    Untracked symlinks are dropped, exactly as filter_source_set drops them; L is
+    tracked-only. Tracked regular files missing from the worktree are dropped, the
+    same SourceWarning case the source set skips.
+    """
+    targets: list[tuple[str, str]] = []
+    for entry in stage_entries:
+        if entry.mode == GITLINK_MODE:
+            targets.append(("G", entry.path))
+        elif entry.mode == SYMLINK_MODE:
+            targets.append(("L", entry.path))
+        elif exists(entry.path):
+            targets.append(("F", entry.path))
+    for path in untracked_paths:
+        if not is_symlink(path):
+            targets.append(("F", path))
+    return sorted(targets, key=lambda t: (t[1], t[0]))
+
+
 def files_to_go_packages(paths: Iterable[str]) -> list[str]:
     """Map `.go` files to sorted unique package directories.
 

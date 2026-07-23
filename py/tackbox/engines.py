@@ -331,6 +331,10 @@ class EngineSpec:
     # cross-file, so a per-file key is false by construction - it always runs
     # and never writes clean markers.
     cacheable: bool = True
+    # Receives the whole-tree link-target inventory as `--repo-root` +
+    # `--link-targets-from` (the runner appends them post-build). tackbox-mdlint
+    # only: its cross-file link rule needs targets outside the linted scope.
+    wants_link_targets: bool = False
 
 
 @dataclass(frozen=True)
@@ -395,6 +399,7 @@ class EngineRun:
     tackbox_root: Path
     reporters: tuple[tuple[str, str, str], ...] = ()
     machine: bool = False
+    link_targets: tuple[tuple[str, str], ...] = ()
 
 
 def run_engines(
@@ -403,11 +408,14 @@ def run_engines(
     tackbox_root: Path,
     reporters: tuple[tuple[str, str, str], ...] = (),
     machine: bool = False,
+    link_targets: tuple[tuple[str, str], ...] = (),
 ) -> list[EngineResult]:
     """Run each dispatched engine as a subprocess in parallel.
 
     machine=True asks every machine-capable engine for the internal
     one-JSON-object-per-finding output instead of its human format.
+    link_targets is the whole-tree link inventory, appended as flags for the
+    engine that wants it (tackbox-mdlint).
     """
     if not plan:
         return []
@@ -415,7 +423,7 @@ def run_engines(
         futures = {
             pool.submit(
                 _run_one,
-                EngineRun(engine, args, repo_root, tackbox_root, reporters, machine),
+                EngineRun(engine, args, repo_root, tackbox_root, reporters, machine, link_targets),
             ): engine.id
             for engine, args in plan
         }
@@ -425,6 +433,19 @@ def run_engines(
 
 def _machine_argv(engine: EngineSpec, argv: list[str], machine: bool) -> list[str]:
     return [*argv, "--machine"] if machine and engine.machine_flag else argv
+
+
+def _link_target_argv(
+    run: EngineRun, argv: list[str], paths_dir: Path
+) -> list[str]:
+    """Append the mandatory `--repo-root` / `--link-targets-from` flags for the
+    engine that wants the link inventory (tackbox-mdlint). The inventory rides a
+    list-file (LF, one `<kind>\\t<path>` per line) so a large repo stays under
+    ARG_MAX, mirroring --files-from."""
+    if not run.engine.wants_link_targets:
+        return argv
+    listfile = _write_link_targets_file(paths_dir, run.link_targets)
+    return [*argv, "--repo-root", str(run.repo_root), "--link-targets-from", listfile]
 
 
 def _run_one(run: EngineRun) -> EngineResult:
@@ -441,6 +462,7 @@ def _run_one(run: EngineRun) -> EngineResult:
             ),
             run.machine,
         )
+        argv = _link_target_argv(run, argv, Path(paths_dir))
         completed = subprocess.run(
             argv,
             cwd=run.repo_root,
@@ -742,6 +764,19 @@ def _write_paths_file(paths_dir: Path, paths: list[str]) -> str:
     with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
         for p in paths:
             fh.write(p + "\n")
+    return name
+
+
+def _write_link_targets_file(
+    paths_dir: Path, link_targets: tuple[tuple[str, str], ...]
+) -> str:
+    """The link-target inventory as `<kind>\\t<path>` LF lines in a fresh temp file
+    under paths_dir; return its absolute path. Same LF pin as _write_paths_file: a
+    trailing `\\r` would break the wrapper's list-file reader."""
+    fd, name = tempfile.mkstemp(prefix="linktargets-", suffix=".txt", dir=str(paths_dir))
+    with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+        for kind, path in link_targets:
+            fh.write(f"{kind}\t{path}\n")
     return name
 
 
@@ -1087,6 +1122,12 @@ DEV_ENGINES: list[EngineSpec] = [
         extensions=_MD_EXTS,
         build_argv=_tackbox_mdlint_argv,
         machine_flag=True,
+        # Cross-file link rule: a per-file digest cannot express the dependency on
+        # target .md content and inventory composition, so it always re-runs (the
+        # jscpd precedent); a warm cache never hides a target renamed out from
+        # under a link.
+        cacheable=False,
+        wants_link_targets=True,
     ),
     EngineSpec(
         id="pyrules",
@@ -1209,6 +1250,8 @@ HERMETIC_ENGINES: list[EngineSpec] = [
         extensions=_MD_EXTS,
         build_argv=_tackbox_mdlint_argv_hermetic,
         machine_flag=True,
+        cacheable=False,
+        wants_link_targets=True,
     ),
     EngineSpec(
         id="pyrules",
