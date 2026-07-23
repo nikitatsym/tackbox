@@ -191,8 +191,56 @@ def test_list_files_written_with_lf_only(tmp_path):
     # path breaks every list-file reader ("File not found: a.go\r").
     paths = engines._write_paths_file(tmp_path, ["a.go", "b/c.py"])
     argfile = engines._write_java_argfile(tmp_path, ["-jar", "x.jar", "A.java"])
+    linktargets = engines._write_link_targets_file(tmp_path, (("F", "a.md"), ("L", "s.md")))
     assert b"\r" not in Path(paths).read_bytes()
     assert b"\r" not in Path(argfile).read_bytes()
+    assert b"\r" not in Path(linktargets).read_bytes()
+
+
+# -- tackbox-mdlint: the mandatory link-target flags (D018) ----------------
+
+
+def test_link_targets_file_is_tab_separated_kind_path(tmp_path):
+    name = engines._write_link_targets_file(
+        tmp_path, (("F", "a.md"), ("L", "link.md"), ("G", "vendor/sub"))
+    )
+    assert _lines(name) == ["F\ta.md", "L\tlink.md", "G\tvendor/sub"]
+
+
+def _mdlint_run(engine, tmp_path):
+    return engines.EngineRun(
+        engine=engine,
+        args=["a.md"],
+        repo_root=Path("/repo"),
+        tackbox_root=Path("/tb"),
+        link_targets=(("F", "a.md"), ("F", "docs/b.md")),
+    )
+
+
+def test_dev_mdlint_run_appends_repo_root_and_link_targets():
+    run = _mdlint_run(_dev("tackbox-mdlint"), None)
+    argv = engines._link_target_argv(run, ["node", "wrapper", "--files-from", "L"], Path("/tmp"))
+    assert argv[:4] == ["node", "wrapper", "--files-from", "L"]
+    assert argv[argv.index("--repo-root") + 1] == str(Path("/repo"))
+    assert "--link-targets-from" in argv
+
+
+def test_dev_mdlint_run_writes_the_inventory_the_wrapper_reads(tmp_path):
+    run = _mdlint_run(_dev("tackbox-mdlint"), None)
+    argv = engines._link_target_argv(run, ["node", "wrapper"], tmp_path)
+    assert _lines(_after(argv, "--link-targets-from")) == ["F\ta.md", "F\tdocs/b.md"]
+
+
+def test_non_mdlint_engine_gets_no_link_target_flags(tmp_path):
+    run = engines.EngineRun(
+        engine=_dev("tackbox-eslint"),
+        args=["a.js"],
+        repo_root=Path("/repo"),
+        tackbox_root=Path("/tb"),
+        link_targets=(("F", "a.md"),),
+    )
+    argv = engines._link_target_argv(run, ["node", "eslint"], tmp_path)
+    assert argv == ["node", "eslint"]
 
 
 # -- pyrules: --files-from on our checker CLI ------------------------------

@@ -15,6 +15,7 @@ from pathlib import Path
 from .source_set import (
     EXCLUSION_ATTRIBUTES,
     Snapshot,
+    build_link_targets,
     build_snapshot,
     filter_source_set,
     parse_check_attr,
@@ -29,12 +30,9 @@ class AttributeResolutionError(RuntimeError):
     genuine resolution failure to "no such sources"."""
 
 
-def collect_source_set(repo_root: Path, scope: str = ".", changed_scope=None):
-    """Run `git ls-files` (staged + untracked) under repo_root and return the
-    filtered (files, warnings) source set for scope. Raises on git failure -
-    callers that tolerate a missing/failed git wrap the call. Attribute exclusion
-    is not applied here: this is the thin wrapper for callers needing only the
-    (files, warnings) shape; the exclusion lives in collect_snapshot."""
+def _ls_files_raw(repo_root: Path) -> tuple[bytes, bytes]:
+    """`git ls-files` staged (`-s`) and untracked, as raw `-z` streams. Raises on
+    git failure - callers that tolerate a missing/failed git wrap the call."""
     stage_raw = subprocess.run(
         ["git", "ls-files", "-s", "-z"],
         cwd=repo_root,
@@ -47,6 +45,16 @@ def collect_source_set(repo_root: Path, scope: str = ".", changed_scope=None):
         capture_output=True,
         check=True,
     ).stdout
+    return stage_raw, untracked_raw
+
+
+def collect_source_set(repo_root: Path, scope: str = ".", changed_scope=None):
+    """Run `git ls-files` (staged + untracked) under repo_root and return the
+    filtered (files, warnings) source set for scope. Raises on git failure -
+    callers that tolerate a missing/failed git wrap the call. Attribute exclusion
+    is not applied here: this is the thin wrapper for callers needing only the
+    (files, warnings) shape; the exclusion lives in collect_snapshot."""
+    stage_raw, untracked_raw = _ls_files_raw(repo_root)
     return filter_source_set(
         parse_ls_files_stage(stage_raw),
         parse_ls_files_untracked(untracked_raw),
@@ -54,6 +62,22 @@ def collect_source_set(repo_root: Path, scope: str = ".", changed_scope=None):
         exists=lambda p: (repo_root / p).exists(),
         is_symlink=lambda p: (repo_root / p).is_symlink(),
         changed_scope=changed_scope,
+    )
+
+
+def collect_link_targets(repo_root: Path) -> list[tuple[str, str]]:
+    """The whole-tree Markdown link-target inventory as sorted `(kind, path)`
+    pairs (source_set.build_link_targets). Always whole-tree, regardless of lint
+    scope: a scoped run of a.md may link to any b.md in the repo, so every target
+    must stay resolvable. Runs `git ls-files` (no `check-attr`), so the
+    one-attribute-resolution-per-command invariant is untouched. Raises on git
+    failure - callers surface it as an infra error."""
+    stage_raw, untracked_raw = _ls_files_raw(repo_root)
+    return build_link_targets(
+        parse_ls_files_stage(stage_raw),
+        parse_ls_files_untracked(untracked_raw),
+        exists=lambda p: (repo_root / p).exists(),
+        is_symlink=lambda p: (repo_root / p).is_symlink(),
     )
 
 

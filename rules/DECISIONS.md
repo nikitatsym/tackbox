@@ -25,7 +25,10 @@ uniform in intent across languages:
 - test integrity - a skipped or focused test must be declared;
 - duplication - copy-paste blocks across files (the DUP engine);
 - declared-charset conformance - a Markdown file whose codepoints must
-  match the character repertoire it declares (D017).
+  match the character repertoire it declares (D017);
+- document link integrity - a relative Markdown link or image must
+  resolve to an existing in-repo target, and a fragment into a target
+  Markdown file must name a real heading or HTML anchor (D018).
 
 Inclusion test for a candidate rule in the failure-handling / test lanes:
 
@@ -657,3 +660,61 @@ and prose style are not enforced.
 
 Formulation: ASCII base plus explicit per-document script declaration;
 natural-language choice remains a review convention.
+
+## D018 - document link integrity lane (2026-07-23)
+
+Rules affected: a new Markdown rule, MD-LINK / link-integrity, alongside the
+MD051 built-in.
+
+Decision: a relative Markdown link or image target must exist inside the repo,
+and a fragment into a target Markdown file must name a real anchor. The rule is
+cross-file only - MD051 (enabled) already holds a file's own fragments. It is
+fully offline: a target carrying any RFC3986 URI scheme
+(`^[a-zA-Z][a-zA-Z0-9+.-]*:` - http, mailto, tel, data, ...) or an absolute
+path is out of scope, and no external URL is ever resolved.
+
+Existence is decided against a link-target inventory, not `fs.exists`: a link to
+a gitignored file is broken in a clean clone, so it is a finding. The inventory
+is built from the raw git listing before source-set filtering (which drops the
+symlinks and gitlinks the inventory must record) and rides a list-file to the
+wrapper. Its kinds:
+
+- F: a source-set file, taken BEFORE attribute exclusion (D016) - an
+  attribute-excluded file is a valid link target, since a target existing does
+  not mean it is linted;
+- L: a tracked symlink - its target exists, is not dereferenced, and its
+  fragment is not checked;
+- G: a gitlink root - a target under it is skipped.
+
+A link to a directory is valid when the inventory holds any entry under that
+prefix (hosts render such links). Anchor and target semantics follow the MD051 /
+GitHub contract, not a private approximation: percent-encoded paths are decoded
+before matching, a query before the fragment is dropped, and a target's anchors
+are its heading slugs (the GitHub slugger, with the -1/-2 duplicate suffixes and
+unicode headings - legal since the charset flip, D017) plus HTML `id=` /
+`<a name=>` anchors, with `#top` always valid. markdownlint does not export its
+fragment helper, so the slugger is ported and pinned by fixtures.
+
+The wrapper (`tackbox-mdlint`, public on npm) takes `--link-targets-from` and
+`--repo-root`, both mandatory - a call missing either is a usage error (exit 2).
+There is no silent fall-back that drops the cross-file rule when the inventory
+is absent, and no implicit root (cwd would break a call from a subdirectory; the
+inventory's own directory is a temp dir). Both flags are an approved breaking
+change to the bin, whose only caller is the tackbox CLI.
+
+The Markdown engine is cacheable=False (the jscpd precedent): a per-file digest
+cannot express the dependency on a target's content or the inventory's
+composition, so it always re-lints - a warm cache never hides a target renamed
+out from under a link.
+
+There is no suppression for this lane: an escape is a semantically foreign
+marker here, and a real need would be its own marker kind with the full
+hook/approvals wiring, added by its own decision.
+
+Named residuals: (L1) a submodule's contents are unverifiable from the
+superproject - a target under a gitlink is skipped, not resolved. (L2) a scoped
+run and the hook check a file's OUTGOING links against the whole-tree inventory
+but do not re-check INCOMING links to an edited file (editing only b.md leaves a
+now-dangling a.md -> b.md#old unseen); the authority is the full `dev.py check`
+/ CI, which with cacheable=False always re-lints every Markdown file. (L3)
+removing a link, like removing a target, is a visible diff review owns.

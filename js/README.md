@@ -138,6 +138,47 @@ siblings still report. Recognition reads the enclosing element's
 preceding `SvelteHTMLComment` sibling; `/* ... */` block comments
 are never markers.
 
+## Markdown
+
+The CLI also lints `.md` files through `tackbox-mdlint`, a thin markdownlint
+wrapper. The style preset is off; only the link-reference built-ins (MD011,
+MD042, MD051, MD052) plus two tackbox rules run:
+
+- `declared-chars` (MD-CHARS) - a file's character repertoire is checked only
+  when it declares one with `<!-- tackbox: chars=... -->` (D017).
+- `link-integrity` (MD-LINK) - a relative link or image must resolve to an
+  existing in-repo target, and a `#fragment` into a target `.md` must name a
+  real heading slug or HTML anchor (D018). Cross-file only; MD051 holds a
+  file's own fragments. Fully offline: any URI scheme or absolute path is out
+  of scope.
+
+The link rule needs the whole-tree set of valid targets, so the bin takes two
+mandatory flags - a call missing either is a usage error (exit 2):
+
+```bash
+tackbox-mdlint --repo-root <dir> --link-targets-from <list-file> \
+  [--files-from <list-file>] [files...]
+```
+
+- `--repo-root <dir>` - the repository root; linted files and targets are
+  normalized to it, so a call from a subdirectory resolves correctly.
+- `--link-targets-from <list-file>` - the link-target inventory (below).
+- `--files-from <list-file>` - the files to lint, one per line (additive to
+  positional paths; keeps the spawn under ARG_MAX).
+
+The inventory list-file is LF-terminated, one `<kind>\t<path>` per line, paths
+repo-relative:
+
+- `F` - a linkable file (a source-set file, before generated/vendored
+  exclusion: existence is not linting).
+- `L` - a tracked symlink; its target exists but is not dereferenced and its
+  fragment is not checked.
+- `G` - a gitlink (submodule) root; a target under it is skipped.
+
+The tackbox CLI builds this inventory from the git listing and passes it in;
+the flags exist for that one caller and are a deliberate breaking change to the
+public bin.
+
 ## Reporter recognition
 
 A call counts as a reporter only when its callee resolves to one of the

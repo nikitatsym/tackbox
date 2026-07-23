@@ -81,6 +81,19 @@ def tackbox_env(**overrides: str) -> dict[str, str]:
     return env
 
 
+def run_lint(repo, cache_home, *extra):
+    """`python -m tackbox.cli lint . [extra]` under `repo` with the cache redirected
+    to `cache_home`. Shared by the cache and mdlint-link CLI tests so the spawn
+    boilerplate does not clone across files (jscpd)."""
+    return subprocess.run(
+        [sys.executable, "-m", "tackbox.cli", "lint", ".", *extra],
+        cwd=repo,
+        env=tackbox_env(TACKBOX_CACHE_HOME=str(cache_home)),
+        capture_output=True,
+        text=True,
+    )
+
+
 def count_calls(monkeypatch, module, name: str) -> dict:
     """Wrap `module.name` to count its invocations; returns a {'n': int} counter.
     Shared so the seam-spy blocks across the attribute tests do not clone each

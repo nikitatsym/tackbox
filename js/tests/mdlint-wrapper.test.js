@@ -12,8 +12,17 @@ function withTmp(fn) {
   try { return fn(dir) } finally { rmSync(dir, { recursive: true, force: true }) }
 }
 
+// The bin now requires --repo-root and --link-targets-from (D018). These charset
+// / style / built-in tests carry no relative cross-file links, so an inventory
+// naming just the linted file keeps the link rule silent.
+function mandatoryFlags(dir, ...targets) {
+  const inv = path.join(dir, '_targets.txt')
+  writeFileSync(inv, targets.map(t => 'F\t' + t).join('\n') + '\n')
+  return ['--repo-root', dir, '--link-targets-from', inv]
+}
+
 function lintInTmp(dir, file) {
-  return spawnSync('node', [WRAPPER, file], { cwd: dir, encoding: 'utf8' })
+  return spawnSync('node', [WRAPPER, ...mandatoryFlags(dir, file), file], { cwd: dir, encoding: 'utf8' })
 }
 
 // Cyrillic building blocks, written as \u escapes so this source stays ASCII.
@@ -172,7 +181,7 @@ function lintViaList(listContent) {
   withTmp(dir => {
     writeFileSync(path.join(dir, 'bad.md'), '<!-- tackbox: chars=ascii -->\n# hi\n\nrocket: \u{1F680}\n')
     writeFileSync(path.join(dir, 'files.txt'), listContent)
-    const r = spawnSync('node', [WRAPPER, '--files-from', path.join(dir, 'files.txt')], { cwd: dir, encoding: 'utf8' })
+    const r = spawnSync('node', [WRAPPER, ...mandatoryFlags(dir, 'bad.md'), '--files-from', path.join(dir, 'files.txt')], { cwd: dir, encoding: 'utf8' })
     assert.equal(r.status, 1, r.stdout + r.stderr)
     assert.match(r.stdout, /declared-chars/)
   })

@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import commit_all, init_repo, tackbox_env
+from conftest import commit_all, init_repo, run_lint, tackbox_env
 
 from tackbox import cache as tackbox_cache
 from tackbox import cli
@@ -73,18 +73,6 @@ def _needs_go():
 def _needs_node():
     if shutil.which("node") is None:
         pytest.fail("node not installed; install it, do not skip")
-
-
-def _run_tackbox(
-    repo: Path, cache_home: Path, *extra: str
-) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, "-m", "tackbox.cli", "lint", ".", *extra],
-        cwd=repo,
-        env=tackbox_env(TACKBOX_CACHE_HOME=str(cache_home)),
-        capture_output=True,
-        text=True,
-    )
 
 
 _DEV_HASH: str | None = None
@@ -159,7 +147,7 @@ def dirty_js_repo(tmp_path) -> Path:
 
 def test_cold_run_writes_markers(go_repo, tmp_path):
     cache_home = tmp_path / "cache"
-    result = _run_tackbox(go_repo, cache_home)
+    result = run_lint(go_repo, cache_home)
     assert result.returncode == 0, (
         f"clean fixture returned {result.returncode}\n"
         f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
@@ -172,9 +160,9 @@ def test_cold_run_writes_markers(go_repo, tmp_path):
 
 def test_warm_run_skips_all_engines(go_repo, tmp_path):
     cache_home = tmp_path / "cache"
-    prime = _run_tackbox(go_repo, tmp_path / "cache")
+    prime = run_lint(go_repo, tmp_path / "cache")
     assert prime.returncode == 0
-    warm = _run_tackbox(go_repo, cache_home)
+    warm = run_lint(go_repo, cache_home)
     assert warm.returncode == 0
     # No engine sections at all when everything is cached.
     assert "== erclint ==" not in warm.stdout
@@ -190,14 +178,14 @@ def test_signature_change_in_b_invalidates_a(go_repo, tmp_path):
     A remain (they belong to the pre-change source and are LRU fodder).
     """
     cache_home = tmp_path / "cache"
-    assert _run_tackbox(go_repo, cache_home).returncode == 0
+    assert run_lint(go_repo, cache_home).returncode == 0
     before = {p.name for p in _all_markers(cache_home)}
     erclint_before = {p.name for p in _all_markers(cache_home) if p.name.endswith(".erclint")}
 
     (go_repo / "pkg_b" / "b.go").write_text(GO_PKG_B_ADD3)
     (go_repo / "pkg_a" / "a.go").write_text(GO_PKG_A_USES_B_ADD3)
 
-    result = _run_tackbox(go_repo, cache_home)
+    result = run_lint(go_repo, cache_home)
     assert result.returncode == 0, (
         f"expected 0, got {result.returncode}\n"
         f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
@@ -212,11 +200,11 @@ def test_signature_change_in_b_invalidates_a(go_repo, tmp_path):
 
 def test_unrelated_pkg_change_does_not_touch_a(go_repo, tmp_path):
     cache_home = tmp_path / "cache"
-    assert _run_tackbox(go_repo, cache_home).returncode == 0
+    assert run_lint(go_repo, cache_home).returncode == 0
     erclint_before = {p.name for p in _all_markers(cache_home) if p.name.endswith(".erclint")}
 
     (go_repo / "pkg_c" / "c.go").write_text(GO_PKG_C_UNRELATED + "\n// tail\n")
-    assert _run_tackbox(go_repo, cache_home).returncode == 0
+    assert run_lint(go_repo, cache_home).returncode == 0
 
     erclint_after = {p.name for p in _all_markers(cache_home) if p.name.endswith(".erclint")}
     new_marks = erclint_after - erclint_before
@@ -229,7 +217,7 @@ def test_unrelated_pkg_change_does_not_touch_a(go_repo, tmp_path):
 
 def test_failure_not_cached(dirty_js_repo, tmp_path):
     cache_home = tmp_path / "cache"
-    r = _run_tackbox(dirty_js_repo, cache_home)
+    r = run_lint(dirty_js_repo, cache_home)
     assert r.returncode != 0
     assert _marker_count(cache_home, "tackbox-eslint") == 0
 
@@ -249,7 +237,7 @@ def test_partial_success_caches_the_clean_files(tmp_path):
     commit_all(tmp_path)
     cache_home = tmp_path / "cache"
 
-    r = _run_tackbox(tmp_path, cache_home)
+    r = run_lint(tmp_path, cache_home)
     assert r.returncode != 0
     # Whole-batch semantics for eslint: nothing marked when the batch failed.
     assert _marker_count(cache_home, "tackbox-eslint") == 0
@@ -269,7 +257,7 @@ def test_corrupt_marker_does_not_fail(clean_js_repo, tmp_path):
     corrupt = cache_home / tackbox_cache.CACHE_VERSION / _dev_hash() / "corrupt.tackbox-eslint"
     corrupt.mkdir(parents=True)
 
-    r = _run_tackbox(clean_js_repo, cache_home)
+    r = run_lint(clean_js_repo, cache_home)
     assert r.returncode == 0, (
         f"corrupt marker must not fail the run\n"
         f"stdout={r.stdout!r}\nstderr={r.stderr!r}"
@@ -281,7 +269,7 @@ def test_corrupt_marker_does_not_fail(clean_js_repo, tmp_path):
 
 def test_no_cache_flag_writes_no_markers(go_repo, tmp_path):
     cache_home = tmp_path / "cache"
-    r = _run_tackbox(go_repo, cache_home, "--no-cache")
+    r = run_lint(go_repo, cache_home, "--no-cache")
     assert r.returncode == 0
     assert _all_markers(cache_home) == []
 
@@ -290,11 +278,11 @@ def test_no_cache_flag_ignores_existing_markers(go_repo, tmp_path):
     """A cached marker present but ignored: engine still runs and reports."""
     cache_home = tmp_path / "cache"
     # Prime cache
-    assert _run_tackbox(go_repo, cache_home).returncode == 0
+    assert run_lint(go_repo, cache_home).returncode == 0
     # Break B's source but skip cache; engine must run and see the change.
     (go_repo / "pkg_b" / "b.go").write_text(GO_PKG_B_ADD3)
     (go_repo / "pkg_a" / "a.go").write_text(GO_PKG_A_USES_B_ADD3)
-    r = _run_tackbox(go_repo, cache_home, "--no-cache")
+    r = run_lint(go_repo, cache_home, "--no-cache")
     assert r.returncode == 0
     # With --no-cache, sections are always emitted.
     assert "== erclint ==" in r.stdout
@@ -308,7 +296,7 @@ def test_stale_engines_hash_dir_pruned_on_run(clean_js_repo, tmp_path):
     stale = cache_home / tackbox_cache.CACHE_VERSION / "old-engines-hash"
     stale.mkdir(parents=True)
     (stale / "some.eng").touch()
-    assert _run_tackbox(clean_js_repo, cache_home).returncode == 0
+    assert run_lint(clean_js_repo, cache_home).returncode == 0
     assert not stale.exists()
     assert (cache_home / tackbox_cache.CACHE_VERSION / _dev_hash()).is_dir()
 
@@ -469,7 +457,7 @@ def test_reporters_typo_crash_does_not_hide_swallow_after_fix(java_swallow_repo,
     not a false-clean cache marker left by the crashed run."""
     cache_home = tmp_path / "cache"
 
-    crashed = _run_tackbox(java_swallow_repo, cache_home)
+    crashed = run_lint(java_swallow_repo, cache_home)
     assert crashed.returncode == 2, (
         f"expected the dead reporter symbol to crash loudly\n"
         f"stdout={crashed.stdout!r}\nstderr={crashed.stderr!r}"
@@ -480,7 +468,7 @@ def test_reporters_typo_crash_does_not_hide_swallow_after_fix(java_swallow_repo,
         "Handler.java#Handler.report: swallow log helper\n"
     )
 
-    result = _run_tackbox(java_swallow_repo, cache_home)
+    result = run_lint(java_swallow_repo, cache_home)
     assert result.returncode != 0, (
         f"the swallow must still be reported, not hidden by a stale cache marker\n"
         f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
@@ -539,14 +527,14 @@ def test_reporters_removal_invalidates_warm_cache(tmp_path):
     commit_all(repo)
     cache_home = tmp_path / "cache"
 
-    prime = _run_tackbox(repo, cache_home)
+    prime = run_lint(repo, cache_home)
     assert prime.returncode == 0, (
         f"declared reporter should make the swallow clean:\n"
         f"{prime.stdout}\n{prime.stderr}"
     )
 
     (repo / ".tackbox/reporters").unlink()
-    warm = _run_tackbox(repo, cache_home)
+    warm = run_lint(repo, cache_home)
     assert warm.returncode != 0, (
         f"deleting the reporter must surface the swallow, not a stale clean:\n"
         f"{warm.stdout}\n{warm.stderr}"
@@ -639,13 +627,13 @@ def test_test_go_change_invalidates_erclint_cache(tmp_path):
     commit_all(repo)
     cache_home = tmp_path / "cache"
 
-    prime = _run_tackbox(repo, cache_home)
+    prime = run_lint(repo, cache_home)
     assert prime.returncode == 0, (
         f"clean go package should prime clean:\n{prime.stdout}\n{prime.stderr}"
     )
 
     (repo / "pkg" / "mod_test.go").write_text(GO_TEST_SKIP)
-    warm = _run_tackbox(repo, cache_home)
+    warm = run_lint(repo, cache_home)
     assert warm.returncode != 0, (
         f"a skip added to a _test.go must report, not serve a stale clean:\n"
         f"{warm.stdout}\n{warm.stderr}"
@@ -713,7 +701,7 @@ def _assert_reports_across_runs(repo: Path, cache_home: Path, needle: str) -> No
     # cold prime reports (and must not poison the cache); both warm runs must
     # still report off the unchanged, cached tree.
     for label in ("cold-prime", "warm-1", "warm-2"):
-        r = _run_tackbox(repo, cache_home)
+        r = run_lint(repo, cache_home)
         assert r.returncode != 0, (
             f"{label}: finding must report, not serve a false clean:\n"
             f"{r.stdout}\n{r.stderr}"
@@ -744,9 +732,9 @@ def test_clean_go_package_still_caches_after_warm_run(tmp_path):
     _needs_go()
     repo, cache_home = _make_skipnow_repo(tmp_path, "mod_test.go", GO_TEST_CLEAN)
 
-    prime = _run_tackbox(repo, cache_home)
+    prime = run_lint(repo, cache_home)
     assert prime.returncode == 0, f"clean package must prime clean:\n{prime.stdout}\n{prime.stderr}"
-    warm = _run_tackbox(repo, cache_home)
+    warm = run_lint(repo, cache_home)
     assert warm.returncode == 0, f"{warm.stdout}\n{warm.stderr}"
     assert "== erclint ==" not in warm.stdout, (
         f"a clean package must stay cached on the warm run:\n{warm.stdout}"
