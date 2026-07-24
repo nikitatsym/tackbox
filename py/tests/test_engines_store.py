@@ -14,9 +14,12 @@ developer's real `~/.local/share/tackbox`.
 
 from __future__ import annotations
 
+import concurrent.futures
 import io
 import json
 import os
+import threading
+import time
 import zipfile
 from pathlib import Path
 
@@ -184,6 +187,33 @@ def test_double_ensure_yields_one_valid_store(store_env):
     assert versions == [store_env.version]
 
 
+def test_concurrent_ensure_fetches_once(store_env):
+    workers = 8
+    start = threading.Barrier(workers)
+    calls_lock = threading.Lock()
+
+    def slow_fetcher(engines_json: dict, workdir: Path) -> Path:
+        with calls_lock:
+            store_env.calls["n"] += 1
+        # Keep the winner in the fetch long enough for every other caller to
+        # contend on the install lock. Without the lock this reaches `workers`.
+        time.sleep(0.1)
+        out = workdir / store_env.wheel.name
+        out.write_bytes(store_env.wheel.read_bytes())
+        return out
+
+    def ensure() -> Path:
+        start.wait()
+        return engines.ensure_engines(fetcher=slow_fetcher)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        roots = list(pool.map(lambda _i: ensure(), range(workers)))
+
+    assert roots == [store_env.store_dir] * workers
+    assert store_env.calls["n"] == 1
+    assert sha256_tree(store_env.store_dir) == store_env.store_sha
+
+
 # -- ensure: override ------------------------------------------------------
 
 
@@ -234,9 +264,12 @@ def test_corrupt_tree_after_unpack_hard_errors(store_env, monkeypatch):
         engines.ensure_engines(fetcher=store_env.fetcher)
     assert "tree" in str(ei.value) or "store_sha256" in str(ei.value) or "bb" * 32 in str(ei.value)
     assert not store_env.store_dir.exists()
-    # No half-written temp siblings survive a failed install.
+    # No half-written temp siblings survive a failed install. The advisory lock
+    # file persists deliberately: unlinking it could split current waiters and
+    # later callers across different inodes, defeating mutual exclusion.
     base = store_env.store_dir.parent
-    assert not base.exists() or list(base.iterdir()) == []
+    entries = list(base.iterdir())
+    assert [p.name for p in entries] == [f".{store_env.version}.install.lock"]
 
 
 def test_platform_drift_hard_errors_with_both_values_before_fetch(store_env, monkeypatch):
@@ -273,16 +306,21 @@ def test_fetch_failure_propagates_loudly_and_leaves_no_store(store_env):
     assert "https://pypi.org" in str(ei.value)
     assert not store_env.store_dir.exists()
 
+    # Advisory locks are kernel-owned: a failed/crashed first attempt must not
+    # strand later hooks behind stale lock state.
+    assert engines.ensure_engines(fetcher=store_env.fetcher) == store_env.store_dir
+    assert store_env.calls["n"] == 1
 
-# -- ensure: GC ------------------------------------------------------------
+
+# -- ensure: version retention ---------------------------------------------
 
 
-def test_gc_removes_stale_version_siblings_but_keeps_inflight(store_env):
+def test_install_preserves_other_versions_and_inflight_state(store_env):
     base = store_env.store_dir.parent
     base.mkdir(parents=True)
-    stale = base / "0.1.0"
-    stale.mkdir()
-    (stale / "marker").write_text("old")
+    previous = base / "0.1.0"
+    previous.mkdir()
+    (previous / "marker").write_text("old")
     inflight = base / ".ensure-someone-else"  # dot-prefixed: a concurrent fetch's tmp
     inflight.mkdir()
     (inflight / "partial").write_text("mid-unpack")
@@ -290,8 +328,8 @@ def test_gc_removes_stale_version_siblings_but_keeps_inflight(store_env):
     engines.ensure_engines(fetcher=store_env.fetcher)
 
     assert store_env.store_dir.is_dir()
-    assert not stale.exists(), "stale version sibling must be GC'd"
-    assert inflight.exists(), "an in-flight (.dot) sibling must survive GC (no fratricide)"
+    assert previous.is_dir(), "an older client must not be forced to re-download its engines"
+    assert inflight.is_dir(), "one installer must not disturb another version's state"
 
 
 # -- hermetic_engines_root -------------------------------------------------

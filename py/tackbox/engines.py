@@ -11,7 +11,9 @@ Signal-killed subprocess exit code is normalized to `128 + sig`
 from __future__ import annotations
 
 import concurrent.futures
+import ctypes
 import hashlib
+import importlib
 import json
 import os
 import platform
@@ -22,6 +24,7 @@ import sys
 import tarfile
 import tempfile
 import zipfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -63,6 +66,18 @@ ENGINES_DIR_ENV = "TACKBOX_ENGINES_DIR"
 
 class EnginesStoreError(RuntimeError):
     """The engine store could not be resolved, fetched, or verified."""
+
+
+class _WindowsOverlapped(ctypes.Structure):
+    """Minimal OVERLAPPED layout used by blocking Win32 file locks."""
+
+    _fields_ = [
+        ("Internal", ctypes.c_void_p),
+        ("InternalHigh", ctypes.c_void_p),
+        ("Offset", ctypes.c_uint32),
+        ("OffsetHigh", ctypes.c_uint32),
+        ("hEvent", ctypes.c_void_p),
+    ]
 
 
 def detect_platform_key() -> str | None:
@@ -121,8 +136,10 @@ def ensure_engines(fetcher: "Fetcher | None" = None) -> Path:
 
     Fetches the fat wheel from PyPI once per engines version, verifies it
     against the engines.json pins, and installs it atomically into the store.
-    A present store (or a TACKBOX_ENGINES_DIR override) short-circuits with no
-    network. Every failure is loud - there is no silent fallback.
+    A machine-wide per-version lock makes the fetch exactly-once even when many
+    hooks discover an absent store concurrently. A present store (or a
+    TACKBOX_ENGINES_DIR override) short-circuits with no network. Every failure
+    is loud - there is no silent fallback.
     """
     if os.environ.get(ENGINES_DIR_ENV):
         return Path(os.environ[ENGINES_DIR_ENV])
@@ -131,9 +148,87 @@ def ensure_engines(fetcher: "Fetcher | None" = None) -> Path:
     root = engines_store_base() / str(data["engines_version"])
     if root.is_dir():
         return root
-    _fetch_and_install(data, root, fetcher or _download_fat_wheel)
-    _gc_store_siblings(root)
+    with _engine_install_lock(root):
+        # Another process may have completed the install while this process
+        # waited. Recheck under the lock before touching the network.
+        if root.is_dir():
+            return root
+        _fetch_and_install(data, root, fetcher or _download_fat_wheel)
     return root
+
+
+@contextmanager
+def _engine_install_lock(root: Path):
+    """Hold the machine-wide install lock for one engines version.
+
+    Advisory OS locks are released by the kernel if the process exits or is
+    killed, so a crashed downloader cannot leave a stale lock that blocks every
+    later hook. The small lock file itself is deliberately persistent.
+    """
+    root.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = root.parent / f".{root.name}.install.lock"
+    with lock_path.open("a+b") as handle:
+        lock_token = _lock_file(handle)
+        try:
+            yield
+        finally:
+            _unlock_file(handle, lock_token)
+
+
+def _windows_lock_api(name: str):
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    api = getattr(kernel32, name)
+    api.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.POINTER(_WindowsOverlapped),
+    ]
+    api.restype = ctypes.c_int
+    return api
+
+
+def _lock_file(handle) -> _WindowsOverlapped | None:
+    if os.name == "nt":
+        msvcrt = importlib.import_module("msvcrt")
+
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        overlapped = _WindowsOverlapped()
+        os_handle = ctypes.c_void_p(msvcrt.get_osfhandle(handle.fileno()))
+        # Flags zero means wait until the holder exits or unlocks. The kernel
+        # releases the lock automatically if this process dies.
+        if not _windows_lock_api("LockFileEx")(
+            os_handle, 0, 0, 1, 0, ctypes.byref(overlapped)
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return overlapped
+    else:
+        fcntl = importlib.import_module("fcntl")
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        return None
+
+
+def _unlock_file(handle, lock_token: _WindowsOverlapped | None) -> None:
+    if os.name == "nt":
+        msvcrt = importlib.import_module("msvcrt")
+
+        handle.seek(0)
+        os_handle = ctypes.c_void_p(msvcrt.get_osfhandle(handle.fileno()))
+        if not _windows_lock_api("UnlockFileEx")(
+            os_handle, 0, 1, 0, ctypes.byref(lock_token)
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+    else:
+        fcntl = importlib.import_module("fcntl")
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _assert_runtime_platform(data: dict) -> None:
@@ -155,7 +250,7 @@ def _assert_runtime_platform(data: dict) -> None:
 def _fetch_and_install(data: dict, root: Path, fetcher: "Fetcher") -> None:
     base = root.parent
     base.mkdir(parents=True, exist_ok=True)
-    # Dot-prefixed so a concurrent fetch's temp is skipped by _gc_store_siblings.
+    # Dot-prefixed so an interrupted fetch is visibly non-version state.
     work = Path(tempfile.mkdtemp(prefix=".ensure-", dir=base))
     try:
         wheel = fetcher(data, work)
@@ -246,19 +341,6 @@ def engines_payload_tree_sha256(wheel: Path) -> str:
         staged = Path(td) / "store"
         _unpack_tackbox_engines(wheel, staged)
         return sha256_tree(staged)
-
-
-def _gc_store_siblings(current: Path) -> None:
-    """Drop every version sibling except `current` (gc_stale_engines policy for
-    the store). Dot-prefixed entries are in-flight fetches - never touched."""
-    base = current.parent
-    for entry in base.iterdir():
-        if (
-            entry.is_dir()
-            and entry.name != current.name
-            and not entry.name.startswith(".")
-        ):
-            shutil.rmtree(entry, ignore_errors=True)
 
 
 _PYPI_ENGINES_JSON = "https://pypi.org/pypi/tackbox-engines/{version}/json"

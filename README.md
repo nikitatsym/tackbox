@@ -191,9 +191,14 @@ fetched separately and cached per version:
   wheel's `engines.json`, and
   unpacks it once into `$XDG_DATA_HOME/tackbox/engines/<version>/`
   (default `~/.local/share/...`; override `TACKBOX_ENGINES_DIR`).
-  Every later thin version reuses that one copy, so a stream of
-  `@latest` patch bumps never re-materializes the engines. Bumped only
-  when an engine changes.
+  A machine-wide per-version lock makes concurrent first runs share
+  one download: one process fetches and verifies while every other
+  process waits and then reuses the committed store. Every later thin
+  version reuses that one copy, so a stream of `@latest` patch bumps
+  never re-materializes the engines. Installed engine versions coexist
+  rather than deleting one another during normal commands, so an older
+  thin client cannot force a re-download. Bumped only when an engine
+  changes.
 
 After the first fetch tackbox runs fully offline until the engine
 version changes. Platform wheels cover Linux x86_64/arm64 (manylinux),
