@@ -15,6 +15,7 @@ developer's real `~/.local/share/tackbox`.
 from __future__ import annotations
 
 import concurrent.futures
+import ctypes
 import io
 import json
 import os
@@ -212,6 +213,45 @@ def test_concurrent_ensure_fetches_once(store_env):
     assert roots == [store_env.store_dir] * workers
     assert store_env.calls["n"] == 1
     assert sha256_tree(store_env.store_dir) == store_env.store_sha
+
+
+def test_windows_lock_api_signatures_match_win32(monkeypatch):
+    class FakeAPI:
+        argtypes = None
+        restype = None
+
+    class FakeKernel32:
+        LockFileEx = FakeAPI()
+        UnlockFileEx = FakeAPI()
+
+    kernel32 = FakeKernel32()
+    monkeypatch.setattr(
+        engines.ctypes,
+        "WinDLL",
+        lambda name, use_last_error: kernel32,
+        raising=False,
+    )
+
+    lock = engines._windows_lock_api("LockFileEx")
+    unlock = engines._windows_lock_api("UnlockFileEx")
+
+    assert lock.argtypes == [
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.POINTER(engines._WindowsOverlapped),
+    ]
+    assert unlock.argtypes == [
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.POINTER(engines._WindowsOverlapped),
+    ]
+    assert lock.restype is ctypes.c_int
+    assert unlock.restype is ctypes.c_int
 
 
 # -- ensure: override ------------------------------------------------------

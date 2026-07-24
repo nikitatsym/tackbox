@@ -178,14 +178,26 @@ def _engine_install_lock(root: Path):
 def _windows_lock_api(name: str):
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     api = getattr(kernel32, name)
-    api.argtypes = [
-        ctypes.c_void_p,
-        ctypes.c_uint32,
-        ctypes.c_uint32,
-        ctypes.c_uint32,
-        ctypes.c_uint32,
-        ctypes.POINTER(_WindowsOverlapped),
-    ]
+    overlapped = ctypes.POINTER(_WindowsOverlapped)
+    if name == "LockFileEx":
+        api.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            overlapped,
+        ]
+    elif name == "UnlockFileEx":
+        api.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            overlapped,
+        ]
+    else:
+        raise ValueError(f"unsupported Windows lock API: {name}")
     api.restype = ctypes.c_int
     return api
 
