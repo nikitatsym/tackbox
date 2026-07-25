@@ -259,7 +259,8 @@ func realPath(name string) string {
 // confined to file headers are dropped first (never output); then dup-ok above
 // one endpoint drops only that endpoint, above both drops the clone. Machine
 // mode writes one NDJSON object per surviving endpoint; human mode writes one
-// pair line per clone that keeps at least one endpoint.
+// pair line per clone that keeps at least one endpoint and labels any
+// suppressed and remaining endpoints.
 func emit(rep *jscpdReport, fl *fileLines, cwd string, machine bool, w io.Writer) (int, error) {
 	enc := json.NewEncoder(w)
 	surviving := 0
@@ -314,14 +315,19 @@ func emit(rep *jscpdReport, fl *fileLines, cwd string, machine bool, w io.Writer
 			ruleID, aRel, c.FirstFile.Start, c.FirstFile.End,
 			bRel, c.SecondFile.Start, c.SecondFile.End, c.Tokens)
 		var sup []string
+		var remaining []string
 		if aSup {
-			sup = append(sup, aRel)
+			sup = append(sup, fmt.Sprintf("%s:%d-%d", aRel, c.FirstFile.Start, c.FirstFile.End))
+		} else {
+			remaining = append(remaining, fmt.Sprintf("%s:%d-%d", aRel, c.FirstFile.Start, c.FirstFile.End))
 		}
 		if bSup {
-			sup = append(sup, bRel)
+			sup = append(sup, fmt.Sprintf("%s:%d-%d", bRel, c.SecondFile.Start, c.SecondFile.End))
+		} else {
+			remaining = append(remaining, fmt.Sprintf("%s:%d-%d", bRel, c.SecondFile.Start, c.SecondFile.End))
 		}
 		if len(sup) > 0 {
-			line += " [dup-ok: " + strings.Join(sup, ", ") + "]"
+			line += " [dup-ok suppressed: " + strings.Join(sup, ", ") + "; remaining: " + strings.Join(remaining, ", ") + "]"
 		}
 		if _, err := fmt.Fprintln(w, line); err != nil {
 			return 0, err

@@ -157,16 +157,33 @@ func TestDupOkOneEndpointSuppressed(t *testing.T) {
 	}
 }
 
+func TestHumanSummaryNamesSuppressedAndRemainingIntraFileEndpoints(t *testing.T) {
+	dir := t.TempDir()
+	p := writeSrc(t, dir, "clone.go", 5, []string{"// dup-ok: fixture proves suppression"})
+	out, n := emitTo(t, dir, mkReport(p, 5, p, 8), false)
+	if n != 1 {
+		t.Fatalf("expected 1 surviving endpoint, got %d\n%s", n, out)
+	}
+	if !strings.Contains(out, "dup-ok suppressed: clone.go:5-8") {
+		t.Fatalf("human summary must name the suppressed endpoint: %q", out)
+	}
+	if !strings.Contains(out, "remaining: clone.go:8-11") {
+		t.Fatalf("human summary must name the remaining endpoint: %q", out)
+	}
+}
+
 func TestDupOkBothEndpointsSuppressedClean(t *testing.T) {
 	dir := t.TempDir()
 	a := writeSrc(t, dir, "a.go", 5, []string{"// dup-ok: shared header block"})
 	b := writeSrc(t, dir, "b.go", 8, []string{"// dup-ok: shared footer block"})
-	out, n := emitTo(t, dir, mkReport(a, 5, b, 8), true)
-	if n != 0 {
-		t.Fatalf("expected clean (0 survivors), got %d\n%s", n, out)
-	}
-	if strings.TrimSpace(out) != "" {
-		t.Fatalf("expected no NDJSON, got %q", out)
+	for _, machine := range []bool{false, true} {
+		out, n := emitTo(t, dir, mkReport(a, 5, b, 8), machine)
+		if n != 0 {
+			t.Fatalf("machine=%t: expected clean (0 survivors), got %d\n%s", machine, n, out)
+		}
+		if strings.TrimSpace(out) != "" {
+			t.Fatalf("machine=%t: expected no output, got %q", machine, out)
+		}
 	}
 }
 
