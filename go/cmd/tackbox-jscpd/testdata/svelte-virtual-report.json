@@ -1,0 +1,40 @@
+{
+  "duplicates": [
+    {
+      "firstFile": {
+        "end": 8,
+        "endLoc": {
+          "column": 22,
+          "line": 8,
+          "position": 170
+        },
+        "name": "src/A.svelte:script",
+        "start": 4,
+        "startLoc": {
+          "column": 4,
+          "line": 4,
+          "position": 80
+        }
+      },
+      "format": "javascript",
+      "fragment": "    value = defaultCall(),\n    other = compute(),\n) => {",
+      "lines": 5,
+      "secondFile": {
+        "end": 9,
+        "endLoc": {
+          "column": 22,
+          "line": 9,
+          "position": 190
+        },
+        "name": "src/B.svelte:script",
+        "start": 5,
+        "startLoc": {
+          "column": 4,
+          "line": 5,
+          "position": 100
+        }
+      },
+      "tokens": 52
+    }
+  ]
+}

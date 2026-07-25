@@ -9,11 +9,13 @@ where the same list as raw argv would exceed ARG_MAX (E2BIG).
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -43,6 +45,19 @@ def _stub_go_binary(monkeypatch):
     )
 
 
+def _write_empty_jscpd_stub(path: Path) -> None:
+    path.write_text(
+        "#!/bin/sh\n"
+        'out=""\n'
+        'while [ "$#" -gt 0 ]; do\n'
+        '  if [ "$1" = "--output" ]; then out="$2"; shift 2; else shift; fi\n'
+        "done\n"
+        "printf '%s' '{\"duplicates\":[]}' > \"$out/jscpd-report.json\"\n",
+        encoding="utf-8",
+    )
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
 # -- go binaries: --paths-from list-file -----------------------------------
 
 
@@ -69,11 +84,16 @@ def test_dev_opengrep_argv_uses_paths_from_not_positional(monkeypatch, tmp_path)
 
 def test_dev_jscpd_argv_uses_paths_from_not_positional(monkeypatch, tmp_path):
     _stub_go_binary(monkeypatch)
-    monkeypatch.setattr(engines, "_dev_jscpd_bin", lambda root: Path("/fake/jscpd"))
+    jscpd = tmp_path / "jscpd"
+    _write_empty_jscpd_stub(jscpd)
+    monkeypatch.setattr(engines, "_dev_jscpd_bin", lambda root: jscpd)
+    repo = tmp_path / "repo"
+    repo.mkdir()
     argv = _dev("tackbox-jscpd").build_argv(
-        Path("/repo"), Path("/tb"), ["x.go", "z.java"], (), tmp_path
+        repo, Path("/tb"), ["x.go", "z.java"], (), tmp_path
     )
-    assert argv[:3] == [str(Path("/fake/bin/tackbox-jscpd")), "--jscpd", "/fake/jscpd"]
+    assert argv[:2] == [str(Path("/fake/bin/tackbox-jscpd")), "--report"]
+    assert "--callable-zones" not in argv
     assert "--paths-from" in argv
     assert "x.go" not in argv and "z.java" not in argv
     assert _lines(_after(argv, "--paths-from")) == ["x.go", "z.java"]
@@ -90,13 +110,222 @@ def test_hermetic_opengrep_argv_uses_paths_from(tmp_path):
 
 def test_hermetic_jscpd_argv_uses_paths_from(monkeypatch, tmp_path):
     # env override makes hermetic_engines_root() resolve without engines.json.
-    monkeypatch.setenv(engines.ENGINES_DIR_ENV, str(tmp_path / "store"))
+    store = tmp_path / "store"
+    (store / "bin").mkdir(parents=True)
+    _write_empty_jscpd_stub(store / "bin" / engines.exe_name("jscpd"))
+    monkeypatch.setenv(engines.ENGINES_DIR_ENV, str(store))
+    repo = tmp_path / "repo"
+    repo.mkdir()
     argv = _herm("tackbox-jscpd").build_argv(
-        Path("/repo"), Path("/tb"), ["x.go"], (), tmp_path
+        repo, Path("/tb"), ["x.go"], (), tmp_path
     )
+    assert argv[:2] == [
+        str(engines._hermetic_erclint_bin("tackbox-jscpd")),
+        "--report",
+    ]
     assert "--paths-from" in argv
     assert "x.go" not in argv
     assert _lines(_after(argv, "--paths-from")) == ["x.go"]
+
+
+def _fake_jscpd_run(
+    report: dict, calls: list[list[str]], configs: list[dict]
+):
+    def run(argv, *, cwd, stdout, stderr):
+        calls.append(argv)
+        config = Path(argv[argv.index("--config") + 1])
+        configs.append(json.loads(config.read_text(encoding="utf-8")))
+        output = Path(argv[argv.index("--output") + 1])
+        (output / "jscpd-report.json").write_text(
+            json.dumps(report), encoding="utf-8"
+        )
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    return run
+
+
+def _endpoint(name: str) -> dict:
+    return {
+        "name": name,
+        "startLoc": {"line": 1, "column": 0},
+        "endLoc": {"line": 1, "column": 5},
+    }
+
+
+def test_jscpd_preparation_runs_once_and_zero_clone_skips_ast(
+    monkeypatch, tmp_path
+):
+    calls: list[list[str]] = []
+    configs: list[dict] = []
+    monkeypatch.setattr(
+        engines.subprocess,
+        "run",
+        _fake_jscpd_run({"duplicates": []}, calls, configs),
+    )
+
+    def unexpected(*_args):
+        raise AssertionError("zero-clone report must not invoke ast-grep")
+
+    monkeypatch.setattr(engines.callable_zones, "zones_for_file", unexpected)
+    argv = engines._prepare_jscpd_argv(
+        Path("/wrapper"),
+        Path("/jscpd"),
+        tmp_path,
+        ["a.py", "b.go"],
+        tmp_path,
+    )
+    assert len(calls) == 1
+    assert configs == [
+        {"path": [str(tmp_path / "a.py"), str(tmp_path / "b.go")]}
+    ]
+    assert "--callable-zones" not in argv
+
+
+def test_jscpd_preparation_parses_only_unique_physical_endpoint_files(
+    monkeypatch, tmp_path
+):
+    a = tmp_path / "a.py"
+    b = tmp_path / "B.svelte"
+    a.write_text("def a():\n    pass\n", encoding="utf-8")
+    b.write_text("<script>const b = () => 1;</script>\n", encoding="utf-8")
+    report = {
+        "duplicates": [
+            {
+                "firstFile": _endpoint(str(a)),
+                "secondFile": _endpoint(str(b) + ":script"),
+            },
+            {
+                "firstFile": _endpoint(str(a)),
+                "secondFile": _endpoint(str(b) + ":script"),
+            },
+        ]
+    }
+    calls: list[list[str]] = []
+    configs: list[dict] = []
+    monkeypatch.setattr(
+        engines.subprocess, "run", _fake_jscpd_run(report, calls, configs)
+    )
+    parsed: list[str] = []
+
+    def zones(_root, rel):
+        parsed.append(rel)
+        return [
+            engines.callable_zones.Zone(
+                engines.callable_zones.Point(0, 0),
+                engines.callable_zones.Point(0, 10),
+            )
+        ]
+
+    monkeypatch.setattr(engines.callable_zones, "zones_for_file", zones)
+    argv = engines._prepare_jscpd_argv(
+        Path("/wrapper"), Path("/jscpd"), tmp_path, ["a.py", "B.svelte"], tmp_path
+    )
+    assert len(calls) == 1
+    assert parsed == ["B.svelte", "a.py"]
+    sidecar = json.loads(
+        Path(_after(argv, "--callable-zones")).read_text(encoding="utf-8")
+    )
+    assert list(sidecar["files"]) == ["B.svelte", "a.py"]
+    assert sidecar["files"]["a.py"] == [
+        {
+            "start": {"line": 0, "column": 0},
+            "end": {"line": 0, "column": 10},
+        }
+    ]
+
+
+def test_jscpd_preparation_malformed_report_is_loud(monkeypatch, tmp_path):
+    def malformed(argv, *, cwd, stdout, stderr):
+        output = Path(argv[argv.index("--output") + 1])
+        (output / "jscpd-report.json").write_text("{", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(engines.subprocess, "run", malformed)
+    with pytest.raises(engines.EnginesStoreError, match="parse jscpd report"):
+        engines._prepare_jscpd_argv(
+            Path("/wrapper"), Path("/jscpd"), tmp_path, ["a.py"], tmp_path
+        )
+
+
+def test_jscpd_preparation_nonzero_detector_exit_is_loud(monkeypatch, tmp_path):
+    def fail(*_args, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=["jscpd"], returncode=2, stdout=b"", stderr=b"bad config"
+        )
+
+    monkeypatch.setattr(engines.subprocess, "run", fail)
+    with pytest.raises(engines.EnginesStoreError, match=r"jscpd.*failed \(2\).*bad config"):
+        engines._prepare_jscpd_argv(
+            Path("/wrapper"), Path("/jscpd"), tmp_path, ["a.py"], tmp_path
+        )
+
+
+def test_jscpd_preparation_ast_failure_is_loud(monkeypatch, tmp_path):
+    source = tmp_path / "a.py"
+    source.write_text("def a():\n    pass\n", encoding="utf-8")
+    report = {
+        "duplicates": [
+            {"firstFile": _endpoint(str(source)), "secondFile": _endpoint(str(source))}
+        ]
+    }
+    monkeypatch.setattr(
+        engines.subprocess, "run", _fake_jscpd_run(report, [], [])
+    )
+
+    def fail(_root, _rel):
+        raise RuntimeError("ast-grep failed")
+
+    monkeypatch.setattr(engines.callable_zones, "zones_for_file", fail)
+    with pytest.raises(RuntimeError, match="ast-grep failed"):
+        engines._prepare_jscpd_argv(
+            Path("/wrapper"), Path("/jscpd"), tmp_path, ["a.py"], tmp_path
+        )
+
+
+def test_jscpd_preparation_unmappable_endpoints_get_explicit_empty_sidecar(
+    monkeypatch, tmp_path
+):
+    endpoint = _endpoint(str(tmp_path / "missing.py"))
+    report = {
+        "duplicates": [
+            {"firstFile": endpoint, "secondFile": endpoint}
+        ]
+    }
+    monkeypatch.setattr(
+        engines.subprocess, "run", _fake_jscpd_run(report, [], [])
+    )
+    argv = engines._prepare_jscpd_argv(
+        Path("/wrapper"), Path("/jscpd"), tmp_path, ["missing.py"], tmp_path
+    )
+    assert json.loads(
+        Path(_after(argv, "--callable-zones")).read_text(encoding="utf-8")
+    ) == {"files": {}}
+
+
+def test_jscpd_preparation_huge_file_set_stays_off_inner_argv(
+    monkeypatch, tmp_path
+):
+    arg_max = os.sysconf("SC_ARG_MAX")
+    template = f"src/{'d' * 180}/file_{{i:06d}}.go"
+    per_path = len(template.format(i=0)) + 1
+    paths = [template.format(i=i) for i in range(arg_max // per_path + 512)]
+    assert sum(len(path.encode()) + 1 for path in paths) > arg_max
+
+    calls: list[list[str]] = []
+    configs: list[dict] = []
+    monkeypatch.setattr(
+        engines.subprocess,
+        "run",
+        _fake_jscpd_run({"duplicates": []}, calls, configs),
+    )
+    argv = engines._prepare_jscpd_argv(
+        Path("/wrapper"), Path("/jscpd"), tmp_path, paths, tmp_path
+    )
+    assert len(calls) == 1
+    assert len(configs[0]["path"]) == len(paths)
+    assert sum(len(token.encode()) + 1 for token in calls[0]) < 4096
+    assert sum(len(token.encode()) + 1 for token in argv) < 4096
+    assert len(_lines(_after(argv, "--paths-from"))) == len(paths)
 
 
 # -- node binaries: --files-from list-file ---------------------------------

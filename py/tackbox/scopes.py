@@ -73,6 +73,15 @@ class _Sub:
     unresolvable: bool = False
 
 
+@dataclass(frozen=True)
+class SvelteScript:
+    """One JavaScript/TypeScript script body in physical Svelte coordinates."""
+
+    start_byte: int
+    end_byte: int
+    language: str
+
+
 # -- language dispatch -----------------------------------------------------
 
 _EXT_LANG = {
@@ -131,7 +140,12 @@ def _ast_scan(content: str, ruleset: str) -> list[dict]:
         err = proc.stderr.decode("utf-8", errors="replace").strip()
         raise ScopesError(f"ast-grep scan failed ({proc.returncode}): {err}")
     out = proc.stdout.decode("utf-8", errors="replace").strip()
-    return json.loads(out) if out else []
+    if not out:
+        return []
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError as e:
+        raise ScopesError(f"parse ast-grep JSON: {e}") from e
 
 
 def _bspan(m: dict) -> tuple[int, int]:
@@ -488,26 +502,50 @@ _SVELTE_HTML_RULES = "\n---\n".join([
 _SVELTE_STYLE_RE = re.compile(rb"<style\b[^>]*>.*?</style>", re.DOTALL | re.IGNORECASE)
 
 
+def _svelte_scripts_from_matches(
+    data: bytes, matches: list[dict]
+) -> list[SvelteScript]:
+    out: list[SvelteScript] = []
+    for script in (m for m in matches if m["ruleId"] == "raw"):
+        b = script["range"]["byteOffset"]
+        start, end = b["start"], b["end"]
+        tag = data[data.rfind(b"<script", 0, start): start].decode(
+            "utf-8", errors="replace"
+        )
+        m = re.search(r'\blang\s*=\s*[\'"]?([A-Za-z0-9]+)', tag)
+        lang = _SVELTE_SCRIPT_LANG.get(
+            m.group(1).lower() if m else "", "javascript"
+        )
+        out.append(SvelteScript(start, end, lang))
+    return out
+
+
+def svelte_scripts(content: str) -> list[SvelteScript]:
+    """Return physical script-body byte ranges through the shared HTML seam."""
+    data = content.encode("utf-8")
+    return _svelte_scripts_from_matches(
+        data, _ast_scan(content, _SVELTE_HTML_RULES)
+    )
+
+
 def _resolve_svelte(raw: bytes, marker_re: re.Pattern[str]) -> _Sub:
     content = raw.decode("utf-8", errors="replace")
     # ast-grep parses `content`, so its byte offsets index this re-encoded
     # buffer - never `raw`, where an invalid byte re-encodes wider (U+FFFD).
     data = content.encode("utf-8")
     matches = _ast_scan(content, _SVELTE_HTML_RULES)
-    scripts = [m for m in matches if m["ruleId"] == "raw"]
+    scripts = _svelte_scripts_from_matches(data, matches)
     html_comments = [m for m in matches if m["ruleId"] == "comment"]
 
     sub = _Sub()
     covered: list[tuple[int, int]] = []
     for s in scripts:
-        b = s["range"]["byteOffset"]
-        start, end = b["start"], b["end"]
+        start, end = s.start_byte, s.end_byte
         covered.append((start, end))
-        tag = data[data.rfind(b"<script", 0, start): start].decode("utf-8", errors="replace")
-        m = re.search(r'\blang\s*=\s*[\'"]?([A-Za-z0-9]+)', tag)
-        script_lang = _SVELTE_SCRIPT_LANG.get(m.group(1).lower() if m else "", "javascript")
         script_sub = _resolve_code(
-            data[start:end].decode("utf-8", errors="replace"), script_lang, marker_re
+            data[start:end].decode("utf-8", errors="replace"),
+            s.language,
+            marker_re,
         )
         if script_sub.unresolvable:
             return _Sub(unresolvable=True)  # a script that does not parse refuses the file

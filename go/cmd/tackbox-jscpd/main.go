@@ -1,22 +1,17 @@
 // Command tackbox-jscpd wraps the vendored jscpd copy/paste detector into the
-// tackbox engine contract: run jscpd with the JSON reporter, drop java clones
-// confined to file headers, apply dup-ok suppression, ban native jscpd ignore
-// markers (DUP002), and emit findings. The jscpd binary path is passed via
-// --jscpd (dev fetch or hermetic store); jscpd's own exit code is ignored (it
-// exits 0 with or without clones), so the wrapper decides the exit from the
-// surviving findings. Any spawn failure or unreadable/unparseable report is a
-// loud nonzero exit, never a silent clean.
+// tackbox engine contract: post-process one raw jscpd JSON report, drop Java
+// file-header and callable-header clone pairs, apply dup-ok suppression, ban
+// native jscpd ignore markers (DUP002), and emit findings.
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/nikitatsym/tackbox/go/internal/wrapcli"
@@ -26,11 +21,10 @@ import (
 var version = "dev"
 
 const (
-	ruleID     = "DUP001"
-	banRuleID  = "DUP002"
-	minTokens  = "50" // pinned threshold; tuning lives in tackbox, not the binary
-	reportName = "jscpd-report.json"
-	minReason  = 10 // D009: a dup-ok reason must be at least this many chars after trimming
+	ruleID          = "DUP001"
+	banRuleID       = "DUP002"
+	redundantRuleID = "DUP003"
+	minReason       = 10 // D009: a dup-ok reason must be at least this many chars after trimming
 )
 
 // ignoreMarker is jscpd's native suppression prefix (ignore-start/-end). Built
@@ -42,64 +36,34 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) (int, error) {
-	machine, jscpdBin, files, err := parseArgs(args)
+	machine, reportPath, zonesPath, files, err := parseArgs(args)
 	if err != nil {
 		return 0, err
 	}
-	if jscpdBin == "" {
-		return 0, errors.New("missing --jscpd <path> (jscpd binary location)")
-	}
-	if len(files) == 0 {
-		return 0, nil
+	if reportPath == "" {
+		return 0, errors.New("missing --report <path> (raw jscpd JSON report)")
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return 0, fmt.Errorf("get cwd: %w", err)
 	}
-	outDir, err := os.MkdirTemp("", "tackbox-jscpd-*")
-	if err != nil {
-		return 0, fmt.Errorf("create report dir: %w", err)
-	}
-	defer os.RemoveAll(outDir)
-
-	// jscpd 5.0.12 has no targets-from-file flag, and batching is unsound here
-	// (duplication is cross-file - a clone split across batches is missed). Its
-	// config `path` array is equivalent to positional paths (verified against the
-	// vendored binary), so the file list rides a temp config and the inner argv
-	// stays bounded; the full set on argv would E2BIG on a large repo. The config
-	// lives in outDir (cleaned with it) and is never itself a scan target.
 	absFiles := wrapcli.ToAbs(cwd, files)
-	configPath := filepath.Join(outDir, "jscpd.config.json")
-	if err := writePathConfig(configPath, absFiles); err != nil {
-		return 0, err
-	}
-
-	// --absolute keeps report paths independent of the base jscpd would infer;
-	// the wrapper relativizes them to cwd. --no-gitignore stops jscpd dropping
-	// an explicitly-passed file (the caller's source set already excludes it).
-	full := []string{
-		"--min-tokens", minTokens,
-		"--reporters", "json",
-		"--output", outDir,
-		"--absolute",
-		"--no-gitignore",
-		"--no-colors", "--no-tips", "--silent",
-		"--config", configPath,
-	}
-	cmd := exec.Command(jscpdBin, full...)
-	var jstderr bytes.Buffer
-	cmd.Stderr = &jstderr
-	if runErr := cmd.Run(); runErr != nil {
-		return 0, fmt.Errorf("run jscpd (%s): %w\n%s",
-			jscpdBin, runErr, strings.TrimSpace(jstderr.String()))
-	}
-
-	rep, err := readReport(filepath.Join(outDir, reportName))
+	rep, err := readReport(reportPath)
 	if err != nil {
 		return 0, err
+	}
+	if len(rep.Duplicates) > 0 && zonesPath == "" {
+		return 0, errors.New("raw jscpd report has clone endpoints but --callable-zones was not provided")
+	}
+	zones := callableZones{}
+	if zonesPath != "" {
+		zones, err = readCallableZones(zonesPath)
+		if err != nil {
+			return 0, err
+		}
 	}
 	fl := newFileLines()
-	surviving, err := emit(rep, fl, cwd, machine, stdout)
+	surviving, err := emit(rep, zones, fl, cwd, machine, stdout)
 	if err != nil {
 		return 0, err
 	}
@@ -136,78 +100,71 @@ func (fl *fileLines) get(path string) ([]string, error) {
 	return lines, nil
 }
 
-// writePathConfig writes a jscpd config file whose `path` array carries the file
-// list (equivalent to positional paths, but off the argv), returning nothing but
-// an error. Absolute paths make it independent of jscpd's inferred base.
-func writePathConfig(path string, files []string) error {
-	data, err := json.Marshal(struct {
-		Path []string `json:"path"`
-	}{Path: files})
-	if err != nil {
-		return fmt.Errorf("marshal jscpd config: %w", err)
-	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("write jscpd config %s: %w", path, err)
-	}
-	return nil
-}
-
-func parseArgs(args []string) (machine bool, jscpdBin string, files []string, err error) {
+func parseArgs(args []string) (machine bool, reportPath, zonesPath string, files []string, err error) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "--machine":
 			machine = true
-		case a == "--jscpd":
+		case a == "--report":
 			if i+1 >= len(args) {
-				return false, "", nil, errors.New("--jscpd requires a path argument")
+				return false, "", "", nil, errors.New("--report requires a path argument")
 			}
 			i++
-			jscpdBin = args[i]
-		case strings.HasPrefix(a, "--jscpd="):
-			jscpdBin = strings.TrimPrefix(a, "--jscpd=")
+			reportPath = args[i]
+		case strings.HasPrefix(a, "--report="):
+			reportPath = strings.TrimPrefix(a, "--report=")
+		case a == "--callable-zones":
+			if i+1 >= len(args) {
+				return false, "", "", nil, errors.New("--callable-zones requires a path argument")
+			}
+			i++
+			zonesPath = args[i]
+		case strings.HasPrefix(a, "--callable-zones="):
+			zonesPath = strings.TrimPrefix(a, "--callable-zones=")
 		case a == "--paths-from":
 			if i+1 >= len(args) {
-				return false, "", nil, errors.New("--paths-from requires a path argument")
+				return false, "", "", nil, errors.New("--paths-from requires a path argument")
 			}
 			i++
 			// The file set rides a list-file, not positional argv (ARG_MAX safety).
 			paths, rerr := wrapcli.ReadPathList(args[i])
 			if rerr != nil {
-				return false, "", nil, rerr
+				return false, "", "", nil, rerr
 			}
 			files = append(files, paths...)
 		default:
 			files = append(files, a)
 		}
 	}
-	return machine, jscpdBin, files, nil
+	return machine, reportPath, zonesPath, files, nil
+}
+
+type sourcePoint struct {
+	Line   *int `json:"line"`
+	Column *int `json:"column"`
 }
 
 type endpoint struct {
-	Name     string `json:"name"`
-	Start    int    `json:"start"`
-	End      int    `json:"end"`
-	StartLoc struct {
-		Line int `json:"line"`
-	} `json:"startLoc"`
-	EndLoc struct {
-		Line int `json:"line"`
-	} `json:"endLoc"`
+	Name     string      `json:"name"`
+	Start    int         `json:"start"`
+	End      int         `json:"end"`
+	StartLoc sourcePoint `json:"startLoc"`
+	EndLoc   sourcePoint `json:"endLoc"`
 }
 
 // lineNo is the endpoint's reported line: startLoc.line when jscpd supplied it,
 // else the flat start field (the two agree in 5.0.12 output).
 func (e endpoint) lineNo() int {
-	if e.StartLoc.Line > 0 {
-		return e.StartLoc.Line
+	if e.StartLoc.Line != nil && *e.StartLoc.Line > 0 {
+		return *e.StartLoc.Line
 	}
 	return e.Start
 }
 
 func (e endpoint) endLineNo() int {
-	if e.EndLoc.Line > 0 {
-		return e.EndLoc.Line
+	if e.EndLoc.Line != nil && *e.EndLoc.Line > 0 {
+		return *e.EndLoc.Line
 	}
 	return e.End
 }
@@ -223,14 +180,100 @@ type jscpdReport struct {
 	Duplicates []clone `json:"duplicates"`
 }
 
+type zonePoint struct {
+	Line   int `json:"line"`
+	Column int `json:"column"`
+}
+
+type callableZone struct {
+	Start zonePoint
+	End   zonePoint
+}
+
+type rawZonePoint struct {
+	Line   *int `json:"line"`
+	Column *int `json:"column"`
+}
+
+type rawCallableZone struct {
+	Start rawZonePoint `json:"start"`
+	End   rawZonePoint `json:"end"`
+}
+
+type callableZoneDocument struct {
+	Files map[string][]rawCallableZone `json:"files"`
+}
+
+type callableZones map[string][]callableZone
+
+func readCallableZones(path string) (callableZones, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read callable zones %s: %w", path, err)
+	}
+	var doc callableZoneDocument
+	dec := json.NewDecoder(strings.NewReader(string(data)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&doc); err != nil {
+		return nil, fmt.Errorf("parse callable zones %s: %w", path, err)
+	}
+	if doc.Files == nil {
+		return nil, fmt.Errorf("parse callable zones %s: missing files object", path)
+	}
+	out := callableZones{}
+	for file, zones := range doc.Files {
+		if file == "" {
+			return nil, fmt.Errorf("parse callable zones %s: empty file path", path)
+		}
+		out[file] = []callableZone{}
+		for i, raw := range zones {
+			if raw.Start.Line == nil || raw.Start.Column == nil ||
+				raw.End.Line == nil || raw.End.Column == nil {
+				return nil, fmt.Errorf("parse callable zones %s: incomplete zone %s[%d]", path, file, i)
+			}
+			zone := callableZone{
+				Start: zonePoint{Line: *raw.Start.Line, Column: *raw.Start.Column},
+				End:   zonePoint{Line: *raw.End.Line, Column: *raw.End.Column},
+			}
+			if !validZonePoint(zone.Start) || !validZonePoint(zone.End) ||
+				!pointLess(zone.Start, zone.End) {
+				return nil, fmt.Errorf("parse callable zones %s: invalid zone %s[%d]", path, file, i)
+			}
+			out[file] = append(out[file], zone)
+		}
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return nil, fmt.Errorf("parse callable zones %s: trailing JSON data", path)
+	}
+	return out, nil
+}
+
+func validZonePoint(p zonePoint) bool {
+	return p.Line >= 0 && p.Column >= 0
+}
+
+func pointLess(a, b zonePoint) bool {
+	return a.Line < b.Line || (a.Line == b.Line && a.Column < b.Column)
+}
+
 func readReport(path string) (*jscpdReport, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read jscpd report %s: %w", path, err)
 	}
-	var rep jscpdReport
-	if err := json.Unmarshal(data, &rep); err != nil {
+	var envelope struct {
+		Duplicates json.RawMessage `json:"duplicates"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
 		return nil, fmt.Errorf("parse jscpd report %s: %w", path, err)
+	}
+	duplicates := strings.TrimSpace(string(envelope.Duplicates))
+	if !strings.HasPrefix(duplicates, "[") {
+		return nil, fmt.Errorf("parse jscpd report %s: missing duplicates array", path)
+	}
+	var rep jscpdReport
+	if err := json.Unmarshal(envelope.Duplicates, &rep.Duplicates); err != nil {
+		return nil, fmt.Errorf("parse jscpd report %s duplicates: %w", path, err)
 	}
 	for i := range rep.Duplicates {
 		rep.Duplicates[i].FirstFile.Name = realPath(rep.Duplicates[i].FirstFile.Name)
@@ -255,15 +298,23 @@ func realPath(name string) string {
 	return name
 }
 
-// emit writes findings and returns the surviving endpoint count. Java clones
-// confined to file headers are dropped first (never output); then dup-ok above
-// one endpoint drops only that endpoint, above both drops the clone. Machine
-// mode writes one NDJSON object per surviving endpoint; human mode writes one
-// pair line per clone that keeps at least one endpoint and labels any
-// suppressed and remaining endpoints.
-func emit(rep *jscpdReport, fl *fileLines, cwd string, machine bool, w io.Writer) (int, error) {
+type markerKey struct {
+	File string
+	Line int
+}
+
+type markerUsage struct {
+	autoDropped bool
+	surviving   bool
+}
+
+// emit classifies complete pairs before endpoint-level marker suppression.
+// Marker usage is accumulated over the complete report so DUP003 is emitted
+// only for a marker used by auto-dropped endpoints and no surviving endpoint.
+func emit(rep *jscpdReport, zones callableZones, fl *fileLines, cwd string, machine bool, w io.Writer) (int, error) {
 	enc := json.NewEncoder(w)
 	surviving := 0
+	uses := map[markerKey]*markerUsage{}
 	for _, c := range rep.Duplicates {
 		headerOnly, err := javaHeaderClone(c, fl)
 		if err != nil {
@@ -272,13 +323,32 @@ func emit(rep *jscpdReport, fl *fileLines, cwd string, machine bool, w io.Writer
 		if headerOnly {
 			continue
 		}
-		aSup, err := suppressed(fl, c.FirstFile)
+		aMarker, aSup, err := suppressionCandidate(fl, c.FirstFile)
 		if err != nil {
 			return 0, err
 		}
-		bSup, err := suppressed(fl, c.SecondFile)
+		bMarker, bSup, err := suppressionCandidate(fl, c.SecondFile)
 		if err != nil {
 			return 0, err
+		}
+		autoDropped := callableHeaderClone(c, zones, cwd)
+		for key, ok := range map[markerKey]bool{aMarker: aSup, bMarker: bSup} {
+			if !ok {
+				continue
+			}
+			usage := uses[key]
+			if usage == nil {
+				usage = &markerUsage{}
+				uses[key] = usage
+			}
+			if autoDropped {
+				usage.autoDropped = true
+			} else {
+				usage.surviving = true
+			}
+		}
+		if autoDropped {
+			continue
 		}
 		aRel := relTo(cwd, c.FirstFile.Name)
 		bRel := relTo(cwd, c.SecondFile.Name)
@@ -334,12 +404,96 @@ func emit(rep *jscpdReport, fl *fileLines, cwd string, machine bool, w io.Writer
 		}
 		surviving += n
 	}
+	keys := make([]markerKey, 0, len(uses))
+	for key, usage := range uses {
+		if usage.autoDropped && !usage.surviving {
+			keys = append(keys, key)
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].File != keys[j].File {
+			return keys[i].File < keys[j].File
+		}
+		return keys[i].Line < keys[j].Line
+	})
+	for _, key := range keys {
+		rel := relTo(cwd, key.File)
+		message := "dup-ok is unnecessary for an automatically filtered callable-header pair; remove the marker and matching approval together"
+		if machine {
+			if err := enc.Encode(wrapcli.Finding{
+				File: rel, Line: key.Line, Rule: redundantRuleID, Message: message,
+			}); err != nil {
+				return 0, err
+			}
+		} else if _, err := fmt.Fprintf(w, "%s %s:%d %s\n", redundantRuleID, rel, key.Line, message); err != nil {
+			return 0, err
+		}
+		surviving++
+	}
 	return surviving, nil
+}
+
+func callableHeaderClone(c clone, zones callableZones, cwd string) bool {
+	return endpointInCallableHeader(c.FirstFile, zones, cwd) &&
+		endpointInCallableHeader(c.SecondFile, zones, cwd)
+}
+
+func endpointInCallableHeader(e endpoint, zones callableZones, cwd string) bool {
+	start, end, ok := endpointPoints(e)
+	if !ok {
+		return false
+	}
+	rel := filepath.ToSlash(physicalRelTo(cwd, e.Name))
+	for _, zone := range zones[rel] {
+		if !pointLess(start, zone.Start) && !pointLess(zone.End, end) {
+			return true
+		}
+	}
+	return false
+}
+
+// jscpd 5.0.12 locations use one-based lines, zero-based columns, and a
+// half-open end point. The sidecar is zero-based and half-open.
+func endpointPoints(e endpoint) (zonePoint, zonePoint, bool) {
+	if e.StartLoc.Line == nil || e.StartLoc.Column == nil ||
+		e.EndLoc.Line == nil || e.EndLoc.Column == nil {
+		return zonePoint{}, zonePoint{}, false
+	}
+	if *e.StartLoc.Line < 1 || *e.EndLoc.Line < 1 ||
+		*e.StartLoc.Column < 0 || *e.EndLoc.Column < 0 {
+		return zonePoint{}, zonePoint{}, false
+	}
+	start := zonePoint{Line: *e.StartLoc.Line - 1, Column: *e.StartLoc.Column}
+	end := zonePoint{Line: *e.EndLoc.Line - 1, Column: *e.EndLoc.Column}
+	if !pointLess(start, end) {
+		return zonePoint{}, zonePoint{}, false
+	}
+	return start, end, true
+}
+
+// physicalRelTo mirrors Python's resolved physical-path keys in the callable
+// zone sidecar. jscpd can report a symlink alias even though zone extraction
+// resolved it to the target; both spellings must meet at the same key.
+func physicalRelTo(cwd, name string) string {
+	root := filepath.Clean(cwd)
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		root = resolved
+	}
+	path := name
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(cwd, path)
+	}
+	physical := filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		physical = resolved
+	}
+	return relTo(root, physical)
 }
 
 func relTo(cwd, name string) string {
 	rel, err := filepath.Rel(cwd, name)
-	if err != nil || strings.HasPrefix(rel, "..") {
+	if err != nil || filepath.IsAbs(rel) ||
+		rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return name
 	}
 	return rel
@@ -443,35 +597,34 @@ func emitIgnoreBans(fl *fileLines, absFiles []string, cwd string, machine bool, 
 	return found, nil
 }
 
-// suppressed reports whether the standalone comment block directly above the
-// endpoint's start line carries a dup-ok marker whose reason is at
-// least minReason chars (D009).
+// suppressionCandidate returns the valid dup-ok marker in the standalone
+// comment block directly above the endpoint, including its source line.
 // Semantics mirror go/internal/markers.Above: the block's last line must be
 // startLine-1, and the marker may sit on any line of that contiguous block.
 // Only whole-line // and # comments count - a trailing comment after code is
 // not a standalone block.
-func suppressed(fl *fileLines, e endpoint) (bool, error) {
+func suppressionCandidate(fl *fileLines, e endpoint) (markerKey, bool, error) {
 	startLine := e.lineNo()
 	if startLine < 2 {
-		return false, nil
+		return markerKey{}, false, nil
 	}
 	lines, err := fl.get(e.Name)
 	if err != nil {
-		return false, fmt.Errorf("dup-ok check: %w", err)
+		return markerKey{}, false, fmt.Errorf("dup-ok check: %w", err)
 	}
 	for ln := startLine - 1; ln >= 1; ln-- {
 		if ln > len(lines) {
-			return false, nil
+			return markerKey{}, false, nil
 		}
 		body, ok := commentBody(strings.TrimSpace(lines[ln-1]))
 		if !ok {
-			return false, nil
+			return markerKey{}, false, nil
 		}
 		if reason, ok := dupOkReason(body); ok && len(reason) >= minReason {
-			return true, nil
+			return markerKey{File: e.Name, Line: ln}, true, nil
 		}
 	}
-	return false, nil
+	return markerKey{}, false, nil
 }
 
 // commentBody strips a whole-line comment marker (`//`, `#`, or a single-line

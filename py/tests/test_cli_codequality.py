@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 from conftest import init_repo, tackbox_env
+from test_cli_fixture import REDUNDANT_DUP_MARKER, callable_header_pair
 
 from tackbox import approvals
 from tackbox.cli import _approvals_findings
@@ -232,6 +233,31 @@ def test_build_report_dup_rule_is_duplication_category():
     [issue] = build_report([Finding(rule="DUP001", file="a.go", line=12)])
     assert issue["categories"] == ["Duplication"]
     assert issue["check_name"] == "DUP001"
+
+
+def test_codequality_omits_automatically_filtered_callable_pair(tmp_path):
+    (tmp_path / "dup.py").write_text(callable_header_pair())
+    init_repo(tmp_path, commit=True)
+    out = tmp_path / "cq.json"
+    result = _run(tmp_path, out)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not [i for i in json.loads(out.read_text()) if i["check_name"] == "DUP001"]
+
+
+def test_codequality_reports_redundant_dup_marker_once(tmp_path):
+    (tmp_path / "dup.py").write_text(callable_header_pair(REDUNDANT_DUP_MARKER))
+    (tmp_path / ".tackbox").mkdir()
+    (tmp_path / ".tackbox" / "approvals").write_text(
+        "dup.py: dup-ok: shared public callable contract\n"
+    )
+    init_repo(tmp_path, commit=True)
+    out = tmp_path / "cq.json"
+    result = _run(tmp_path, out)
+    dup003 = [i for i in json.loads(out.read_text()) if i["check_name"] == "DUP003"]
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert len(dup003) == 1
+    assert dup003[0]["categories"] == ["Duplication"]
+    assert dup003[0]["location"] == {"path": "dup.py", "lines": {"begin": 1}}
 
 
 def test_build_report_non_dup_rule_is_bug_risk():

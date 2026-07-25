@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.request import urlopen
 
+from . import callable_zones
 from .hashing import sha256_file, sha256_tree
 from .pyrules.codes import CODE_TO_ID
 from .source_set import (
@@ -1074,11 +1075,127 @@ def _dev_jscpd_bin(tackbox_root: Path) -> Path:
 
 
 def _tackbox_jscpd_argv(
-    _repo_root: Path, tackbox_root: Path, files: list[str], reporters=(), paths_dir: Path | None = None
+    repo_root: Path, tackbox_root: Path, files: list[str], reporters=(), paths_dir: Path | None = None
 ) -> list[str]:
     bin_ = _built_go_binary(tackbox_root, "tackbox-jscpd")
     jscpd = _dev_jscpd_bin(tackbox_root)
-    return _paths_from_argv([str(bin_), "--jscpd", str(jscpd)], files, paths_dir)
+    return _prepare_jscpd_argv(bin_, jscpd, repo_root, files, paths_dir)
+
+
+def _physical_endpoint_path(repo_root: Path, name: str) -> tuple[Path, str] | None:
+    path = Path(name)
+    if not path.is_absolute():
+        path = repo_root / path
+    if not path.is_file():
+        text = str(path)
+        colon = text.rfind(":")
+        if colon > 1 and Path(text[:colon]).is_file():
+            path = Path(text[:colon])
+    resolved = path.resolve()
+    resolved_root = repo_root.resolve()
+    if not resolved.is_relative_to(resolved_root):
+        return None
+    rel = resolved.relative_to(resolved_root)
+    if not path.is_file():
+        return None
+    return path, rel.as_posix()
+
+
+def _raw_endpoint_files(repo_root: Path, report: dict) -> tuple[bool, list[str]]:
+    duplicates = report.get("duplicates")
+    if not isinstance(duplicates, list):
+        raise EnginesStoreError("parse jscpd report: missing duplicates array")
+    files: set[str] = set()
+    for index, duplicate in enumerate(duplicates):
+        if not isinstance(duplicate, dict):
+            raise EnginesStoreError(
+                f"parse jscpd report: duplicates[{index}] is not an object"
+            )
+        for side in ("firstFile", "secondFile"):
+            endpoint = duplicate.get(side)
+            if not isinstance(endpoint, dict) or not isinstance(endpoint.get("name"), str):
+                raise EnginesStoreError(
+                    f"parse jscpd report: duplicates[{index}].{side}.name is missing"
+                )
+            physical = _physical_endpoint_path(repo_root, endpoint["name"])
+            if physical is not None:
+                files.add(physical[1])
+    return bool(duplicates), sorted(files)
+
+
+def _write_callable_zones(
+    repo_root: Path, files: list[str], path: Path
+) -> None:
+    document = {"files": {}}
+    for rel in files:
+        document["files"][rel] = [
+            {
+                "start": {"line": zone.start.line, "column": zone.start.column},
+                "end": {"line": zone.end.line, "column": zone.end.column},
+            }
+            for zone in callable_zones.zones_for_file(repo_root, rel)
+        ]
+    path.write_text(
+        json.dumps(document, separators=(",", ":"), sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+def _prepare_jscpd_argv(
+    wrapper: Path,
+    jscpd: Path,
+    repo_root: Path,
+    files: list[str],
+    paths_dir: Path | None,
+) -> list[str]:
+    """Run jscpd once, extract endpoint-file zones, return post-processor argv."""
+    if paths_dir is None:
+        raise ValueError("tackbox-jscpd preparation requires a temporary argv dir")
+    absolute = []
+    for file in files:
+        path = Path(file)
+        absolute.append(str(path if path.is_absolute() else (repo_root / path).resolve()))
+    config = paths_dir / "jscpd.config.json"
+    config.write_text(
+        json.dumps({"path": absolute}, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    report_path = paths_dir / "jscpd-report.json"
+    argv = [
+        str(jscpd),
+        "--min-tokens", "50",
+        "--reporters", "json",
+        "--output", str(paths_dir),
+        "--absolute",
+        "--no-gitignore",
+        "--no-colors", "--no-tips", "--silent",
+        "--config", str(config),
+    ]
+    try:
+        completed = subprocess.run(
+            argv,
+            cwd=repo_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except OSError as e:
+        raise EnginesStoreError(f"run jscpd ({jscpd}): {e}") from e
+    if completed.returncode != 0:
+        detail = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise EnginesStoreError(
+            f"run jscpd ({jscpd}) failed ({completed.returncode}): {detail}"
+        )
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise EnginesStoreError(f"parse jscpd report {report_path}: {e}") from e
+    has_endpoints, endpoint_files = _raw_endpoint_files(repo_root, report)
+    head = [str(wrapper), "--report", str(report_path)]
+    if has_endpoints:
+        zones_path = paths_dir / "callable-zones.json"
+        _write_callable_zones(repo_root, endpoint_files, zones_path)
+        head.extend(["--callable-zones", str(zones_path)])
+    return _paths_from_argv(head, files, paths_dir)
 
 
 def _javalint_src_hash(tackbox_root: Path) -> str:
@@ -1270,14 +1387,17 @@ def _erclint_opengrep_argv_hermetic(
 
 
 def _tackbox_jscpd_argv_hermetic(
-    _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=(), paths_dir: Path | None = None
+    repo_root: Path, _tackbox_root: Path, files: list[str], reporters=(), paths_dir: Path | None = None
 ) -> list[str]:
-    """Wrapper from the thin wheel; jscpd from the versioned engine store. Unlike
-    node/opengrep the wrapper takes the store path explicitly (--jscpd) rather
-    than resolving off PATH, so dev and hermetic share one wrapper contract."""
+    """Run store jscpd once, then invoke the thin-wheel post-processor."""
     jscpd = hermetic_engines_root() / "bin" / exe_name("jscpd")
-    head = [str(_hermetic_erclint_bin("tackbox-jscpd")), "--jscpd", str(jscpd)]
-    return _paths_from_argv(head, files, paths_dir)
+    return _prepare_jscpd_argv(
+        _hermetic_erclint_bin("tackbox-jscpd"),
+        jscpd,
+        repo_root,
+        files,
+        paths_dir,
+    )
 
 
 def _javalint_argv_hermetic(

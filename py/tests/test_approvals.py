@@ -114,6 +114,21 @@ def test_clean_tree_is_consistent(tmp_path):
     assert approvals.render_blocks(report) == []
 
 
+def test_redundant_dup_marker_can_be_approval_consistent(tmp_path):
+    root = build(
+        tmp_path,
+        {
+            "a.py": (
+                "# dup-ok: shared public callable contract\n"
+                "def shared_contract(value: str) -> str:\n"
+                "    return value\n"
+            )
+        },
+        manifest="a.py: dup-ok: shared public callable contract\n",
+    )
+    assert check(root).ok()
+
+
 def test_uncovered_marker_is_reported(tmp_path):
     root = build(tmp_path, {"a.py": "def f():\n    x() # no-report: unapproved\n"}, manifest="")
     report = check(root)

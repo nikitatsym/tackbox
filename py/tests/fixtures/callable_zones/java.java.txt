@@ -1,0 +1,23 @@
+abstract class Fixture {
+    @External
+    public <T> T annotated(@Internal T value) throws Checked {
+        return body(value);
+    }
+
+    Fixture(String value) throws Checked {
+        body(value);
+    }
+
+    abstract String bodyless(String value) throws Checked;
+
+    Runnable blockLambda = (String value) -> {
+        body(value);
+    };
+
+    java.util.function.Function<String, String> expressionLambda =
+        (String value) -> body(value);
+}
+
+interface Contract {
+    String call(String value) throws Checked;
+}

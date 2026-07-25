@@ -718,3 +718,63 @@ but do not re-check INCOMING links to an edited file (editing only b.md leaves a
 now-dangling a.md -> b.md#old unseen); the authority is the full `dev.py check`
 / CI, which with cacheable=False always re-lints every Markdown file. (L3)
 removing a link, like removing a target, is a visible diff review owns.
+
+## D019 - callable-header duplicate pairs are filtered structurally (2026-07-25)
+
+Rules affected: DUP001 and new DUP003. DUP002 and the existing Java file-header
+special case are unchanged.
+
+Decision: a jscpd clone pair is silently removed from DUP001 if and only if
+both complete endpoints are wholly contained in reliably AST-derived,
+half-open non-body callable-header zones. The zone begins at the first callable
+token after external decorators or declaration annotations and includes
+modifiers, names, generics, parameters, return/result/throws/where clauses,
+and the required separator, body opener, arrow, or bodyless terminator. It
+ends before the first body token. Containment is whole-zone and pair-level:
+one contained endpoint never suppresses the other.
+
+The automatic filter is not an escape: marker-free code emits no finding,
+approval entry, escapes entry, count, or annotation in human, machine,
+CodeClimate, or hook output. Missing or partial coordinates, empty or inverted
+ranges, unsupported or ambiguous forms, parse results without a reliable
+boundary, one-sided containment, and any endpoint reaching a body token remain
+ordinary DUP001. Infrastructure failures in report parsing, AST extraction, or
+the explicit same-run handoff fail loudly.
+
+All syntax nested in the reliable header boundary is treated alike. Defaults,
+destructuring, computed keys or callable names, and parameter or return
+annotations can execute arbitrary logic and are still filterable when the
+complete pair stays in headers. This false-clean residual is accepted in
+exchange for one cheap structural boundary; Tackbox does not attempt purity or
+effect analysis. Java declaration annotations that are interleaved after a
+modifier make that callable zone-less because one contiguous interval cannot
+exclude the annotation while retaining both modifiers; leading declaration
+annotations remain external.
+
+`dup-ok` remains the gated suppression for legitimate clones that survive
+this filter. A direct-adjacent marker is DUP003 when it would suppress an
+automatically filtered endpoint and is not also a candidate for any surviving
+clone endpoint. Usage is accumulated across the complete report, and one
+marker position yields at most one DUP003:
+
+```text
+DUP003: dup-ok is unnecessary for an automatically filtered callable-header pair
+```
+
+The diagnostic requires removing the marker and matching approval together.
+There is deliberately no legacy grandfathering: an approved marker can become
+red after an upgrade. `tackbox approvals` remains only the D011 consistency
+checker, so marker plus matching entry can be consistent there while full
+lint, check, and CI fail with DUP003. Marker without approval also gets the
+existing uncovered-marker result; approval without marker gets the existing
+orphan result. This is not a general unused-marker scan or clone graph.
+
+Rationale: repeated callable contracts are language scaffolding, while a clone
+that reaches even the first implementation token is still refactoring
+pressure. Requiring both complete endpoints avoids turning a structural fact
+on one side into a whole-pair exemption. Named residuals: executable header
+logic can be filtered; coordinate or grammar uncertainty is false red; a clone
+including an empty block's closing delimiter stays red; grammar drift can
+change which forms have reliable zones; the same-run report/zone handoff has a
+normal edit race; silent filtering has no operational inventory by product
+choice.

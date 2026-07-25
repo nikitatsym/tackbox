@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 from conftest import commit_all, git, init_repo, tackbox_env
+from test_cli_fixture import REDUNDANT_DUP_MARKER, callable_header_pair
 
 from tackbox import cli, gitfiles
 from tackbox.cli import _finding_line, _partition_findings, _span_lines
@@ -195,6 +196,45 @@ def test_post_go_clean_exit0(tmp_path):
     )
     assert r.returncode == 0, f"clean file must exit 0:\n{r.stdout}\n{r.stderr}"
     assert "ERC001" not in r.stderr, r.stderr
+
+
+def test_post_callable_header_pair_is_silent(tmp_path):
+    target = tmp_path / "dup.py"
+    target.write_text(callable_header_pair())
+    _dev_py(tmp_path)
+    _init(tmp_path)
+    r = _hook(
+        {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Write",
+            "cwd": str(tmp_path),
+            "tool_input": {"file_path": str(target)},
+        }
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "DUP001" not in r.stderr
+
+
+def test_post_redundant_dup_marker_blocks_with_dup003(tmp_path):
+    target = tmp_path / "dup.py"
+    target.write_text(callable_header_pair(REDUNDANT_DUP_MARKER))
+    (tmp_path / ".tackbox").mkdir()
+    (tmp_path / ".tackbox" / "approvals").write_text(
+        "dup.py: dup-ok: shared public callable contract\n"
+    )
+    _dev_py(tmp_path)
+    _init(tmp_path)
+    r = _hook(
+        {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Write",
+            "cwd": str(tmp_path),
+            "tool_input": {"file_path": str(target)},
+        }
+    )
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert r.stderr.count("DUP003") == 1
+    assert "remove the marker and matching approval" in r.stderr
 
 
 def test_post_non_edit_tool_noop(tmp_path):

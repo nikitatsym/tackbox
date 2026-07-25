@@ -1,0 +1,16 @@
+@external
+async def decorated(
+    value: annotation_call(),
+    option: Result = default_call(),
+) -> return_annotation():
+    """Body docstring is not header syntax."""
+    return body_call(value)
+
+def plain(value, /, named=None, *, rest=()):
+    return body_call(value)
+
+class Service:
+    def method(self, value: int = default_call()) -> str:
+        return body_call(value)
+
+callback = lambda value=default_call(): body_call(value)

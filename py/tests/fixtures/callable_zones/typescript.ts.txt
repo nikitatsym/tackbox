@@ -1,0 +1,33 @@
+export function overloaded(value: string): Result;
+export function overloaded(value: number): Result;
+export function overloaded(value: string | number): Result {
+    return body(value);
+}
+
+interface Contract {
+    method<T>(value: T): Result;
+    (value: string): Result;
+    new (value: string): Service;
+}
+
+abstract class AbstractService {
+    abstract [computedName()]<T>(
+        {[computedKey()]: value}: Input<T>,
+    ): Result;
+
+    constructor(value: string) {
+        body(value);
+    }
+
+    @external
+    [computedName()]<T>(value: T = defaultCall<T>()): Result {
+        return body(value);
+    }
+}
+
+const typedBlock = (value: string = defaultCall()): Result => {
+    return body(value);
+};
+const typedExpression: (value: string) => Result =
+    (value: string): Result => body(value);
+type Factory = new (value: string) => Service;

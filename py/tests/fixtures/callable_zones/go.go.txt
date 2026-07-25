@@ -1,0 +1,19 @@
+package fixture
+
+func Generic[T any](value T) (result T, err error) {
+	return body(value)
+}
+
+func (service *Service) Method(value int) (string, error) {
+	return body(value)
+}
+
+var callback = func(value int) string {
+	return body(value)
+}
+
+type Handler func(value int) (string, error)
+
+type Interface interface {
+	Method(value int) (string, error)
+}

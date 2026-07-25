@@ -1,0 +1,40 @@
+export async function named({value, [computedKey()]: computed} = defaultCall()) {
+    return body(value, computed);
+}
+
+const expression = function* (value = defaultCall()) {
+    yield body(value);
+};
+
+class Service {
+    constructor(value) {
+        body(value);
+    }
+
+    get value() {
+        return body();
+    }
+
+    set value(next) {
+        body(next);
+    }
+
+    @external
+    [computedName()](value = defaultCall()) {
+        return body(value);
+    }
+}
+
+const object = {
+    method(value) {
+        return body(value);
+    },
+    *generator(value) {
+        yield body(value);
+    },
+};
+
+const blockArrow = ({[computedKey()]: value}) => {
+    return body(value);
+};
+register((value = defaultCall()) => body(value));

@@ -123,6 +123,35 @@ PY_MARKER_NO_REASON = """def cleanup():
 
 FIXTURE_MARKER = "<FIXTURE>"
 
+REDUNDANT_DUP_MARKER = "# dup-ok: shared public callable contract\n"
+
+_CALLABLE_PARAMS = (
+    ("account_id", "str"),
+    ("region", 'str = "eu"'),
+    ("retries", "int = 3"),
+    ("timeout_seconds", "float = 30.0"),
+    ("include_stopped", "bool = False"),
+    ("include_labels", "bool = True"),
+    ("page_size", "int = 100"),
+    ("page_token", "str | None = None"),
+    ("sort_field", 'str = "created_at"'),
+    ("sort_direction", 'str = "desc"'),
+    ("request_id", "str | None = None"),
+    ("trace_id", "str | None = None"),
+)
+
+
+def callable_header_pair(marker: str = "") -> str:
+    """Build a >50-token repeated header without cloning it in this test file."""
+    header = "def shared_contract(\n" + "".join(
+        f"    {name}: {annotation},\n" for name, annotation in _CALLABLE_PARAMS
+    )
+    header += ") -> tuple[list[str], str | None]:\n"
+    return (
+        marker + header + "    return left_result\n\n"
+        + header + '    raise RuntimeError("right result")\n'
+    )
+
 
 @pytest.fixture(scope="module")
 def fixture_repo(tmp_path_factory) -> Path:
@@ -147,16 +176,20 @@ def fixture_repo(tmp_path_factory) -> Path:
     (root / "neg" / "suppressed_ok.py").write_text(PY_SUPPRESSED_OK)
     (root / "neg" / "marker_no_reason.py").write_text(PY_MARKER_NO_REASON)
 
-    _git(root, "init", "-q", "-b", "main")
-    _git(root, "config", "user.email", "t@t")
-    _git(root, "config", "user.name", "t")
-    _git(root, "add", ".")
-    _git(root, "commit", "-q", "-m", "fixture")
+    _commit_fixture(root)
     return root
 
 
 def _git(cwd: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+def _commit_fixture(root: Path) -> None:
+    _git(root, "init", "-q", "-b", "main")
+    _git(root, "config", "user.email", "t@t")
+    _git(root, "config", "user.name", "t")
+    _git(root, "add", ".")
+    _git(root, "commit", "-q", "-m", "fixture")
 
 
 def _run_tackbox(fixture_repo: Path, *extra: str) -> subprocess.CompletedProcess:
@@ -176,6 +209,26 @@ def _run_tackbox(fixture_repo: Path, *extra: str) -> subprocess.CompletedProcess
         capture_output=True,
         text=True,
     )
+
+
+@pytest.fixture(scope="module")
+def callable_pair_repo(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("callable_pair")
+    (root / "dup.py").write_text(callable_header_pair())
+    _commit_fixture(root)
+    return root
+
+
+@pytest.fixture(scope="module")
+def redundant_marker_repo(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("redundant_marker")
+    (root / "dup.py").write_text(callable_header_pair(REDUNDANT_DUP_MARKER))
+    (root / ".tackbox").mkdir()
+    (root / ".tackbox" / "approvals").write_text(
+        "dup.py: dup-ok: shared public callable contract\n"
+    )
+    _commit_fixture(root)
+    return root
 
 
 def _split_engine_sections(stdout: str) -> dict[str, str]:
@@ -413,3 +466,18 @@ def test_no_report_marker_without_reason_does_not_suppress(sections):
     # empty reason -> not suppressed -> file present in findings.
     py = _nows(sections["pyrules"])
     assert "marker_no_reason.py" in py, f"empty-reason marker wrongly suppressed:\n{py}"
+
+
+def test_callable_header_pair_is_silent_in_human_lint(callable_pair_repo):
+    result = _run_tackbox(callable_pair_repo)
+    section = _split_engine_sections(result.stdout)["tackbox-jscpd"]
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "DUP001" not in section
+
+
+def test_redundant_dup_marker_is_dup003_in_human_lint(redundant_marker_repo):
+    result = _run_tackbox(redundant_marker_repo)
+    section = _split_engine_sections(result.stdout)["tackbox-jscpd"]
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert section.count("DUP003") == 1
+    assert "remove the marker and matching approval" in section

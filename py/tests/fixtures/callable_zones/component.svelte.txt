@@ -1,0 +1,17 @@
+<script>
+    export function instance(value = defaultCall()) {
+        return body(value);
+    }
+    register((value) => body(value));
+</script>
+
+<script context="module" lang="ts">
+    export const load = (value: Input = defaultCall()): Result => {
+        return body(value);
+    };
+</script>
+
+<button onclick={() => templateBody()}>run</button>
+<style>
+    .ignored { color: red; }
+</style>

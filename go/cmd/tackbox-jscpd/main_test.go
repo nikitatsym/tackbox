@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -12,44 +13,14 @@ import (
 	"github.com/nikitatsym/tackbox/go/internal/wrapcli"
 )
 
-// TestMain doubles as a jscpd stub: when TACKBOX_JSCPD_STUB is set the test
-// binary copies STUB_REPORT into <--output>/jscpd-report.json and exits
-// STUB_EXIT, so run() can be exercised end-to-end without the real binary.
-func TestMain(m *testing.M) {
-	if os.Getenv("TACKBOX_JSCPD_STUB") != "" {
-		os.Exit(stubMain())
-	}
-	os.Exit(m.Run())
-}
-
-func stubMain() int {
-	out := ""
-	args := os.Args[1:]
-	for i, a := range args {
-		if a == "--output" && i+1 < len(args) {
-			out = args[i+1]
-		}
-	}
-	if out != "" {
-		data, _ := os.ReadFile(os.Getenv("STUB_REPORT"))
-		if err := os.WriteFile(filepath.Join(out, "jscpd-report.json"), data, 0o644); err != nil {
-			return 3
-		}
-	}
-	if os.Getenv("STUB_EXIT") == "1" {
-		return 1
-	}
-	return 0
-}
-
 // mkSpanReport builds a jscpd-style report JSON for one clone of the given
 // format between two absolute files with explicit line spans.
 func mkSpanReport(format, fileA string, aStart, aEnd int, fileB string, bStart, bEnd int) []byte {
 	ep := func(name string, start, end int) map[string]any {
 		return map[string]any{
 			"name": name, "start": start, "end": end,
-			"startLoc": map[string]any{"line": start},
-			"endLoc":   map[string]any{"line": end},
+			"startLoc": map[string]any{"line": start, "column": 0},
+			"endLoc":   map[string]any{"line": end, "column": 100},
 		}
 	}
 	doc := map[string]any{
@@ -85,6 +56,16 @@ func writeSrc(t *testing.T, dir, name string, start int, above []string) string 
 	return p
 }
 
+func writeSrcPair(t *testing.T, dir, subdir string) (string, string) {
+	t.Helper()
+	sourceDir := filepath.Join(dir, subdir)
+	if err := os.Mkdir(sourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return writeSrc(t, sourceDir, "a.go", 5, nil),
+		writeSrc(t, sourceDir, "b.go", 8, nil)
+}
+
 func parseNDJSON(t *testing.T, s string) []wrapcli.Finding {
 	t.Helper()
 	var out []wrapcli.Finding
@@ -104,17 +85,47 @@ func parseNDJSON(t *testing.T, s string) []wrapcli.Finding {
 }
 
 func emitTo(t *testing.T, cwd string, rep []byte, machine bool) (string, int) {
+	return emitZonesTo(t, cwd, rep, nil, machine)
+}
+
+func emitZonesTo(t *testing.T, cwd string, rep []byte, zones callableZones, machine bool) (string, int) {
 	t.Helper()
 	var parsed jscpdReport
 	if err := json.Unmarshal(rep, &parsed); err != nil {
 		t.Fatalf("unmarshal report: %v", err)
 	}
 	var buf strings.Builder
-	n, err := emit(&parsed, newFileLines(), cwd, machine, &buf)
+	n, err := emit(&parsed, zones, newFileLines(), cwd, machine, &buf)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
 	return buf.String(), n
+}
+
+func broadZone(startLine, endLine int) callableZone {
+	return callableZone{
+		Start: zonePoint{Line: startLine - 1, Column: 0},
+		End:   zonePoint{Line: endLine - 1, Column: 1000},
+	}
+}
+
+func mustReport(t *testing.T, raw []byte) jscpdReport {
+	t.Helper()
+	var report jscpdReport
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatal(err)
+	}
+	return report
+}
+
+func mustSingleFinding(t *testing.T, dir string, raw []byte, zones callableZones, rule string) wrapcli.Finding {
+	t.Helper()
+	out, n := emitZonesTo(t, dir, raw, zones, true)
+	findings := parseNDJSON(t, out)
+	if n != 1 || len(findings) != 1 || findings[0].Rule != rule {
+		t.Fatalf("want one %s, got n=%d findings=%+v", rule, n, findings)
+	}
+	return findings[0]
 }
 
 func TestMachineBothEndpointsReported(t *testing.T) {
@@ -319,7 +330,7 @@ func TestReadReportResolvesVirtualSFCNames(t *testing.T) {
 		t.Fatalf("virtual names not resolved to real files: %+v", rep.Duplicates[0])
 	}
 	var buf strings.Builder
-	if _, err := emit(rep, newFileLines(), dir, false, &buf); err != nil {
+	if _, err := emit(rep, nil, newFileLines(), dir, false, &buf); err != nil {
 		t.Fatalf("emit over resolved names: %v", err)
 	}
 	if !strings.Contains(buf.String(), "A.svelte") || strings.Contains(buf.String(), ":css") {
@@ -335,6 +346,315 @@ func TestReadReportGarbageIsError(t *testing.T) {
 	if _, err := readReport(p); err == nil {
 		t.Fatal("unparseable report must error, never a silent clean")
 	}
+}
+
+func TestReadReportMissingOrNullDuplicatesIsError(t *testing.T) {
+	for _, raw := range []string{`{}`, `{"duplicates":null}`} {
+		p := filepath.Join(t.TempDir(), "jscpd-report.json")
+		if err := os.WriteFile(p, []byte(raw), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readReport(p); err == nil {
+			t.Fatalf("raw report %s must fail loudly", raw)
+		}
+	}
+}
+
+func TestSvelteRawFixtureMapsVirtualNamesToPhysicalFiles(t *testing.T) {
+	raw, err := os.ReadFile("testdata/svelte-virtual-report.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	a := filepath.Join(dir, "A.svelte")
+	b := filepath.Join(dir, "B.svelte")
+	if err := os.WriteFile(a, []byte("<script>const a = () => 1;</script>\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b, []byte("<script>const b = () => 1;</script>\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	raw = bytes.ReplaceAll(raw, []byte(`src/A.svelte`), []byte(a))
+	raw = bytes.ReplaceAll(raw, []byte(`src/B.svelte`), []byte(b))
+	report := filepath.Join(t.TempDir(), "jscpd-report.json")
+	if err := os.WriteFile(report, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := readReport(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Duplicates[0].FirstFile.Name != a || rep.Duplicates[0].SecondFile.Name != b {
+		t.Fatalf("virtual Svelte endpoints were not physicalized: %+v", rep.Duplicates[0])
+	}
+	zones := callableZones{
+		"A.svelte": {broadZone(3, 10)},
+		"B.svelte": {broadZone(4, 11)},
+	}
+	var out strings.Builder
+	n, err := emit(rep, zones, newFileLines(), dir, true, &out)
+	if err != nil || n != 0 || out.Len() != 0 {
+		t.Fatalf("physical Svelte zones must filter the pair: n=%d err=%v out=%q", n, err, out.String())
+	}
+}
+
+func TestVastaiHeaderFixtureUsesCanonicalJscpdCoordinatesAndDrops(t *testing.T) {
+	raw, err := os.ReadFile("testdata/vastai-header-report.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rep jscpdReport
+	if err := json.Unmarshal(raw, &rep); err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Duplicates) != 1 {
+		t.Fatalf("fixture duplicates = %d, want 1", len(rep.Duplicates))
+	}
+	c := &rep.Duplicates[0]
+	if *c.FirstFile.StartLoc.Line != 874 || *c.FirstFile.StartLoc.Column != 34 ||
+		*c.FirstFile.EndLoc.Line != 881 || *c.FirstFile.EndLoc.Column != 35 {
+		t.Fatalf("fixture lost exact first endpoint coordinates: %+v", c.FirstFile)
+	}
+
+	dir := t.TempDir()
+	source := writeSrc(t, dir, "tools.py", 2, nil)
+	c.FirstFile.Name = source
+	c.SecondFile.Name = source
+	zones := callableZones{
+		"tools.py": {
+			broadZone(872, 887),
+			broadZone(926, 941),
+		},
+	}
+	var out strings.Builder
+	n, err := emit(&rep, zones, newFileLines(), dir, true, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 || out.Len() != 0 {
+		t.Fatalf("both header-contained endpoints must be silent: n=%d out=%q", n, out.String())
+	}
+}
+
+func TestCallableHeaderPairRequiresBothCompleteEndpointsContained(t *testing.T) {
+	dir := t.TempDir()
+	a := writeSrc(t, dir, "a.go", 5, nil)
+	b := writeSrc(t, dir, "b.go", 8, nil)
+	report := mkReport(a, 5, b, 8)
+
+	cases := []struct {
+		name  string
+		zones callableZones
+		want  int
+	}{
+		{
+			name: "both contained",
+			zones: callableZones{
+				"a.go": {broadZone(4, 10)},
+				"b.go": {broadZone(7, 13)},
+			},
+			want: 0,
+		},
+		{
+			name: "only first contained",
+			zones: callableZones{
+				"a.go": {broadZone(4, 10)},
+			},
+			want: 2,
+		},
+		{
+			name: "first body token crosses zone",
+			zones: callableZones{
+				"a.go": {broadZone(4, 7)},
+				"b.go": {broadZone(7, 13)},
+			},
+			want: 2,
+		},
+		{
+			name:  "empty zone lists",
+			zones: callableZones{"a.go": {}, "b.go": {}},
+			want:  2,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, got := emitZonesTo(t, dir, report, tc.zones, true)
+			if got != tc.want {
+				t.Fatalf("surviving findings = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCallableHeaderPathsUseCanonicalPhysicalIdentity(t *testing.T) {
+	t.Run("in-repo dot-dot prefix is not parent traversal", func(t *testing.T) {
+		dir := t.TempDir()
+		a, b := writeSrcPair(t, dir, "..headers")
+		zones := callableZones{
+			"..headers/a.go": {broadZone(4, 10)},
+			"..headers/b.go": {broadZone(7, 13)},
+		}
+		out, n := emitZonesTo(t, dir, mkReport(a, 5, b, 8), zones, true)
+		if n != 0 || out != "" {
+			t.Fatalf("contained endpoints under ..headers must be silent: n=%d out=%q", n, out)
+		}
+	})
+
+	t.Run("symlink alias meets resolved sidecar key", func(t *testing.T) {
+		dir := t.TempDir()
+		a, b := writeSrcPair(t, dir, "physical")
+		aliasDir := filepath.Join(dir, "alias")
+		if err := os.Symlink(filepath.Dir(a), aliasDir); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		aliasA := filepath.Join(aliasDir, filepath.Base(a))
+		aliasB := filepath.Join(aliasDir, filepath.Base(b))
+		zones := callableZones{
+			"physical/a.go": {broadZone(4, 10)},
+			"physical/b.go": {broadZone(7, 13)},
+		}
+		out, n := emitZonesTo(t, dir, mkReport(aliasA, 5, aliasB, 8), zones, true)
+		if n != 0 || out != "" {
+			t.Fatalf("symlink endpoints must use physical sidecar keys: n=%d out=%q", n, out)
+		}
+	})
+}
+
+func TestIncompleteEmptyOrInvertedEndpointCoordinatesStayDUP001(t *testing.T) {
+	dir := t.TempDir()
+	a := writeSrc(t, dir, "a.go", 5, nil)
+	b := writeSrc(t, dir, "b.go", 8, nil)
+	rep := mustReport(t, mkReport(a, 5, b, 8))
+	zones := callableZones{
+		"a.go": {broadZone(4, 20)},
+		"b.go": {broadZone(7, 20)},
+	}
+
+	rep.Duplicates[0].FirstFile.StartLoc.Column = nil
+	var out strings.Builder
+	n, err := emit(&rep, zones, newFileLines(), dir, true, &out)
+	if err != nil || n != 2 {
+		t.Fatalf("partial coordinates must stay red: n=%d err=%v out=%q", n, err, out.String())
+	}
+
+	empty := mustReport(t, mkReport(a, 5, b, 8))
+	*empty.Duplicates[0].FirstFile.EndLoc.Line = *empty.Duplicates[0].FirstFile.StartLoc.Line
+	*empty.Duplicates[0].FirstFile.EndLoc.Column = *empty.Duplicates[0].FirstFile.StartLoc.Column
+	out.Reset()
+	n, err = emit(&empty, zones, newFileLines(), dir, true, &out)
+	if err != nil || n != 2 {
+		t.Fatalf("empty coordinates must stay red: n=%d err=%v out=%q", n, err, out.String())
+	}
+
+	inverted := mustReport(t, mkReport(a, 5, b, 8))
+	line := 4
+	inverted.Duplicates[0].FirstFile.EndLoc.Line = &line
+	out.Reset()
+	n, err = emit(&inverted, zones, newFileLines(), dir, true, &out)
+	if err != nil || n != 2 {
+		t.Fatalf("inverted coordinates must stay red: n=%d err=%v out=%q", n, err, out.String())
+	}
+}
+
+func TestMalformedExplicitCallableZonesFailLoudly(t *testing.T) {
+	cases := []string{
+		`{`,
+		`{}`,
+		`{"files":{"a.py":[{"start":{"line":0},"end":{"line":1,"column":0}}]}}`,
+		`{"files":{"a.py":[{"start":{"line":0,"column":0},"end":{"column":1}}]}}`,
+		`{"files":{"a.py":[{"start":{"line":0,"column":0},"end":{"line":0,"column":0}}]}}`,
+		`{"files":{"a.py":[{"start":{"line":1,"column":0},"end":{"line":0,"column":1}}]}}`,
+		`{"files":{},"extra":true}`,
+		`{"files":{}} trailing`,
+	}
+	for _, raw := range cases {
+		path := filepath.Join(t.TempDir(), "zones.json")
+		if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readCallableZones(path); err == nil {
+			t.Fatalf("malformed sidecar passed: %s", raw)
+		}
+	}
+}
+
+func TestCloneReportRequiresExplicitCallableZones(t *testing.T) {
+	repo := t.TempDir()
+	a := writeSrc(t, repo, "a.go", 5, nil)
+	b := writeSrc(t, repo, "b.go", 8, nil)
+	bin := buildWrapper(t)
+	report := filepath.Join(t.TempDir(), "report.json")
+	if err := os.WriteFile(report, mkReport(a, 5, b, 8), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, err := runWith(t, bin, repo, nil, "--report", report, "a.go", "b.go")
+	if err == nil || !strings.Contains(stderr, "--callable-zones was not provided") {
+		t.Fatalf("clone report without sidecar must fail loudly: err=%v stderr=%q", err, stderr)
+	}
+}
+
+func TestEmptyReportNeedsNoCallableZones(t *testing.T) {
+	repo := t.TempDir()
+	writeSrc(t, repo, "a.go", 5, nil)
+	bin := buildWrapper(t)
+	report := filepath.Join(t.TempDir(), "report.json")
+	if err := os.WriteFile(report, []byte(`{"duplicates":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, err := runWith(t, bin, repo, nil, "--report", report, "a.go")
+	if err != nil || out != "" || stderr != "" {
+		t.Fatalf("empty report without sidecar must be clean: err=%v out=%q stderr=%q", err, out, stderr)
+	}
+}
+
+func TestRedundantMarkerEmitsOneDUP003(t *testing.T) {
+	dir := t.TempDir()
+	a := writeSrc(t, dir, "a.go", 5, []string{"// dup-ok: shared callable contract"})
+	b := writeSrc(t, dir, "b.go", 8, nil)
+	zones := callableZones{
+		"a.go": {broadZone(4, 10)},
+		"b.go": {broadZone(7, 13)},
+	}
+	finding := mustSingleFinding(t, dir, mkReport(a, 5, b, 8), zones, "DUP003")
+	if finding.File != "a.go" || finding.Line != 4 {
+		t.Fatalf("want DUP003 at marker, got %+v", finding)
+	}
+	if !strings.Contains(finding.Message, "remove the marker and matching approval together") {
+		t.Fatalf("DUP003 lacks cleanup action: %+v", finding)
+	}
+}
+
+func TestMarkerSharedWithSurvivingEndpointIsNotDUP003(t *testing.T) {
+	dir := t.TempDir()
+	a := writeSrc(t, dir, "a.go", 5, []string{"// dup-ok: shared callable contract"})
+	b := writeSrc(t, dir, "b.go", 8, nil)
+	c := writeSrc(t, dir, "c.go", 8, nil)
+	auto := mustReport(t, mkReport(a, 5, b, 8))
+	survivor := mustReport(t, mkReport(a, 5, c, 8))
+	auto.Duplicates = append(auto.Duplicates, survivor.Duplicates...)
+	raw, _ := json.Marshal(auto)
+	zones := callableZones{
+		"a.go": {broadZone(4, 10)},
+		"b.go": {broadZone(7, 13)},
+	}
+	finding := mustSingleFinding(t, dir, raw, zones, "DUP001")
+	if finding.File != "c.go" {
+		t.Fatalf("shared marker must stay valid for survivor: %+v", finding)
+	}
+}
+
+func TestMarkerSeenOnMultipleAutoDroppedEndpointsEmitsOneDUP003(t *testing.T) {
+	dir := t.TempDir()
+	a := writeSrc(t, dir, "a.go", 5, []string{"// dup-ok: shared callable contract"})
+	b := writeSrc(t, dir, "b.go", 8, nil)
+	rep := mustReport(t, mkReport(a, 5, b, 8))
+	rep.Duplicates = append(rep.Duplicates, rep.Duplicates[0])
+	raw, _ := json.Marshal(rep)
+	zones := callableZones{
+		"a.go": {broadZone(4, 10)},
+		"b.go": {broadZone(7, 13)},
+	}
+	mustSingleFinding(t, dir, raw, zones, "DUP003")
 }
 
 func buildWrapper(t *testing.T) string {
@@ -359,28 +679,28 @@ func runWith(t *testing.T, bin, cwd string, env []string, args ...string) (strin
 	return out.String(), errb.String(), err
 }
 
-// runStub builds the wrapper and runs it in machine mode against the TestMain
-// jscpd stub, which drops `report` into the wrapper's --output dir.
-func runStub(t *testing.T, repo string, report []byte, files ...string) (string, string, error) {
+// runReport builds the post-processor and gives it an explicit raw report plus
+// a syntactically valid empty zone sidecar.
+func runReport(t *testing.T, repo string, report []byte, files ...string) (string, string, error) {
 	t.Helper()
 	bin := buildWrapper(t)
-	stub, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
 	repFile := filepath.Join(t.TempDir(), "rep.json")
 	if err := os.WriteFile(repFile, report, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	env := []string{"TACKBOX_JSCPD_STUB=1", "STUB_REPORT=" + repFile}
-	return runWith(t, bin, repo, env, append([]string{"--jscpd", stub, "--machine"}, files...)...)
+	zonesFile := filepath.Join(t.TempDir(), "zones.json")
+	if err := os.WriteFile(zonesFile, []byte(`{"files":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--report", repFile, "--callable-zones", zonesFile, "--machine"}
+	return runWith(t, bin, repo, nil, append(args, files...)...)
 }
 
-func TestRunStubHappyPath(t *testing.T) {
+func TestRunReportHappyPath(t *testing.T) {
 	repo := t.TempDir()
 	a := writeSrc(t, repo, "a.go", 5, nil)
 	b := writeSrc(t, repo, "b.go", 8, nil)
-	out, errOut, runErr := runStub(t, repo, mkReport(a, 5, b, 8), "a.go", "b.go")
+	out, errOut, runErr := runReport(t, repo, mkReport(a, 5, b, 8), "a.go", "b.go")
 	if runErr == nil {
 		t.Fatalf("expected exit 1 for surviving clones; got clean\nstdout=%s\nstderr=%s", out, errOut)
 	}
@@ -390,10 +710,10 @@ func TestRunStubHappyPath(t *testing.T) {
 	}
 }
 
-func TestRunStubUnparseableReportNeverClean(t *testing.T) {
+func TestRunUnparseableReportNeverClean(t *testing.T) {
 	repo := t.TempDir()
 	writeSrc(t, repo, "a.go", 5, nil)
-	out, errOut, runErr := runStub(t, repo, []byte("{garbage"), "a.go")
+	out, errOut, runErr := runReport(t, repo, []byte("{garbage"), "a.go")
 	if runErr == nil {
 		t.Fatalf("unparseable report must be nonzero, never clean\nstdout=%s", out)
 	}
@@ -402,17 +722,17 @@ func TestRunStubUnparseableReportNeverClean(t *testing.T) {
 	}
 }
 
-func TestRunBadBinaryPathNeverClean(t *testing.T) {
+func TestRunMissingReportNeverClean(t *testing.T) {
 	bin := buildWrapper(t)
 	repo := t.TempDir()
 	writeSrc(t, repo, "a.go", 5, nil)
 	out, errOut, runErr := runWith(t, bin, repo, nil,
-		"--jscpd", filepath.Join(repo, "nonexistent-jscpd"), "--machine", "a.go")
+		"--report", filepath.Join(repo, "nonexistent-report"), "--machine", "a.go")
 	if runErr == nil {
-		t.Fatalf("a bad jscpd path must exit nonzero, never clean\nstdout=%s", out)
+		t.Fatalf("a missing raw report must exit nonzero, never clean\nstdout=%s", out)
 	}
-	if !strings.Contains(errOut, "run jscpd") {
-		t.Fatalf("stderr should name the spawn failure: %s", errOut)
+	if !strings.Contains(errOut, "read jscpd report") {
+		t.Fatalf("stderr should name the report read failure: %s", errOut)
 	}
 }
 
@@ -520,7 +840,7 @@ func TestRunIgnoreMarkerBanDUP002(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "a.go"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, errOut, runErr := runStub(t, repo, []byte(`{"duplicates": []}`), "a.go")
+	out, errOut, runErr := runReport(t, repo, []byte(`{"duplicates": []}`), "a.go")
 	if runErr == nil {
 		t.Fatalf("native ignore markers must fail the run\nstdout=%s\nstderr=%s", out, errOut)
 	}

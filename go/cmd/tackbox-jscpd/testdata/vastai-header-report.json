@@ -1,0 +1,40 @@
+{
+  "duplicates": [
+    {
+      "firstFile": {
+        "end": 881,
+        "endLoc": {
+          "column": 35,
+          "line": 881,
+          "position": 29842
+        },
+        "name": "src/vastai_mcp/tools.py",
+        "start": 874,
+        "startLoc": {
+          "column": 34,
+          "line": 874,
+          "position": 29584
+        }
+      },
+      "format": "python",
+      "fragment": "    endpoint_id: int | None = None,\n    template_hash: str | None = None,\n    template_id: int | None = None,\n    search_params: str | None = None,\n    launch_args: str | None = None,\n    min_load: float | None = None,\n    target_util: float | None = None,\n    cold_mult: float | None = None,",
+      "lines": 8,
+      "secondFile": {
+        "end": 934,
+        "endLoc": {
+          "column": 35,
+          "line": 934,
+          "position": 32108
+        },
+        "name": "src/vastai_mcp/tools.py",
+        "start": 927,
+        "startLoc": {
+          "column": 11,
+          "line": 927,
+          "position": 31850
+        }
+      },
+      "tokens": 57
+    }
+  ]
+}

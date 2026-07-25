@@ -302,7 +302,7 @@ rule id (parity with the pre-migration ids).
 Full ids carry the `python-` prefix (e.g. `python-swallowed-exception`).
 TBX009 is retired (the removed secret-name heuristic, D001), as JV008 is.
 
-### Duplication (DUP001, DUP002)
+### Duplication (DUP001, DUP002, DUP003)
 
 The `tackbox-jscpd` engine wraps a copy/paste detector and runs by
 default over Go, Python, Java, and the JS family (`.js`, `.jsx`, `.mjs`,
@@ -316,12 +316,31 @@ no wiring.
 - **DUP002** flags a native `jscpd:ignore` marker. That channel would
   bypass the gated suppression below, so its presence alone is a
   finding; remove it.
+- **DUP003** flags a `dup-ok` marker that became unnecessary because
+  its callable-header clone is filtered automatically. Remove the
+  marker and its matching approval together.
+
+A pair repeated wholly inside two callable headers is filtered
+automatically when both complete clone endpoints fit reliable syntax
+boundaries. The header includes the callable syntax, parameters,
+return/result clauses, and required separator or body opener, but no
+body token. This is marker-free and silent in normal, machine,
+CodeClimate, and hook output. If either endpoint crosses into a body,
+has incomplete coordinates, or has no reliable callable boundary, the
+pair remains an ordinary DUP001. Header expressions are not classified
+by purity: defaults, parameter or return annotations, destructuring,
+and computed names are part of the header boundary even when they can
+execute code.
 
 Suppress one clone with a standalone `// dup-ok: <reason>` comment
 directly above the block - a `#` or a single-line `/* ... */` comment
 works per language. The reason must be at least 10 characters (D009),
 and a trailing comment after code does not count. `dup-ok` above one
 end drops only that end; above both ends it drops the whole clone.
+Use it only for justified clones that survive automatic header
+filtering. A matching approval confirms that a marker is authorized;
+it does not make a redundant marker valid, so DUP003 remains until
+both source marker and approval are removed.
 
 Duplication is cross-file, so the engine is never cached: it runs on
 every lint and writes no clean-cache markers. A `java`-format clone that
