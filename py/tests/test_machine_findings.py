@@ -68,6 +68,34 @@ def test_erclint_malformed_posn_is_location_unknown():
     ]
 
 
+def test_erclint_package_test_variant_repeat_collapses():
+    """go analysis loads a package with its test variants, so a non-test file's
+    diagnostic arrives under both `pkg` and `pkg [pkg.test]` - one physical
+    finding, reported once."""
+    item = '{"posn": "/repo/pkg/a.go:9:3", "message": "ERC004: bare `return nil`"}'
+    raw = (
+        '{"m/pkg": {"returnnil": [' + item + ']},'
+        ' "m/pkg [m/pkg.test]": {"returnnil": [' + item + "]}}"
+    )
+    assert erclint_located_findings(raw, Path("/repo")) == [
+        Finding(rule="returnnil", file="pkg/a.go", line=9, message="ERC004: bare `return nil`")
+    ]
+
+
+def test_erclint_test_variant_only_finding_survives():
+    """The `[pkg.test]` key is the ONLY carrier of a _test.go finding (ERC008),
+    so the variant collapse must key on the location, not drop the variant."""
+    raw = (
+        '{"m/pkg": {"returnnil": [{"posn": "/repo/pkg/a.go:9:3", "message": "ERC004: x"}]},'
+        ' "m/pkg [m/pkg.test]": {"skiptest": '
+        '[{"posn": "/repo/pkg/a_test.go:6:2", "message": "ERC008: y"}]}}'
+    )
+    assert erclint_located_findings(raw, Path("/repo")) == [
+        Finding(rule="returnnil", file="pkg/a.go", line=9, message="ERC004: x"),
+        Finding(rule="skiptest", file="pkg/a_test.go", line=6, message="ERC008: y"),
+    ]
+
+
 def test_located_findings_dispatches_erclint_vs_machine():
     erc = '{"p": {"errcheck": [{"posn": "/r/a.go:3:1", "message": "m"}]}}'
     assert located_findings("erclint", erc, Path("/r")) == [

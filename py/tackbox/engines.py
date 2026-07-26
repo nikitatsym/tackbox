@@ -748,16 +748,25 @@ def _split_posn(posn: str) -> tuple[str | None, int | None]:
 
 
 def erclint_located_findings(stdout: str, repo_root: Path) -> list[Finding]:
+    """Located findings from erclint's -json tree, one per physical diagnostic.
+
+    go analysis loads a package together with its test variants, so a non-test
+    file is analyzed once per variant and the same diagnostic arrives under both
+    `pkg` and `pkg [pkg.test]`; (analyzer, posn, message) is the diagnostic's
+    identity, so the variant repeat is dropped.
+    """
     out: list[Finding] = []
+    seen: set[tuple[str, str, str]] = set()
     for f in parse_erclint_findings(stdout):
-        path, line = _split_posn(f.get("posn", ""))
+        rule, posn = f.get("analyzer", ""), f.get("posn", "")
+        message = f.get("message") or None
+        key = (rule, posn, message or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        path, line = _split_posn(posn)
         rel = os.path.relpath(path, repo_root) if path is not None else None
-        out.append(
-            Finding(
-                rule=f.get("analyzer", ""), file=rel, line=line,
-                message=f.get("message") or None,
-            )
-        )
+        out.append(Finding(rule=rule, file=rel, line=line, message=message))
     return out
 
 

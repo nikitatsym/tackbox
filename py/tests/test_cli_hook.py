@@ -95,6 +95,21 @@ func B() error {
 }
 """
 
+# ERC004 on lines 7 and 9.
+GO_ERC004 = """package pkg
+
+type Item struct{ Name string }
+
+func Find(k string) *Item {
+\tif k == "" {
+\t\treturn nil
+\t}
+\treturn nil
+}
+"""
+
+GO_PKG_TEST = 'package pkg\n\nimport "testing"\n\nfunc TestFind(t *testing.T) { _ = Find("x") }\n'
+
 
 def _init(root: Path) -> None:
     init_repo(root, commit=True)
@@ -178,6 +193,31 @@ def test_post_go_compile_break_exit2(tmp_path):
     assert "undefinedThing" in r.stderr, f"first compile error must be shown:\n{r.stderr}"
     assert r.stderr.count("does not compile") == 1, f"pkg/pkg.test dedup to one line:\n{r.stderr}"
     assert r.stdout == "" and "{" not in r.stderr, f"no JSON dump on a compile break:\n{r.stdout}\n{r.stderr}"
+
+
+def test_post_go_finding_reported_once_per_package_variant(tmp_path):
+    # A package with a _test.go is analyzed under both `pkg` and `pkg [pkg.test]`,
+    # so every non-test-file finding arrives twice; the hook must print each one
+    # once.
+    (tmp_path / "go.mod").write_text(GO_MOD)
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "scan.go").write_text(GO_ERC004)
+    (tmp_path / "pkg" / "scan_test.go").write_text(GO_PKG_TEST)
+    _dev_py(tmp_path)
+    _init(tmp_path)
+    r = _hook(
+        {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Write",
+            "cwd": str(tmp_path),
+            "tool_input": {"file_path": str(tmp_path / "pkg" / "scan.go")},
+        }
+    )
+    assert r.returncode == 2, f"findings must block with exit 2:\n{r.stdout}\n{r.stderr}"
+    lines = [ln for ln in r.stderr.splitlines() if ln.strip()]
+    assert lines == sorted(set(lines), key=lines.index), f"duplicated hook lines:\n{r.stderr}"
+    assert len(lines) == 2, f"exactly the two ERC004 findings:\n{r.stderr}"
+    assert "pkg/scan.go:7" in lines[0] and "pkg/scan.go:9" in lines[1], r.stderr
 
 
 def test_post_go_clean_exit0(tmp_path):
