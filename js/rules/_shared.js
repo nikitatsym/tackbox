@@ -438,9 +438,9 @@ function hasMarkerAbove(context, node, prefix) {
 // One coherent path analysis for all three legal catch exits: throw and a
 // Result-boundary return terminate a path; a recognized reporter call is a
 // sticky event (statements after it on the path are fine). A path reaching the
-// end of the handler without a terminator or event swallows. Ported from upstream
-// makeHandledAnalysis; reporter recognition stays tackbox origin-gating.
-// Result-boundary is kin to the policy layer:
+// end of the handler without a terminator or event swallows. Reporter
+// recognition stays tackbox origin-gating.
+// Result-boundary is kin to the error-policy layer:
 // annotation-based (no type program) - only a syntactic Result / Attempt /
 // Promise<Result|Attempt> return type earns the boundary credit.
 
@@ -633,7 +633,7 @@ function isBareErrReturn(expr, errName) {
 // return), 'bad' (some path exits unhandled), { reported } (falls through;
 // reported true when every falling path passed the sticky event). Constructs
 // not modeled (switch, loops, nested try) are opaque: a hidden return fails
-// closed, reporters inside do not count. Ported from upstream. returnIdentity
+// closed, reporters inside do not count. returnIdentity
 // credits `return <errName>` as terminal (promise handlers only: the settled
 // value is the error object itself).
 function makeHandledAnalysis(opts) {

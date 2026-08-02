@@ -1,6 +1,5 @@
 // Browser report helper: empty DSN = log-only no-op.
-// Mirrors the upstream pattern — single funnel for toast,
-// Sentry capture, optional diagnostic stream.
+// Single funnel for toast, Sentry capture, optional diagnostic stream.
 
 const Sentry = require('@sentry/browser')
 

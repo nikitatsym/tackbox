@@ -118,8 +118,8 @@ test('no-swallow-promise-catch', () => {
   })
 })
 
-// Result-boundary conversion is NOT accepted in a promise .catch handler (upstream
-// allowBoundary:false): the enclosing fn's Result type does not govern the
+// Result-boundary conversion is NOT accepted in a promise .catch handler
+// (allowBoundary:false): the enclosing fn's Result type does not govern the
 // callback's return, so it stays a swallow even under Promise<Result<T>>.
 test('no-swallow-promise-catch result-boundary refusal (F2)', () => {
   tsRuleTester.run('no-swallow-promise-catch', require('../rules/no-swallow-promise-catch'), {
