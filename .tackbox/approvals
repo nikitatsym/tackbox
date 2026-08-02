@@ -28,7 +28,7 @@ py/tackbox/cli.py#_dispatch: no-report: CLI boundary: a resolution failure is lo
 py/tackbox/cli.py#_dispatch: no-report: CLI boundary: surface as message + exit 2; a traceback here is the bug
 py/tackbox/cli.py#_dispatch: no-report: standalone approvals infra failure -> exit 1 (as everywhere)
 py/tackbox/cli.py#_erclint_has_findings: no-report: unparseable erclint output -> failing aggregate, never a false clean
-py/tackbox/cli.py#_hook_post: no-report: edited file resolves outside the repo - nothing in scope to lint
+py/tackbox/cli.py#_hook_rel_strict: no-report: an outside or unresolvable target is not a repo-relative hook path
 py/tackbox/cli.py#_hook_post: no-report: hook contract: infra error -> exit 1 + stderr, non-blocking
 py/tackbox/cli.py#_hook_rel: no-report: unresolvable path - fall back to the raw target for the message
 py/tackbox/cli.py#_hook_repo_root: no-report: git rev-parse cannot run here - not a git repo, the hook is a deliberate no-op

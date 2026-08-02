@@ -110,6 +110,11 @@ func Find(k string) *Item {
 
 GO_PKG_TEST = 'package pkg\n\nimport "testing"\n\nfunc TestFind(t *testing.T) { _ = Find("x") }\n'
 
+SVELTE_SWALLOW = """<script>
+try { f() } catch (e) {}
+</script>
+"""
+
 
 def _init(root: Path) -> None:
     init_repo(root, commit=True)
@@ -130,6 +135,17 @@ def _hook_raw(stdin: str) -> subprocess.CompletedProcess:
         env=tackbox_env(),
         capture_output=True,
         text=True,
+    )
+
+
+def _post_write(tmp_path: Path, target: Path) -> subprocess.CompletedProcess:
+    return _hook(
+        {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Write",
+            "cwd": str(tmp_path),
+            "tool_input": {"file_path": str(target)},
+        }
     )
 
 
@@ -236,6 +252,21 @@ def test_post_go_clean_exit0(tmp_path):
     )
     assert r.returncode == 0, f"clean file must exit 0:\n{r.stdout}\n{r.stderr}"
     assert "ERC001" not in r.stderr, r.stderr
+
+
+def test_post_sveltekit_dynamic_route_literal_path_linted(tmp_path):
+    target = tmp_path / "src" / "routes" / "meet" / "[room]" / "+page.svelte"
+    target.parent.mkdir(parents=True)
+    target.write_text(SVELTE_SWALLOW)
+    _dev_py(tmp_path)
+    _init(tmp_path)
+    r = _post_write(tmp_path, target)
+    assert r.returncode == 2, (
+        "a literal SvelteKit route path must reach the lint arm:\n"
+        f"{r.stdout}\n{r.stderr}"
+    )
+    assert "src/routes/meet/[room]/+page.svelte:2" in r.stderr, r.stderr
+    assert "tackbox/no-swallow-catch" in r.stderr, r.stderr
 
 
 def test_post_callable_header_pair_is_silent(tmp_path):

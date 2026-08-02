@@ -879,13 +879,12 @@ def _hook_post(event: dict) -> int:
             for line in blocks:
                 sys.stderr.write(line + "\n")
             return 2
-        try:
-            rel = str(target.resolve().relative_to(root.resolve()))
-        except (ValueError, OSError):
-            # no-report: edited file resolves outside the repo - nothing in scope to lint
+        rel = _hook_rel_strict(target, root)
+        if rel is None:
             return 0
+        # Hook targets are literal files; CLI path-scope validation does not apply.
         results, _warnings, _orphans = _lint_results(
-            root, _tackbox_root(), rel, no_cache=False, changed_scope=None,
+            root, _tackbox_root(), ".", no_cache=False, changed_scope={rel},
             snapshot=snapshot, machine=True,
         )
         if results is None:
@@ -1125,13 +1124,13 @@ def _is_exclusion_line(line: str) -> bool:
 
 def _hook_rel_strict(target: Path, root: Path) -> str | None:
     """Repo-relative POSIX path for `target`, or None when it resolves outside the
-    repo - the excluded-target arm resolves attributes by this path. os.path.relpath
-    (not relative_to) so an outside path is a `..` return, not an exception - same
-    lexical relpath as _posn_excluded, symlink-normalized via resolve()."""
-    rel = os.path.relpath(target.resolve(), root.resolve()).replace(os.sep, "/")
-    if rel == ".." or rel.startswith("../"):
+    repo. Shared by both hook arms so exact source-set matching and attribute
+    resolution use Git's forward-slash path spelling on every platform."""
+    try:
+        return target.resolve().relative_to(root.resolve()).as_posix()
+    except (ValueError, OSError):
+        # no-report: an outside or unresolvable target is not a repo-relative hook path
         return None
-    return rel
 
 
 def _hook_pre_content(tool_name: str, tool_input: dict, target: Path) -> tuple[str, str]:
