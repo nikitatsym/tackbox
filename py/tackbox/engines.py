@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import zipfile
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -358,6 +359,9 @@ def engines_payload_tree_sha256(wheel: Path) -> str:
 
 _PYPI_ENGINES_JSON = "https://pypi.org/pypi/tackbox-engines/{version}/json"
 
+_DOWNLOAD_ATTEMPTS = 3
+_DOWNLOAD_BACKOFF_SECONDS = 2.0
+
 
 def _download_fat_wheel(data: dict, workdir: Path) -> Path:
     """Resolve the fat wheel for this version via the PyPI JSON API and download
@@ -375,13 +379,41 @@ def _download_fat_wheel(data: dict, workdir: Path) -> Path:
     )
     if entry is None or not entry.get("url"):
         raise EnginesStoreError(f"engines wheel {want_name} not found in {index_url}")
-    dl_url = entry["url"]
     dest = workdir / want_name
+    # A connection dropped mid-body is a SHORT read, not an exception, so a
+    # flaky edge on this ~100MB fetch surfaces only as a size/digest mismatch.
+    failures: list[str] = []
+    for attempt in range(1, _DOWNLOAD_ATTEMPTS + 1):
+        try:
+            _download_verified(entry, dest)
+            return dest
+        except EnginesStoreError as e:
+            # no-report: every attempt's error is aggregated into the raise below
+            failures.append(f"attempt {attempt}/{_DOWNLOAD_ATTEMPTS}: {e}")
+        if attempt < _DOWNLOAD_ATTEMPTS:
+            time.sleep(_DOWNLOAD_BACKOFF_SECONDS * attempt)
+    raise EnginesStoreError(
+        f"cannot obtain {want_name} from {entry['url']}: " + "; ".join(failures)
+    )
+
+
+def _download_verified(entry: dict, dest: Path) -> None:
+    """One download attempt, checked against the size and digest the index itself
+    claims. Size goes first so a truncated body reports as truncation instead of
+    as a digest mismatch, which reads like substitution."""
+    dl_url = entry["url"]
     try:
         with urlopen(dl_url, timeout=300) as r, dest.open("wb") as out:
             shutil.copyfileobj(r, out)
     except OSError as e:
         raise EnginesStoreError(f"cannot download engines wheel {dl_url}: {e}") from e
+    want_size = entry.get("size")
+    got_size = dest.stat().st_size
+    if want_size and got_size != want_size:
+        raise EnginesStoreError(
+            f"truncated download of {dest.name}: index claims {want_size} bytes, "
+            f"got {got_size}"
+        )
     # Transport integrity against the index's own digest (truncation, corrupt
     # proxy); substitution is caught later by the store_sha256 tree pin.
     claimed = (entry.get("digests") or {}).get("sha256")
@@ -389,10 +421,9 @@ def _download_fat_wheel(data: dict, workdir: Path) -> Path:
         got = sha256_file(dest)
         if got != claimed:
             raise EnginesStoreError(
-                f"downloaded {want_name} does not match the index digest: "
+                f"downloaded {dest.name} does not match the index digest: "
                 f"index {claimed}, got {got}"
             )
-    return dest
 
 
 def hermetic_env(base: dict[str, str] | None = None) -> dict[str, str]:

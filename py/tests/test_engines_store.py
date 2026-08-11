@@ -449,11 +449,64 @@ def test_default_fetcher_rejects_download_mismatching_index_digest(store_env, mo
         return io.BytesIO(store_env.wheel.read_bytes())
 
     monkeypatch.setattr(engines, "urlopen", fake_urlopen)
+    monkeypatch.setattr(engines, "_DOWNLOAD_BACKOFF_SECONDS", 0)
     workdir = store_env.tmp / "dl3"
     workdir.mkdir()
     with pytest.raises(engines.EnginesStoreError) as ei:
         engines._download_fat_wheel(store_env.data, workdir)
     assert "cc" * 32 in str(ei.value)
+
+
+def _sized_index(store_env, download_url: str, size: int) -> dict:
+    return {
+        "urls": [
+            {"filename": store_env.wheel.name, "url": download_url, "size": size}
+        ]
+    }
+
+
+def test_default_fetcher_retries_a_truncated_download(store_env, monkeypatch):
+    # A connection dropped mid-body arrives as a short read, never an exception,
+    # so only the size check separates it from a substituted file.
+    wheel_bytes = store_env.wheel.read_bytes()
+    download_url = "https://files.pythonhosted.org/packages/ab/cd/" + store_env.wheel.name
+    index = _sized_index(store_env, download_url, len(wheel_bytes))
+    bodies = [wheel_bytes[: len(wheel_bytes) // 2], wheel_bytes]
+
+    def fake_urlopen(url, timeout=None):
+        if url.endswith("/json"):
+            return io.BytesIO(json.dumps(index).encode())
+        return io.BytesIO(bodies.pop(0))
+
+    monkeypatch.setattr(engines, "urlopen", fake_urlopen)
+    monkeypatch.setattr(engines, "_DOWNLOAD_BACKOFF_SECONDS", 0)
+    workdir = store_env.tmp / "dl4"
+    workdir.mkdir()
+    got = engines._download_fat_wheel(store_env.data, workdir)
+    assert got.read_bytes() == wheel_bytes
+    assert bodies == []
+
+
+def test_default_fetcher_gives_up_after_the_attempt_budget(store_env, monkeypatch):
+    wheel_bytes = store_env.wheel.read_bytes()
+    download_url = "https://files.pythonhosted.org/packages/ab/cd/" + store_env.wheel.name
+    index = _sized_index(store_env, download_url, len(wheel_bytes))
+    attempts: list[str] = []
+
+    def fake_urlopen(url, timeout=None):
+        if url.endswith("/json"):
+            return io.BytesIO(json.dumps(index).encode())
+        attempts.append(url)
+        return io.BytesIO(wheel_bytes[:10])
+
+    monkeypatch.setattr(engines, "urlopen", fake_urlopen)
+    monkeypatch.setattr(engines, "_DOWNLOAD_BACKOFF_SECONDS", 0)
+    workdir = store_env.tmp / "dl5"
+    workdir.mkdir()
+    with pytest.raises(engines.EnginesStoreError) as ei:
+        engines._download_fat_wheel(store_env.data, workdir)
+    assert len(attempts) == engines._DOWNLOAD_ATTEMPTS
+    assert "truncated download" in str(ei.value)
 
 
 # -- unpack: zip-slip containment (A4) ------------------------------------
