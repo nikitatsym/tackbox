@@ -512,7 +512,7 @@ yet named scopes - file scope is the coarse address.
 Rules affected: none. The tooling decision behind D014's scope
 resolution.
 
-Decision: scope outlines come from ast-grep (`ast-grep-cli==0.44.1`,
+Decision: scope outlines come from ast-grep (`ast-grep-cli==0.45.1`,
 a runtime dependency of the thin wheel; the canonical executable is
 `ast-grep`, never the `sg` alias - upstream warns it collides with
 the Linux setgroups utility) invoked as a subprocess with `--json`

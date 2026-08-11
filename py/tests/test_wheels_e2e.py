@@ -176,7 +176,7 @@ def test_thin_wheel_does_not_depend_on_fat(wheels):
     assert any("ast-grep-cli" in r or "ast_grep_cli" in r for r in requires), (
         f"thin must pin the outline engine ast-grep-cli: {requires}"
     )
-    assert any("==0.44.1" in r for r in requires if "ast" in r.lower()), (
+    assert any("==0.45.1" in r for r in requires if "ast" in r.lower()), (
         f"ast-grep-cli must be version-pinned: {requires}"
     )
 

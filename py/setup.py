@@ -26,7 +26,7 @@ def _long_description() -> str:
 # patch bump never re-materializes ~350 MB of fat under uv.
 setup(
     version=os.environ.get("TACKBOX_VERSION", "0.0.0"),
-    install_requires=["flake8>=6", "ast-grep-cli==0.44.1"],
+    install_requires=["flake8>=6", "ast-grep-cli==0.45.1"],
     long_description=_long_description(),
     long_description_content_type="text/markdown",
 )

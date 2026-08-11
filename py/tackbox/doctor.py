@@ -376,7 +376,7 @@ def _check_git_in_path() -> CheckResult:
     return CheckResult("git-in-path", True, found)
 
 
-_AST_GREP_VERSION = "0.44.1"
+_AST_GREP_VERSION = "0.45.1"
 
 
 def _check_ast_grep() -> CheckResult:
