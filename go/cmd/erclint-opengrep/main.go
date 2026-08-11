@@ -189,7 +189,10 @@ func repoRelPath(path, cwd string) string {
 	if cwd == "" {
 		return slashed
 	}
-	return strings.TrimPrefix(slashed, filepath.ToSlash(cwd)+"/")
+	// A root cwd ("/", "C:\") already ends in the separator; appending another
+	// builds a "//" prefix that never matches and leaks the absolute path.
+	prefix := strings.TrimSuffix(filepath.ToSlash(cwd), "/") + "/"
+	return strings.TrimPrefix(slashed, prefix)
 }
 
 func extractRules(dst string) error {

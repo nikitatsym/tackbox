@@ -40,6 +40,23 @@ func TestRepoRelPathStripsCwdAndKeepsPosixSeparators(t *testing.T) {
 	}
 }
 
+// A root cwd already ends in the separator. repoRelPath is pure string work, so
+// both spellings are assertable on any OS: forward slashes make ToSlash a no-op.
+func TestRepoRelPathHandlesRootCwd(t *testing.T) {
+	cases := []struct{ path, cwd, want string }{
+		{"/pkg/bad.go", "/", "pkg/bad.go"},
+		{"C:/pkg/bad.go", "C:/", "pkg/bad.go"},
+		{"/repo/pkg/bad.go", "/repo", "pkg/bad.go"},
+		{"/repo/pkg/bad.go", "/repo/", "pkg/bad.go"},
+		{"/other/x.go", "/repo", "/other/x.go"},
+	}
+	for _, tc := range cases {
+		if got := repoRelPath(tc.path, tc.cwd); got != tc.want {
+			t.Errorf("repoRelPath(%q, %q) = %q, want %q", tc.path, tc.cwd, got, tc.want)
+		}
+	}
+}
+
 // A backslash is a legal file name character off Windows, so the POSIX rewrite
 // must go through filepath.ToSlash and never a blanket string replace.
 func TestRepoRelPathKeepsLiteralBackslashOffWindows(t *testing.T) {

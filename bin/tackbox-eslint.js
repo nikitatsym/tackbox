@@ -115,8 +115,10 @@ function validateDeclarations(decls) {
 // line: null (location-unknown) - the caller over-reports, never drops it.
 function emitMachine(results) {
   for (const r of results) {
-    // The contract path is POSIX; path.relative yields `\` on Windows.
-    const file = path.relative(process.cwd(), r.filePath).replace(/\\/g, '/')
+    // The contract path is POSIX; path.relative yields `\` on Windows. Split on
+    // the platform separator, never a blanket replace: off Windows a `\` in a
+    // name is part of the name and rewriting it misfiles the finding.
+    const file = path.relative(process.cwd(), r.filePath).split(path.sep).join('/')
     for (const m of r.messages) {
       if (m.severity !== 2) continue
       process.stdout.write(JSON.stringify({ file, line: m.line ?? null, rule: m.ruleId, message: m.message }) + '\n')

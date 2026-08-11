@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.File;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -34,15 +35,23 @@ class JsonOutputTest {
         assertTrue(json.contains("\"message\": \"JV001: a catch path swallows"), json);
     }
 
+    /** A `\` is the separator on Windows and an ordinary file name character
+     *  everywhere else, so the same Finding must normalize on Windows and stay
+     *  verbatim off it. A real windows Path.toString() would use backslashes; a
+     *  unix Path cannot produce that, so the Finding is built directly. */
     @Test
-    void normalizesWindowsBackslashSeparators() {
-        // A real windows Path.toString() would use backslashes here; a unix
-        // Path can't produce that, so build the Finding directly with one.
+    void separatorNormalizationFollowsThePlatformSeparator() {
         Finding f = new Finding("JV001", "javasub\\Deep.java", 2, 9, 2, 9, "m");
         String json = JsonWriter.write(List.of(f));
-        assertTrue(json.contains("\"javasub/Deep.java\": {"), json);
-        assertTrue(json.contains("\"posn\": \"javasub/Deep.java:2:9\""), json);
-        assertTrue(json.contains("\"end\": \"javasub/Deep.java:2:9\""), json);
-        assertFalse(json.contains("\\\\"), "no backslash may survive into the JSON: " + json);
+        if (File.separatorChar == '\\') {
+            assertTrue(json.contains("\"javasub/Deep.java\": {"), json);
+            assertTrue(json.contains("\"posn\": \"javasub/Deep.java:2:9\""), json);
+            assertTrue(json.contains("\"end\": \"javasub/Deep.java:2:9\""), json);
+            assertFalse(json.contains("\\\\"), "no backslash may survive into the JSON: " + json);
+        } else {
+            assertTrue(json.contains("\"javasub\\\\Deep.java\": {"), json);
+            assertTrue(json.contains("\"posn\": \"javasub\\\\Deep.java:2:9\""), json);
+            assertFalse(json.contains("javasub/Deep.java"), json);
+        }
     }
 }

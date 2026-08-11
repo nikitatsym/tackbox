@@ -159,9 +159,11 @@ function declaredReporters(context) {
 }
 
 // Declarations are POSIX; path.relative hands back `\` on Windows, and a key
-// that keeps it stops matching its own declaration.
+// that keeps it stops matching its own declaration. Only the platform separator
+// is rewritten - off Windows `\` is a legal file name character, and replacing
+// it would invent a key that never matches git's own spelling.
 function toPosix(p) {
-  return p.replace(/\\/g, '/')
+  return p.split(path.sep).join('/')
 }
 
 function relFile(context) {

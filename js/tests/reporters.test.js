@@ -96,28 +96,32 @@ test('no-console-error exempts declared reporter bodies', () => {
   })
 })
 
-// Backslashed by hand, so a POSIX CI catches the Windows regression too.
-test('tier-2 backslash filenames match a POSIX declaration', () => {
+// A `\` in a filename is a separator on Windows and an ordinary name character
+// everywhere else, so the same spelling must resolve to the POSIX declaration
+// on Windows and must NOT resolve off it. Both halves stay pinned here; the
+// gate is the semantics under test, not a platform escape hatch.
+const WIN = process.platform === 'win32'
+const only = (onWin, c) => (onWin === WIN ? [c] : [])
+
+test('tier-2 backslash filenames: separator on Windows, literal name elsewhere', () => {
+  const consoleCase = {
+    code: 'function myReport(m, e) { console.error(m, e) }',
+    filename: 'js\\report.js',
+    settings: { tackbox: { reporters: ['js/report.js#myReport'] } },
+  }
   ruleTester.run('no-console-error', noConsoleError, {
-    valid: [
-      {
-        code: 'function myReport(m, e) { console.error(m, e) }',
-        filename: 'js\\report.js',
-        settings: { tackbox: { reporters: ['js/report.js#myReport'] } },
-      },
-    ],
-    invalid: [],
+    valid: only(true, consoleCase),
+    invalid: only(false, { ...consoleCase, errors: [{ messageId: 'use' }] }),
   })
   // The importer's own dirname feeds the relative-import join.
+  const swallowCase = {
+    code: "import { myReport } from './errors'\ntry { f() } catch (e) { myReport('connection dropped mid-stream', e) }",
+    filename: 'js\\app.js',
+    settings: { tackbox: { reporters: ['js/errors.js#myReport'] } },
+  }
   ruleTester.run('no-swallow-catch', noSwallow, {
-    valid: [
-      {
-        code: "import { myReport } from './errors'\ntry { f() } catch (e) { myReport('connection dropped mid-stream', e) }",
-        filename: 'js\\app.js',
-        settings: { tackbox: { reporters: ['js/errors.js#myReport'] } },
-      },
-    ],
-    invalid: [],
+    valid: only(true, swallowCase),
+    invalid: only(false, { ...swallowCase, errors: [{ messageId: 'swallow' }] }),
   })
 })
 
@@ -179,7 +183,7 @@ async function lintTree(files, reporters) {
       .map(rel => path.join(root, rel))
     const results = await eslint.lintFiles(targets)
     return results.map(r => ({
-      file: path.relative(root, r.filePath).replace(/\\/g, '/'),
+      file: path.relative(root, r.filePath).split(path.sep).join('/'),
       errors: r.messages.filter(m => m.severity === 2).map(m => `${m.ruleId}:${m.line}`),
     }))
   } finally {

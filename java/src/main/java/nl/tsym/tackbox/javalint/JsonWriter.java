@@ -1,5 +1,6 @@
 package nl.tsym.tackbox.javalint;
 
+import java.io.File;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -55,9 +56,11 @@ final class JsonWriter {
         return sb.toString();
     }
 
-    // Repo-relative keys must match git's separator on every OS.
+    // Repo-relative keys must match git's separator on every OS. Only the real
+    // platform separator is rewritten: off Windows a `\` belongs to the file
+    // name, and replacing it would invent a key git never spells that way.
     private static String normalizeSeparators(String path) {
-        return path.replace('\\', '/');
+        return File.separatorChar == '\\' ? path.replace('\\', '/') : path;
     }
 
     private static String quote(String s) {
