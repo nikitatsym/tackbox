@@ -243,7 +243,7 @@ def test_empty_paths_no_subprocess(tmp_path, monkeypatch):
     def boom(*a, **k):
         raise AssertionError("check-attr must not run for an empty path list")
 
-    monkeypatch.setattr(gitfiles.subprocess, "run", boom)
+    monkeypatch.setattr(gitfiles.proc, "run_bytes", boom)
     assert resolve_attributes(tmp_path, []) == {}
 
 
@@ -261,7 +261,7 @@ def test_malformed_check_attr_output_is_infra_error(tmp_path, monkeypatch):
         stdout = b"gen/api.pb.go\0linguist-generated\0"  # missing the value field
         stderr = b""
 
-    monkeypatch.setattr(gitfiles.subprocess, "run", lambda *a, **k: _Truncated())
+    monkeypatch.setattr(gitfiles.proc, "run_bytes", lambda *a, **k: _Truncated())
     with pytest.raises(AttributeResolutionError):
         resolve_attributes(root, ["gen/api.pb.go"])
 

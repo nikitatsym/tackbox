@@ -34,10 +34,10 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import proc
 from .engines import iter_json_objects
 from .hashing import sha256_file, sha256_tree
 from .source_set import group_go_packages_by_module, module_relative
@@ -240,11 +240,10 @@ def _module_digests(
 ) -> dict[str, str]:
     module_dir = repo_root / module
     args = [f"./{module_relative(module, p)}" for p in package_dirs]
-    completed = subprocess.run(
+    completed = proc.run(
         ["go", "list", "-deps", "-json", *args],
         cwd=module_dir,
         capture_output=True,
-        text=True,
     )
     if completed.returncode != 0:
         raise GoListError(
@@ -329,11 +328,10 @@ def erclint_import_paths(
     for module in sorted(groups):
         module_pkgs = groups[module]
         args = [f"./{module_relative(module, p)}" for p in module_pkgs]
-        completed = subprocess.run(
+        completed = proc.run(
             ["go", "list", "-json", *args],
             cwd=repo_root / module,
             capture_output=True,
-            text=True,
         )
         if completed.returncode != 0:
             raise GoListError(

@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.request import urlopen
 
-from . import callable_zones
+from . import callable_zones, proc
 from .hashing import sha256_file, sha256_tree
 from .pyrules.codes import CODE_TO_ID
 from .source_set import (
@@ -589,7 +589,7 @@ def _run_one(run: EngineRun) -> EngineResult:
             run.machine,
         )
         argv = _link_target_argv(run, argv, Path(paths_dir))
-        completed = subprocess.run(
+        completed = proc.run_bytes(
             argv,
             cwd=run.repo_root,
             env=env,
@@ -599,8 +599,8 @@ def _run_one(run: EngineRun) -> EngineResult:
     return EngineResult(
         engine_id=run.engine.id,
         exit_code=normalize_exit_code(completed.returncode),
-        stdout=completed.stdout.decode("utf-8", errors="replace"),
-        stderr=completed.stderr.decode("utf-8", errors="replace"),
+        stdout=proc.decode(completed.stdout),
+        stderr=proc.decode(completed.stderr),
     )
 
 
@@ -629,7 +629,7 @@ def _run_per_module(run: EngineRun) -> EngineResult:
                 ),
                 run.machine,
             )
-            completed = subprocess.run(
+            completed = proc.run_bytes(
                 argv,
                 cwd=run.repo_root / module,
                 env=env,
@@ -637,8 +637,8 @@ def _run_per_module(run: EngineRun) -> EngineResult:
                 stderr=subprocess.PIPE,
             )
             max_code = max(max_code, normalize_exit_code(completed.returncode))
-            outs.append(completed.stdout.decode("utf-8", errors="replace"))
-            errs.append(completed.stderr.decode("utf-8", errors="replace"))
+            outs.append(proc.decode(completed.stdout))
+            errs.append(proc.decode(completed.stderr))
     for pkg in orphans:
         errs.append(f"no enclosing go.mod, skipped: {pkg}\n")
     return EngineResult(
@@ -1018,8 +1018,8 @@ def _version_from_binary(
     binary, args: tuple[str, ...], prefix: str = "", strip_v: bool = False
 ) -> str:
     try:
-        result = subprocess.run(
-            [str(binary), *args], capture_output=True, check=True, text=True
+        result = proc.run(
+            [str(binary), *args], capture_output=True, check=True
         )
     except (FileNotFoundError, subprocess.CalledProcessError):
         # no-report: binary missing or non-zero exit - the version banner degrades to "?"
@@ -1212,7 +1212,7 @@ def _prepare_jscpd_argv(
         "--config", str(config),
     ]
     try:
-        completed = subprocess.run(
+        completed = proc.run_bytes(
             argv,
             cwd=repo_root,
             stdout=subprocess.PIPE,
@@ -1221,7 +1221,7 @@ def _prepare_jscpd_argv(
     except OSError as e:
         raise EnginesStoreError(f"run jscpd ({jscpd}): {e}") from e
     if completed.returncode != 0:
-        detail = completed.stderr.decode("utf-8", errors="replace").strip()
+        detail = proc.decode(completed.stderr).strip()
         raise EnginesStoreError(
             f"run jscpd ({jscpd}) failed ({completed.returncode}): {detail}"
         )

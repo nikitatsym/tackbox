@@ -11,7 +11,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from . import __version__, approvals, cache, codequality, doctor, escapes, reporters, scopes
+from . import __version__, approvals, cache, codequality, doctor, escapes, proc, reporters, scopes
 from .engines import (
     EngineResult,
     EnginesStoreError,
@@ -718,7 +718,7 @@ def _compute_changed_scope(repo_root: Path, since: str | None) -> set[str]:
     when <since> progresses after fork.
     """
     scope: set[str] = set()
-    completed = subprocess.run(
+    completed = proc.run_bytes(
         ["git", "diff", "--name-only", "-z", "HEAD"],
         cwd=repo_root,
         capture_output=True,
@@ -726,12 +726,12 @@ def _compute_changed_scope(repo_root: Path, since: str | None) -> set[str]:
     if completed.returncode != 0:
         # Fresh repo without any commits: HEAD does not resolve. Fail with a
         # clean tackbox message instead of a Python traceback on onboarding.
-        err = completed.stderr.decode("utf-8", errors="replace").strip()
+        err = proc.decode(completed.stderr).strip()
         raise ChangedScopeError(
             f"--changed / --since requires at least one commit ({err})"
         )
     scope.update(parse_git_diff_names(completed.stdout))
-    untracked = subprocess.run(
+    untracked = proc.run_bytes(
         ["git", "ls-files", "--others", "--exclude-standard", "-z"],
         cwd=repo_root,
         capture_output=True,
@@ -739,25 +739,25 @@ def _compute_changed_scope(repo_root: Path, since: str | None) -> set[str]:
     ).stdout
     scope.update(parse_ls_files_untracked(untracked))
     if since is not None:
-        completed = subprocess.run(
+        completed = proc.run_bytes(
             ["git", "diff", "--name-only", "-z", f"{since}...HEAD"],
             cwd=repo_root,
             capture_output=True,
         )
         if completed.returncode != 0:
-            err = completed.stderr.decode("utf-8", errors="replace").strip()
+            err = proc.decode(completed.stderr).strip()
             raise ChangedScopeError(f"--since={since}: {err or 'git diff failed'}")
         scope.update(parse_git_diff_names(completed.stdout))
     return scope
 
 
 def _find_repo_root() -> Path:
-    result = subprocess.run(
+    result = proc.run(
         ["git", "rev-parse", "--show-toplevel"],
         capture_output=True,
         check=True,
     )
-    return Path(result.stdout.decode().strip())
+    return Path(result.stdout.strip())
 
 
 def _print_banner(tackbox_root: Path) -> None:
@@ -820,11 +820,10 @@ def _hook_repo_root(event: dict) -> Path | None:
     if not cwd:
         return None
     try:
-        r = subprocess.run(
+        r = proc.run(
             ["git", "rev-parse", "--show-toplevel"],
             cwd=cwd,
             capture_output=True,
-            text=True,
         )
     except (OSError, subprocess.SubprocessError):
         # no-report: git rev-parse cannot run here - not a git repo, the hook is a deliberate no-op

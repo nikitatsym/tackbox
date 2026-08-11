@@ -31,11 +31,11 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from collections import Counter
 from pathlib import Path
 from typing import TextIO
 
+from . import proc
 from .engines import EngineSpec, active_engines, lintable
 from .gitfiles import collect_snapshot, resolve_attributes
 from .reporters import FILENAME as REPORTERS_FILE
@@ -347,7 +347,7 @@ def _git_version() -> tuple[int, int] | None:
     """(major, minor) of the host git, or None when it cannot be run or parsed
     (then the --since path proceeds and any real --source incompatibility fails
     loud at the seam)."""
-    completed = subprocess.run(["git", "--version"], capture_output=True, text=True)
+    completed = proc.run(["git", "--version"], capture_output=True)
     if completed.returncode != 0:
         return None
     m = re.search(r"(\d+)\.(\d+)", completed.stdout)
@@ -360,23 +360,23 @@ def _ls_tree(root: Path, rev: str) -> tuple[list[str], str | None]:
     """(repo-relative paths tracked at `<rev>`, error). A bad rev yields ([], one
     error line) - detected by returncode, not an exception, so the caller reports
     it as the one clean infra line instead of a swallowed catch."""
-    r = subprocess.run(
+    r = proc.run_bytes(
         ["git", "ls-tree", "-r", "--name-only", "-z", rev],
         cwd=root,
         capture_output=True,
     )
     if r.returncode != 0:
-        detail = r.stderr.decode("utf-8", errors="replace").strip()
+        detail = proc.decode(r.stderr).strip()
         first = detail.splitlines()[0] if detail else f"cannot resolve rev {rev!r}"
         return [], first
-    paths = [p for p in r.stdout.decode("utf-8", errors="replace").split("\0") if p]
+    paths = [p for p in proc.decode(r.stdout).split("\0") if p]
     return paths, None
 
 
 def _git_show(root: Path, rev: str, rel: str) -> str | None:
     """`git show <rev>:<rel>` decoded utf-8/replace; None when the path is absent
     at that rev or is binary (a NUL byte - no marker/verb text to scan)."""
-    r = subprocess.run(["git", "show", f"{rev}:{rel}"], cwd=root, capture_output=True)
+    r = proc.run_bytes(["git", "show", f"{rev}:{rel}"], cwd=root, capture_output=True)
     if r.returncode != 0:
         return None
     return _decode(r.stdout)
@@ -394,7 +394,7 @@ def _read_worktree(root: Path, rel: str) -> str | None:
 def _decode(data: bytes) -> str | None:
     if b"\x00" in data:
         return None
-    return data.decode("utf-8", errors="replace")
+    return proc.decode(data)
 
 
 def _ext(path: str) -> str:

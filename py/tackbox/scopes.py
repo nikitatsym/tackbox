@@ -24,10 +24,11 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from . import proc
 
 
 def ast_grep_exe() -> str | None:
@@ -128,7 +129,7 @@ def _ast_scan(content: str, ruleset: str) -> list[dict]:
     `.svelte` extension and silently matches nothing on such paths, so a path is
     never handed to it."""
     try:
-        proc = subprocess.run(
+        completed = proc.run_bytes(
             [ast_grep_exe() or "ast-grep", "scan", "--stdin", "--inline-rules", ruleset, "--json=compact"],
             input=content.encode("utf-8"),
             capture_output=True,
@@ -136,10 +137,10 @@ def _ast_scan(content: str, ruleset: str) -> list[dict]:
     except OSError as e:
         raise ScopesError(f"cannot run ast-grep: {e}") from e
     # 0 = matches, 1 = no matches; anything else is a real engine failure.
-    if proc.returncode not in (0, 1):
-        err = proc.stderr.decode("utf-8", errors="replace").strip()
-        raise ScopesError(f"ast-grep scan failed ({proc.returncode}): {err}")
-    out = proc.stdout.decode("utf-8", errors="replace").strip()
+    if completed.returncode not in (0, 1):
+        err = proc.decode(completed.stderr).strip()
+        raise ScopesError(f"ast-grep scan failed ({completed.returncode}): {err}")
+    out = proc.decode(completed.stdout).strip()
     if not out:
         return []
     try:

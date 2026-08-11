@@ -9,9 +9,9 @@ to step 2) and the snapshot that rides on it.
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
 
+from . import proc
 from .source_set import (
     EXCLUSION_ATTRIBUTES,
     Snapshot,
@@ -33,13 +33,13 @@ class AttributeResolutionError(RuntimeError):
 def _ls_files_raw(repo_root: Path) -> tuple[bytes, bytes]:
     """`git ls-files` staged (`-s`) and untracked, as raw `-z` streams. Raises on
     git failure - callers that tolerate a missing/failed git wrap the call."""
-    stage_raw = subprocess.run(
+    stage_raw = proc.run_bytes(
         ["git", "ls-files", "-s", "-z"],
         cwd=repo_root,
         capture_output=True,
         check=True,
     ).stdout
-    untracked_raw = subprocess.run(
+    untracked_raw = proc.run_bytes(
         ["git", "ls-files", "--others", "--exclude-standard", "-z"],
         cwd=repo_root,
         capture_output=True,
@@ -118,11 +118,11 @@ def resolve_attributes(
         argv.append(f"--source={source}")
     argv += list(EXCLUSION_ATTRIBUTES)
     stdin = "".join(p + "\0" for p in paths).encode("utf-8")
-    completed = subprocess.run(
+    completed = proc.run_bytes(
         argv, cwd=repo_root, input=stdin, capture_output=True, env=env
     )
     if completed.returncode != 0:
-        detail = completed.stderr.decode("utf-8", errors="replace").strip()
+        detail = proc.decode(completed.stderr).strip()
         raise AttributeResolutionError(
             f"git check-attr failed (exit {completed.returncode}): {detail}"
         )

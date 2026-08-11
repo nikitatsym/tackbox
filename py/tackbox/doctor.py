@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TextIO
 
 from . import engines as engines_mod
+from . import proc
 from . import scopes
 from .cache import sha256_tree
 from .gitfiles import collect_snapshot
@@ -67,8 +68,8 @@ def _repo_root_or_none() -> Path | None:
     not a repo. Guarded (not a swallowing try/except) so callers carry no marker."""
     if shutil.which("git") is None:
         return None
-    completed = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
+    completed = proc.run(
+        ["git", "rev-parse", "--show-toplevel"], capture_output=True
     )
     if completed.returncode != 0:
         return None
@@ -134,9 +135,9 @@ def _info_attributes_lines(root: Path) -> list[str]:
     """The effective info/attributes, located via `git rev-parse --git-path` (in a
     linked worktree it lives in the common git dir), when it mentions the
     exclusion attributes."""
-    completed = subprocess.run(
+    completed = proc.run(
         ["git", "rev-parse", "--git-path", "info/attributes"],
-        cwd=root, capture_output=True, text=True,
+        cwd=root, capture_output=True,
     )
     if completed.returncode != 0:
         return []
@@ -152,12 +153,12 @@ def _untracked_carrier_lines(root: Path) -> list[str]:
     present locally but never in a fresh CI clone."""
     carriers: set[str] = set()
     for extra in (["--exclude-standard"], ["--ignored", "--exclude-standard"]):
-        raw = subprocess.run(
+        raw = proc.run_bytes(
             ["git", "ls-files", "--others", *extra, "-z"],
             cwd=root, capture_output=True,
         ).stdout
         for chunk in raw.split(b"\0"):
-            rel = chunk.decode("utf-8", "replace")
+            rel = proc.decode(chunk)
             if rel and _is_gitattributes(rel):
                 carriers.add(rel)
     lines: list[str] = []
@@ -172,13 +173,13 @@ def _carrier_index_state_lines(root: Path) -> list[str]:
     """Tracked `.gitattributes` carriers whose index state hides their content
     from an ordinary diff: skip-worktree / assume-unchanged bits, unmerged, or
     missing from the worktree. `git ls-files -v -z` tags each entry."""
-    raw = subprocess.run(
+    raw = proc.run_bytes(
         ["git", "ls-files", "-v", "-z"], cwd=root, capture_output=True
     ).stdout
     lines: list[str] = []
     states: list[tuple[str, str]] = []
     for chunk in raw.split(b"\0"):
-        text = chunk.decode("utf-8", "replace")
+        text = proc.decode(chunk)
         tag, sep, rel = text.partition(" ")
         if not sep or not _is_gitattributes(rel):
             continue
@@ -208,8 +209,8 @@ def _carrier_content(root: Path, rel: str) -> str | None:
     path = root / rel
     if path.is_file():
         return _read_text(path)
-    completed = subprocess.run(
-        ["git", "show", f":{rel}"], cwd=root, capture_output=True, text=True
+    completed = proc.run(
+        ["git", "show", f":{rel}"], cwd=root, capture_output=True
     )
     return completed.stdout if completed.returncode == 0 else None
 
@@ -222,8 +223,8 @@ def _attr_source_override_lines(root: Path) -> list[str]:
     conditional `attribute source override detected (unsupported; ...)` line - not
     emitted here, as the test matrix proves the neutralization holds.)"""
     overrides: list[str] = []
-    completed = subprocess.run(
-        ["git", "config", "--get", "attr.tree"], cwd=root, capture_output=True, text=True
+    completed = proc.run(
+        ["git", "config", "--get", "attr.tree"], cwd=root, capture_output=True
     )
     if completed.returncode == 0 and completed.stdout.strip():
         overrides.append(f"attr.tree={completed.stdout.strip()}")
@@ -350,7 +351,7 @@ def _check_binaries_start() -> CheckResult:
             # 120s: the probe checks startability, not latency - the first
             # exec of a binary just unpacked into the store can sit behind
             # the Windows antivirus scan far past any interactive timeout.
-            completed = subprocess.run(
+            completed = proc.run_bytes(
                 argv, capture_output=True, timeout=120, env=env
             )
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as e:
@@ -387,8 +388,8 @@ def _check_ast_grep() -> CheckResult:
     if not found:
         return CheckResult("ast-grep", False, "ast-grep not found (interpreter dir or PATH)")
     try:
-        completed = subprocess.run(
-            [found, "--version"], capture_output=True, text=True, timeout=60
+        completed = proc.run(
+            [found, "--version"], capture_output=True, timeout=60
         )
     except (OSError, subprocess.SubprocessError) as e:
         # no-report: doctor reports the ast-grep probe failure via CheckResult (no short-circuit)
@@ -456,8 +457,8 @@ def _java_major_version(java: str) -> int | None:
     `openjdk version "21.0.11"` or legacy `java version "1.8.0_..."`), or None
     when it cannot be run or parsed."""
     try:
-        completed = subprocess.run(
-            [java, "-version"], capture_output=True, text=True, timeout=60
+        completed = proc.run(
+            [java, "-version"], capture_output=True, timeout=60
         )
     except (OSError, subprocess.SubprocessError):
         # no-report: doctor reports the unparseable/absent java via CheckResult
