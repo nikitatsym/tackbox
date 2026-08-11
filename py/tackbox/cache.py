@@ -300,7 +300,7 @@ def _module_digests(
         except ValueError:
             # no-report: dir outside repo boundary - not ours to digest, skip
             continue
-        key = str(rel) if str(rel) != "." else "."
+        key = rel.as_posix() if str(rel) != "." else "."
         dir_to_import[key] = import_path
 
     result: dict[str, str] = {}
@@ -343,7 +343,7 @@ def erclint_import_paths(
             except ValueError:
                 # no-report: dir outside repo boundary - not ours to digest, skip
                 continue
-            key = str(rel) if str(rel) != "." else "."
+            key = rel.as_posix() if str(rel) != "." else "."
             if key in module_pkgs:
                 result[key] = p["ImportPath"]
     return result

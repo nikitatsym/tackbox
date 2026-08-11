@@ -115,7 +115,8 @@ function validateDeclarations(decls) {
 // line: null (location-unknown) - the caller over-reports, never drops it.
 function emitMachine(results) {
   for (const r of results) {
-    const file = path.relative(process.cwd(), r.filePath)
+    // The contract path is POSIX; path.relative yields `\` on Windows.
+    const file = path.relative(process.cwd(), r.filePath).replace(/\\/g, '/')
     for (const m of r.messages) {
       if (m.severity !== 2) continue
       process.stdout.write(JSON.stringify({ file, line: m.line ?? null, rule: m.ruleId, message: m.message }) + '\n')

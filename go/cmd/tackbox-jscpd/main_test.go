@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -56,12 +57,18 @@ func writeSrc(t *testing.T, dir, name string, start int, above []string) string 
 	return p
 }
 
-func writeSrcPair(t *testing.T, dir, subdir string) (string, string) {
+func mkSubdir(t *testing.T, dir, name string) string {
 	t.Helper()
-	sourceDir := filepath.Join(dir, subdir)
-	if err := os.Mkdir(sourceDir, 0o755); err != nil {
+	sub := filepath.Join(dir, name)
+	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	return sub
+}
+
+func writeSrcPair(t *testing.T, dir, subdir string) (string, string) {
+	t.Helper()
+	sourceDir := mkSubdir(t, dir, subdir)
 	return writeSrc(t, sourceDir, "a.go", 5, nil),
 		writeSrc(t, sourceDir, "b.go", 8, nil)
 }
@@ -655,6 +662,102 @@ func TestMarkerSeenOnMultipleAutoDroppedEndpointsEmitsOneDUP003(t *testing.T) {
 		"b.go": {broadZone(7, 13)},
 	}
 	mustSingleFinding(t, dir, raw, zones, "DUP003")
+}
+
+func TestRelToIsRepoRelativePosixInBothBranches(t *testing.T) {
+	dir := t.TempDir()
+	if got := relTo(dir, filepath.Join(dir, "sub", "deep", "a.go")); got != "sub/deep/a.go" {
+		t.Fatalf("in-repo relTo = %q, want sub/deep/a.go", got)
+	}
+	// Outside cwd the name is returned verbatim; that branch is POSIX too.
+	outside := filepath.Join(filepath.Dir(dir), "outside", "b.go")
+	if got := relTo(dir, outside); got != filepath.ToSlash(outside) {
+		t.Fatalf("out-of-repo relTo = %q, want %q", got, filepath.ToSlash(outside))
+	}
+}
+
+// assertSubEndpoints pins the machine findings of a writeSrcPair clone to their
+// repo-relative POSIX paths.
+func assertSubEndpoints(t *testing.T, out string) {
+	t.Helper()
+	want := map[string]int{"sub/a.go": 5, "sub/b.go": 8}
+	for _, f := range parseNDJSON(t, out) {
+		if want[f.File] != f.Line {
+			t.Fatalf("finding %+v not in expected %v", f, want)
+		}
+	}
+}
+
+// The machine contract is repo-relative POSIX: the hook compares the File field
+// against an as_posix() path, so a Windows `\` misfiles the finding silently.
+func TestMachineFindingFilesUsePosixSeparators(t *testing.T) {
+	t.Run("DUP001 clone endpoints", func(t *testing.T) {
+		dir := t.TempDir()
+		a, b := writeSrcPair(t, dir, "sub")
+		out, n := emitTo(t, dir, mkReport(a, 5, b, 8), true)
+		if n != 2 {
+			t.Fatalf("expected 2 surviving endpoints, got %d\n%s", n, out)
+		}
+		assertSubEndpoints(t, out)
+	})
+
+	t.Run("DUP002 native ignore marker", func(t *testing.T) {
+		dir := t.TempDir()
+		p := filepath.Join(mkSubdir(t, dir, "sub"), "a.go")
+		src := "package x\n// " + ignoreMarker + "-start\nfunc A() int { return 1 }\n"
+		if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var buf strings.Builder
+		n, err := emitIgnoreBans(newFileLines(), []string{p}, dir, true, &buf)
+		if err != nil || n != 1 {
+			t.Fatalf("emitIgnoreBans: n=%d err=%v", n, err)
+		}
+		fs := parseNDJSON(t, buf.String())
+		if len(fs) != 1 || fs[0].File != "sub/a.go" || fs[0].Line != 2 {
+			t.Fatalf("want DUP002 at sub/a.go:2, got %+v", fs)
+		}
+	})
+
+	t.Run("DUP003 redundant marker", func(t *testing.T) {
+		dir := t.TempDir()
+		sub := mkSubdir(t, dir, "sub")
+		a := writeSrc(t, sub, "a.go", 5, []string{"// dup-ok: shared callable contract"})
+		b := writeSrc(t, sub, "b.go", 8, nil)
+		zones := callableZones{
+			"sub/a.go": {broadZone(4, 10)},
+			"sub/b.go": {broadZone(7, 13)},
+		}
+		finding := mustSingleFinding(t, dir, mkReport(a, 5, b, 8), zones, "DUP003")
+		if finding.File != "sub/a.go" || finding.Line != 4 {
+			t.Fatalf("want DUP003 at sub/a.go:4, got %+v", finding)
+		}
+	})
+}
+
+// jscpd 5.0.12 names every Windows endpoint in extended-length form
+// (\\?\C:\...); filepath.Rel cannot relativize that against the plain cwd, so
+// the whole absolute path would ride into the machine finding.
+func TestExtendedLengthEndpointNamesBecomeRepoRelative(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("extended-length prefixes are a windows path spelling")
+	}
+	dir := t.TempDir()
+	a, b := writeSrcPair(t, dir, "sub")
+	repFile := filepath.Join(t.TempDir(), "jscpd-report.json")
+	if err := os.WriteFile(repFile, mkReport(`\\?\`+a, 5, `\\?\`+b, 8), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := readReport(repFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf strings.Builder
+	n, err := emit(rep, nil, newFileLines(), dir, true, &buf)
+	if err != nil || n != 2 {
+		t.Fatalf("emit over extended-length names: n=%d err=%v out=%q", n, err, buf.String())
+	}
+	assertSubEndpoints(t, buf.String())
 }
 
 func buildWrapper(t *testing.T) string {

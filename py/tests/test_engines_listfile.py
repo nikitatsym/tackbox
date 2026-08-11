@@ -234,6 +234,17 @@ def test_jscpd_preparation_parses_only_unique_physical_endpoint_files(
     ]
 
 
+def test_jscpd_endpoint_extended_length_name_maps_to_repo_relative(tmp_path):
+    if os.name != "nt":
+        pytest.skip("extended-length prefixes are a windows path spelling")
+    a = tmp_path / "sub" / "a.py"
+    a.parent.mkdir()
+    a.write_text("def a():\n    pass\n", encoding="utf-8")
+    physical = engines._physical_endpoint_path(tmp_path, "\\\\?\\" + str(a.resolve()))
+    assert physical is not None
+    assert physical[1] == "sub/a.py"
+
+
 def test_jscpd_preparation_malformed_report_is_loud(monkeypatch, tmp_path):
     def malformed(argv, *, cwd, stdout, stderr):
         output = Path(argv[argv.index("--output") + 1])

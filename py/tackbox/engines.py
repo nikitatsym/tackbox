@@ -796,7 +796,12 @@ def erclint_located_findings(stdout: str, repo_root: Path) -> list[Finding]:
             continue
         seen.add(key)
         path, line = _split_posn(posn)
-        rel = os.path.relpath(path, repo_root) if path is not None else None
+        # Located files are POSIX; relpath hands back `\` on Windows.
+        rel = (
+            os.path.relpath(path, repo_root).replace(os.sep, "/")
+            if path is not None
+            else None
+        )
         out.append(Finding(rule=rule, file=rel, line=line, message=message))
     return out
 
@@ -1122,8 +1127,20 @@ def _tackbox_jscpd_argv(
     return _prepare_jscpd_argv(bin_, jscpd, repo_root, files, paths_dir)
 
 
+def _plain_windows_path(name: str) -> str:
+    r"""jscpd 5.0.12 spells every Windows endpoint name in extended-length form
+    (`\\?\C:\...`); resolve() keeps the prefix, so the repo-boundary check below
+    would reject every endpoint and the callable-zone sidecar would come out
+    empty. Off Windows the prefix is an ordinary (if odd) file name."""
+    if os.name != "nt":
+        return name
+    if name.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + name[len("\\\\?\\UNC\\"):]
+    return name.removeprefix("\\\\?\\")
+
+
 def _physical_endpoint_path(repo_root: Path, name: str) -> tuple[Path, str] | None:
-    path = Path(name)
+    path = Path(_plain_windows_path(name))
     if not path.is_absolute():
         path = repo_root / path
     if not path.is_file():

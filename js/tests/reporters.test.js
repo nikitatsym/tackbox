@@ -96,6 +96,31 @@ test('no-console-error exempts declared reporter bodies', () => {
   })
 })
 
+// Backslashed by hand, so a POSIX CI catches the Windows regression too.
+test('tier-2 backslash filenames match a POSIX declaration', () => {
+  ruleTester.run('no-console-error', noConsoleError, {
+    valid: [
+      {
+        code: 'function myReport(m, e) { console.error(m, e) }',
+        filename: 'js\\report.js',
+        settings: { tackbox: { reporters: ['js/report.js#myReport'] } },
+      },
+    ],
+    invalid: [],
+  })
+  // The importer's own dirname feeds the relative-import join.
+  ruleTester.run('no-swallow-catch', noSwallow, {
+    valid: [
+      {
+        code: "import { myReport } from './errors'\ntry { f() } catch (e) { myReport('connection dropped mid-stream', e) }",
+        filename: 'js\\app.js',
+        settings: { tackbox: { reporters: ['js/errors.js#myReport'] } },
+      },
+    ],
+    invalid: [],
+  })
+})
+
 // tier-2 multi-extension: a `.svelte.ts` rune module declared as a reporter must
 // match specifiers that omit the compound extension. A Svelte rune module keeps
 // the double extension; `./errors`, `./errors.svelte`, and `./errors.svelte.ts`
@@ -154,7 +179,7 @@ async function lintTree(files, reporters) {
       .map(rel => path.join(root, rel))
     const results = await eslint.lintFiles(targets)
     return results.map(r => ({
-      file: path.relative(root, r.filePath),
+      file: path.relative(root, r.filePath).replace(/\\/g, '/'),
       errors: r.messages.filter(m => m.severity === 2).map(m => `${m.ruleId}:${m.line}`),
     }))
   } finally {

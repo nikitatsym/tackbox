@@ -285,6 +285,7 @@ func readReport(path string) (*jscpdReport, error) {
 // realPath resolves jscpd's virtual SFC sub-block names (`X.svelte:css`) to
 // the on-disk file; their line numbers are already real-file coordinates.
 func realPath(name string) string {
+	name = plainWindowsPath(name)
 	if _, err := os.Stat(name); err == nil {
 		return name
 	}
@@ -296,6 +297,20 @@ func realPath(name string) string {
 		}
 	}
 	return name
+}
+
+// plainWindowsPath drops the extended-length prefix jscpd 5.0.12 puts on every
+// endpoint name it reports on Windows: filepath.Rel cannot relativize a `\\?\`
+// path against the plain cwd, so the whole absolute path would leak into the
+// finding. Off Windows the prefix is an ordinary (if odd) file name.
+func plainWindowsPath(name string) string {
+	if filepath.Separator != '\\' {
+		return name
+	}
+	if rest, ok := strings.CutPrefix(name, `\\?\UNC\`); ok {
+		return `\\` + rest
+	}
+	return strings.TrimPrefix(name, `\\?\`)
 }
 
 type markerKey struct {
@@ -443,7 +458,7 @@ func endpointInCallableHeader(e endpoint, zones callableZones, cwd string) bool 
 	if !ok {
 		return false
 	}
-	rel := filepath.ToSlash(physicalRelTo(cwd, e.Name))
+	rel := physicalRelTo(cwd, e.Name)
 	for _, zone := range zones[rel] {
 		if !pointLess(start, zone.Start) && !pointLess(zone.End, end) {
 			return true
@@ -490,13 +505,16 @@ func physicalRelTo(cwd, name string) string {
 	return relTo(root, physical)
 }
 
+// relTo is the repo-relative POSIX spelling of name. Both the machine finding
+// contract and the zone sidecar keys are forward-slash paths, so a Windows `\`
+// would misfile the finding instead of matching.
 func relTo(cwd, name string) string {
 	rel, err := filepath.Rel(cwd, name)
 	if err != nil || filepath.IsAbs(rel) ||
 		rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return name
+		return filepath.ToSlash(name)
 	}
-	return rel
+	return filepath.ToSlash(rel)
 }
 
 // javaHeaderClone reports whether a format=java clone lies entirely within both

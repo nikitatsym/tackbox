@@ -158,10 +158,16 @@ function declaredReporters(context) {
   return Array.isArray(s) ? s : []
 }
 
+// Declarations are POSIX; path.relative hands back `\` on Windows, and a key
+// that keeps it stops matching its own declaration.
+function toPosix(p) {
+  return p.replace(/\\/g, '/')
+}
+
 function relFile(context) {
   const fn = context.filename || (context.getFilename && context.getFilename()) || ''
   const cwd = context.cwd || process.cwd()
-  return path.isAbsolute(fn) ? path.relative(cwd, fn) : fn
+  return toPosix(path.isAbsolute(fn) ? path.relative(cwd, fn) : fn)
 }
 
 // Module extensions, compound first: a specifier that omits the extension must
@@ -235,7 +241,7 @@ function resolveAlias(context, source, absImporter) {
     dir = up
   }
   if (root === null) return null
-  return path.relative(context.cwd || process.cwd(), path.join(root, 'src', 'lib', rest))
+  return toPosix(path.relative(context.cwd || process.cwd(), path.join(root, 'src', 'lib', rest)))
 }
 
 // resolveDeclTarget resolves an Identifier callee to the {file, name} of its
@@ -252,7 +258,7 @@ function resolveDeclTarget(context, idNode) {
     const importedName = info.kind === 'named' ? info.imported : idNode.name
     let resolved
     if (source.startsWith('.')) {
-      resolved = path.normalize(path.join(path.dirname(relFile(context)), source))
+      resolved = path.posix.normalize(path.posix.join(path.posix.dirname(relFile(context)), source))
     } else {
       resolved = resolveAlias(context, source, absFile(context))
       if (resolved === null) return null

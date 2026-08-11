@@ -142,25 +142,46 @@ GO_BAD = (
     'func F() error {\n\terr := errors.New("x")\n\tif err != nil {\n'
     '\t\t_ = "swallow"\n\t}\n\treturn errors.New("noop")\n}\n'
 )
+# go-exit-in-recover (opengrep) fires on the `if r := recover()` line (line 7).
+GO_RECOVER = (
+    'package pkg\n\nimport "os"\n\n'
+    "func Recover() {\n\tdefer func() {\n\t\tif r := recover(); r != nil {\n"
+    "\t\t\tos.Exit(1)\n\t\t}\n\t}()\n}\n"
+)
 # python-swallowed-exception matches the try block (line 2).
 PY_BAD = "def h():\n    try:\n        work()\n    except ValueError as e:\n        pass\n"
 # no-swallow-catch fires on line 1.
 JS_BAD = "try { f() } catch (e) {}\n"
 # declared-chars fires on the em-dash line (line 4) under a chars=ascii carrier.
 MD_BAD = "<!-- tackbox: chars=ascii -->\n# T\n\nem dash \u2014 here\n"
+# DUP001 needs a >50-token clone in two files, built rather than pasted so this
+# test file is not itself a duplicate.
+_DUP_BODY = "\n".join(f"    total = total + step_{i} * {i}" for i in range(20))
+PY_DUP_A = f"def compute():\n    total = 0\n{_DUP_BODY}\n    return total\n"
+PY_DUP_B = f"def compute_two():\n    total = 0\n{_DUP_BODY}\n    return total\n"
+
+# Every fixture sits in a subdirectory: the machine contract is a repo-relative
+# POSIX path, and only a path with a separator can catch a Windows `\` leak.
+FIXTURE_FILES = {
+    "pkg/bad.go": GO_BAD,
+    "pkg/recover.go": GO_RECOVER,
+    "sub/bad.py": PY_BAD,
+    "sub/bad.js": JS_BAD,
+    "sub/bad.md": MD_BAD,
+    "sub/dup_a.py": PY_DUP_A,
+    "sub/dup_b.py": PY_DUP_B,
+}
 
 
 @pytest.fixture(scope="module")
 def machine_findings(tmp_path_factory):
     repo = tmp_path_factory.mktemp("mfrepo")
     (repo / "go.mod").write_text(GO_MOD)
-    (repo / "pkg").mkdir()
-    (repo / "pkg" / "bad.go").write_text(GO_BAD)
-    (repo / "bad.py").write_text(PY_BAD)
-    (repo / "bad.js").write_text(JS_BAD)
-    (repo / "bad.md").write_text(MD_BAD)
-    files = ["pkg/bad.go", "bad.py", "bad.js", "bad.md"]
-    plan = dispatch(files, active_engines())
+    for rel, source in FIXTURE_FILES.items():
+        path = repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source)
+    plan = dispatch(list(FIXTURE_FILES), active_engines())
     results = run_engines(plan, repo, TACKBOX_ROOT, machine=True)
     return [f for r in results for f in located_findings(r.engine_id, r.stdout, repo)]
 
@@ -175,19 +196,32 @@ def test_erclint_machine_location(machine_findings):
     assert hits[0].message and "ERC001" in hits[0].message, hits
 
 
+def test_erclint_opengrep_machine_location(machine_findings):
+    hits = _hit(machine_findings, "go-exit-in-recover", "pkg/recover.go")
+    assert hits and hits[0].line == 7, machine_findings
+    assert hits[0].message, hits
+
+
 def test_pyrules_machine_location(machine_findings):
-    hits = _hit(machine_findings, "python-swallowed-exception", "bad.py")
+    hits = _hit(machine_findings, "python-swallowed-exception", "sub/bad.py")
     assert hits and hits[0].line == 2, machine_findings
     assert hits[0].message and not hits[0].message.startswith(hits[0].rule), hits
 
 
 def test_eslint_machine_location(machine_findings):
-    hits = _hit(machine_findings, "no-swallow-catch", "bad.js")
+    hits = _hit(machine_findings, "no-swallow-catch", "sub/bad.js")
     assert hits and hits[0].line == 1, machine_findings
     assert hits[0].message and "every catch path" in hits[0].message, hits
 
 
 def test_mdlint_machine_location(machine_findings):
-    hits = _hit(machine_findings, "MD-CHARS", "bad.md")
+    hits = _hit(machine_findings, "MD-CHARS", "sub/bad.md")
     assert hits and hits[0].line == 4, machine_findings
     assert hits[0].message, hits
+
+
+def test_jscpd_machine_location(machine_findings):
+    for side in ("sub/dup_a.py", "sub/dup_b.py"):
+        hits = _hit(machine_findings, "DUP001", side)
+        assert hits and hits[0].line == 1, machine_findings
+        assert hits[0].message and "clone of" in hits[0].message, hits

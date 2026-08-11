@@ -180,6 +180,18 @@ func rewritePaths(s, cwd string) string {
 	return strings.ReplaceAll(s, cwd+string(os.PathSeparator), "")
 }
 
+// repoRelPath is the machine finding contract's spelling of one opengrep result
+// path: repo-relative with forward slashes. The hook compares it literally
+// against an as_posix() path, so a Windows `\` would misfile the finding.
+// filepath.ToSlash, never a blanket replace: `\` is a legal name char off Windows.
+func repoRelPath(path, cwd string) string {
+	slashed := filepath.ToSlash(path)
+	if cwd == "" {
+		return slashed
+	}
+	return strings.TrimPrefix(slashed, filepath.ToSlash(cwd)+"/")
+}
+
 func extractRules(dst string) error {
 	return fs.WalkDir(rulesFS, "rules", func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -283,7 +295,7 @@ func emitMachine(w io.Writer, jsonOut []byte, cwd string) error {
 			rule = rule[i+1:]
 		}
 		f := wrapcli.Finding{
-			File:    rewritePaths(r.Path, cwd),
+			File:    repoRelPath(r.Path, cwd),
 			Line:    r.Start.Line,
 			Rule:    rule,
 			Message: r.Extra.Message,

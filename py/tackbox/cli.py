@@ -1214,7 +1214,7 @@ def _same_path(a: Path, b: Path) -> bool:
 
 def _hook_rel(target: Path, root: Path) -> str:
     try:
-        return str(target.resolve().relative_to(root.resolve()))
+        return target.resolve().relative_to(root.resolve()).as_posix()
     except (ValueError, OSError):
         # no-report: unresolvable path - fall back to the raw target for the message
         return str(target)
