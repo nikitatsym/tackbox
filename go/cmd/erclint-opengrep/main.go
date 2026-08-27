@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/nikitatsym/tackbox/go/internal/wrapcli"
@@ -75,7 +76,7 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 	// machine dedup keys on (file,line,rule), which never spans batches.
 	targets := wrapcli.ToAbs(origCwd, scanArgs)
 	maxCode := 0
-	for _, batch := range chunkByArgvBytes(targets, maxScanArgvBytes) {
+	for _, batch := range chunkByArgvBytes(targets, scanArgvByteBudget()) {
 		code, err := scanBatch(batch, rulesDir, scanCwd, machine, origCwd, stdout, stderr)
 		if err != nil {
 			return 0, err
@@ -87,9 +88,20 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 	return maxCode, nil
 }
 
-// maxScanArgvBytes caps the target bytes per opengrep invocation, well under
-// ARG_MAX once the small base args and the environment are added.
+// maxScanArgvBytes caps target bytes per opengrep invocation, leaving space
+// for fixed arguments and the environment under Unix ARG_MAX.
 const maxScanArgvBytes = 128 * 1024
+
+// windowsMaxScanArgvBytes budgets UTF-8 bytes against Windows' 32767-unit
+// limit; UTF-8 bytes >= UTF-16 units and the gap absorbs os/exec quoting.
+const windowsMaxScanArgvBytes = 24 * 1024
+
+func scanArgvByteBudget() int {
+	if runtime.GOOS == "windows" {
+		return windowsMaxScanArgvBytes
+	}
+	return maxScanArgvBytes
+}
 
 // scanBatch runs opengrep over one batch of targets and writes its (translated,
 // path-rewritten) output to stdout/stderr, returning opengrep's exit code.

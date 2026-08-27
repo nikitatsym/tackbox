@@ -24,7 +24,7 @@ func TestPathsFromExpandsToScanTargets(t *testing.T) {
 	if !strings.Contains(stdout, "go-exit-in-recover") {
 		t.Fatalf("expected go-exit-in-recover via --paths-from:\n%s\nstderr=%s", stdout, stderr)
 	}
-	if !strings.Contains(stripWhitespace(stdout), "pkg/bad.go") {
+	if !strings.Contains(stripWhitespace(stdout), filepath.FromSlash("pkg/bad.go")) {
 		t.Fatalf("expected repo-relative pkg/bad.go via --paths-from:\n%s", stdout)
 	}
 	if strings.Contains(stdout, "list.txt") || strings.Contains(stdout, "--paths-from") {

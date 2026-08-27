@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode"
@@ -57,7 +58,7 @@ func TestExplicitTestsDirFileYieldsFinding(t *testing.T) {
 	if !strings.Contains(stdout, "go-exit-in-recover") {
 		t.Fatalf("expected go-exit-in-recover in stdout:\n%s", stdout)
 	}
-	if !strings.Contains(stripWhitespace(stdout), "tests/bad.go") {
+	if !strings.Contains(stripWhitespace(stdout), filepath.FromSlash("tests/bad.go")) {
 		t.Fatalf("expected repo-relative path tests/bad.go in stdout:\n%s", stdout)
 	}
 	if strings.Contains(stdout, repo) {
@@ -117,7 +118,7 @@ func TestPathsRewrittenToRepoRelative(t *testing.T) {
 	if strings.Contains(stdout, repo) {
 		t.Fatalf("absolute path leaked into stdout:\n%s", stdout)
 	}
-	if !strings.Contains(stripWhitespace(stdout), "pkg/bad.go") {
+	if !strings.Contains(stripWhitespace(stdout), filepath.FromSlash("pkg/bad.go")) {
 		t.Fatalf("expected repo-relative path pkg/bad.go in stdout:\n%s", stdout)
 	}
 }
@@ -150,6 +151,9 @@ func buildOpengrepWrapper(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "erclint-opengrep")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
 	cmd := exec.Command("go", "build", "-o", bin, ".")
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr

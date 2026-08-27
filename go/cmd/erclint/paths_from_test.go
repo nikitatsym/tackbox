@@ -28,7 +28,7 @@ func TestPathsFromInjectsPackagePatterns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run --paths-from: %v\nstderr: %s", err, stderr.String())
 	}
-	got := strings.ReplaceAll(string(out), fixture, "<FIXTURE>")
+	got := normalizeJSONPaths(string(out), fixture)
 	want := mustRead(t, "testdata/golden/json.stdout")
 	if got != want {
 		t.Fatalf("--paths-from stdout mismatch\n--- got:\n%s\n--- want:\n%s", got, want)

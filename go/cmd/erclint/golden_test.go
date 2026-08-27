@@ -1,9 +1,11 @@
 package main_test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -34,7 +36,7 @@ func TestJSONPackageAttribution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run --json: %v\nstderr: %s", err, stderr.String())
 	}
-	got := strings.ReplaceAll(string(out), fixture, "<FIXTURE>")
+	got := normalizeJSONPaths(string(out), fixture)
 	want := mustRead(t, "testdata/golden/json.stdout")
 	if got != want {
 		t.Fatalf("--json stdout mismatch\n--- got:\n%s\n--- want:\n%s", got, want)
@@ -45,6 +47,9 @@ func buildErclint(t *testing.T, version string) string {
 	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "erclint")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
 	cmd := exec.Command("go", "build",
 		"-ldflags", "-X main.version="+version,
 		"-o", bin, ".")
@@ -63,4 +68,15 @@ func mustRead(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(b)
+}
+
+func jsonEscapedPath(path string) string {
+	quoted, _ := json.Marshal(path)
+	return string(quoted[1 : len(quoted)-1])
+}
+
+func normalizeJSONPaths(output, fixture string) string {
+	output = strings.ReplaceAll(output, jsonEscapedPath(fixture), "<FIXTURE>")
+	// posn separators are native; no ERC message has a backslash.
+	return strings.ReplaceAll(output, `\\`, `/`)
 }

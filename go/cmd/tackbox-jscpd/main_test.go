@@ -39,6 +39,11 @@ func mkReport(fileA string, lineA int, fileB string, lineB int) []byte {
 	return mkSpanReport("go", fileA, lineA, lineA+3, fileB, lineB, lineB+3)
 }
 
+func jsonEscapedPath(path string) string {
+	quoted, _ := json.Marshal(path)
+	return string(quoted[1 : len(quoted)-1])
+}
+
 // writeSrc writes a source file whose clone body starts at line `start`; the
 // preceding lines are `above` (each its own source line, directly abutting the
 // body), padded so the body lands exactly on `start`.
@@ -381,8 +386,8 @@ func TestSvelteRawFixtureMapsVirtualNamesToPhysicalFiles(t *testing.T) {
 	if err := os.WriteFile(b, []byte("<script>const b = () => 1;</script>\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	raw = bytes.ReplaceAll(raw, []byte(`src/A.svelte`), []byte(a))
-	raw = bytes.ReplaceAll(raw, []byte(`src/B.svelte`), []byte(b))
+	raw = bytes.ReplaceAll(raw, []byte(`src/A.svelte`), []byte(jsonEscapedPath(a)))
+	raw = bytes.ReplaceAll(raw, []byte(`src/B.svelte`), []byte(jsonEscapedPath(b)))
 	report := filepath.Join(t.TempDir(), "jscpd-report.json")
 	if err := os.WriteFile(report, raw, 0o644); err != nil {
 		t.Fatal(err)
@@ -763,6 +768,9 @@ func TestExtendedLengthEndpointNamesBecomeRepoRelative(t *testing.T) {
 func buildWrapper(t *testing.T) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "tackbox-jscpd")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
 	cmd := exec.Command("go", "build", "-o", bin, ".")
 	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 	if err := cmd.Run(); err != nil {

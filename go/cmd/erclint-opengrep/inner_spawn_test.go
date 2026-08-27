@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -16,6 +17,9 @@ import (
 // runs a real scan. Returns the dir to prepend to PATH.
 func writeOpengrepStub(t *testing.T) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		return writeWindowsOpengrepStub(t, windowsRecordingStub)
+	}
 	dir := t.TempDir()
 	script := "#!/bin/sh\n" +
 		"rec=\"$OPENGREP_STUB_RECORD\"\n" +
@@ -38,11 +42,23 @@ func writeOpengrepStub(t *testing.T) string {
 // manyFakePaths returns absolute path strings totaling more than minBytes. The
 // opengrep wrapper never reads target files (opengrep would), so fakes suffice.
 func manyFakePaths(minBytes int) []string {
-	seg := "/nonexistent" + strings.Repeat("/"+strings.Repeat("d", 200), 3)
+	base := "/nonexistent"
+	if runtime.GOOS == "windows" {
+		base = filepath.Join(
+			filepath.VolumeName(os.TempDir())+string(os.PathSeparator),
+			"nonexistent",
+		)
+	}
+	seg := filepath.Join(
+		base,
+		strings.Repeat("d", 200),
+		strings.Repeat("d", 200),
+		strings.Repeat("d", 200),
+	)
 	var paths []string
 	total := 0
 	for i := 0; total <= minBytes; i++ {
-		p := fmt.Sprintf("%s/file_%08d.go", seg, i)
+		p := filepath.Join(seg, fmt.Sprintf("file_%08d.go", i))
 		paths = append(paths, p)
 		total += len(p) + 1
 	}
@@ -107,6 +123,9 @@ func TestInnerSpawnChunksHugeTargetSet(t *testing.T) {
 // merges machine findings across batches exactly as a single scan would.
 func writeOpengrepFindingStub(t *testing.T) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		return writeWindowsOpengrepStub(t, windowsFindingStub)
+	}
 	dir := t.TempDir()
 	script := "#!/bin/sh\n" +
 		"json=0; skip=0; targets=\"\"\n" +
@@ -138,8 +157,8 @@ func writeOpengrepFindingStub(t *testing.T) string {
 func TestMachineFindingsMergeAcrossBatches(t *testing.T) {
 	bin := buildOpengrepWrapper(t)
 	stubDir := writeOpengrepFindingStub(t)
-	// Enough targets to span more than one batch (> maxScanArgvBytes), but small
-	// enough to stay fast; the merge, not ARG_MAX, is under test here.
+	// Enough targets to span more than one batch (above the argv byte budget), but
+	// small enough to stay fast; the merge, not ARG_MAX, is under test here.
 	paths := manyFakePaths(300 * 1024)
 
 	repo := makeRepo(t)
@@ -183,10 +202,101 @@ func TestMachineFindingsMergeAcrossBatches(t *testing.T) {
 		t.Fatalf("merged %d distinct findings, want %d (batch merge lost/dup findings)", len(seen), len(paths))
 	}
 	for _, p := range paths {
-		if seen[p] != 1 {
-			t.Fatalf("finding for %s appeared %d times, want 1", p, seen[p])
+		if seen[filepath.ToSlash(p)] != 1 {
+			t.Fatalf("finding for %s appeared %d times, want 1", p, seen[filepath.ToSlash(p)])
 		}
 	}
+}
+
+// Windows CreateProcess cannot run shebang scripts, and raw printf cannot
+// JSON-escape backslashes, so these stubs are compiled Go.
+const windowsRecordingStub = `package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	file, err := os.OpenFile(os.Getenv("OPENGREP_STUB_RECORD"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+
+	skip := false
+	for _, arg := range os.Args[1:] {
+		if skip {
+			skip = false
+			continue
+		}
+		switch arg {
+		case "scan", "--error", "--json":
+		case "--config":
+			skip = true
+		default:
+			if _, err := fmt.Fprintln(file, arg); err != nil {
+				panic(err)
+			}
+		}
+	}
+}
+`
+
+const windowsFindingStub = `package main
+
+import (
+	"encoding/json"
+	"os"
+)
+
+func main() {
+	machine := false
+	skip := false
+	results := make([]any, 0)
+	for _, arg := range os.Args[1:] {
+		if skip {
+			skip = false
+			continue
+		}
+		switch arg {
+		case "scan", "--error":
+		case "--config":
+			skip = true
+		case "--json":
+			machine = true
+		default:
+			results = append(results, map[string]any{
+				"check_id": "r.go-exit-in-recover",
+				"path":     arg,
+				"start":    map[string]any{"line": 1},
+				"extra":    map[string]any{"message": "m"},
+			})
+		}
+	}
+	if machine {
+		if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"results": results}); err != nil {
+			panic(err)
+		}
+	}
+	os.Exit(1)
+}
+`
+
+func writeWindowsOpengrepStub(t *testing.T, source string) string {
+	t.Helper()
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(src, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "opengrep.exe")
+	cmd := exec.Command("go", "build", "-o", bin, src)
+	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("build windows opengrep stub: %v", err)
+	}
+	return dir
 }
 
 // stubPathEnv is the parent env with PATH prepended by stubDir and the record
