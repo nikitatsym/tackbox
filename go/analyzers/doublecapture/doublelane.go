@@ -86,7 +86,7 @@ func (ls *laneScan) step(st ast.Stmt, in []laneState) []laneState {
 	case *ast.SelectStmt:
 		return ls.caseLegs(s.Body.List, in)
 	case *ast.ReturnStmt:
-		ls.mark(s, in)         // a capture/notify in the return expr still counts
+		ls.mark(s, in)       // a capture/notify in the return expr still counts
 		return []laneState{} // the path ends here
 	case *ast.BranchStmt:
 		return []laneState{} // break/continue/goto/fallthrough leave this straight-line path
