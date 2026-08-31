@@ -350,16 +350,9 @@ jobs:
             if [ "$rc" = "0" ]; then
               printf '%s\n' "$err"
               printf '%s\n' "$response"
-              printf '%s\n' "$response" | python3 -c '
-              import json
-              import sys
-              expected = {"protocol": 1, "decision": "allow", "reason": ""}
-              response = json.load(sys.stdin)
-              if response != expected:
-                  raise SystemExit(
-                      f"unexpected hook-protocol response: {response!r}"
-                  )
-              '
+              # single-line -c: a nested block would keep YAML-relative indent
+              # and hand python leading spaces (IndentationError).
+              printf '%s\n' "$response" | python3 -c 'import json,sys; e={"protocol":1,"decision":"allow","reason":""}; r=json.load(sys.stdin); sys.exit(0 if r==e else f"unexpected hook-protocol response: {r!r}")'
               echo "hook-protocol green after $(((i - 1) * 10))s"
               exit 0
             fi
