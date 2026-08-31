@@ -226,13 +226,14 @@ def test_ensure_waits_for_long_held_install_lock(store_env, capsys):
 
     holder = threading.Thread(target=hold_lock)
     holder.start()
-    assert entered.wait(timeout=1), "holder did not acquire the install lock"
+    # Generous window: a cold CI runner can take seconds to open the lock file.
+    assert entered.wait(timeout=30), "holder did not acquire the install lock"
 
     started = time.monotonic()
     root = engines.ensure_engines(fetcher=store_env.fetcher)
     elapsed = time.monotonic() - started
 
-    holder.join(timeout=1)
+    holder.join(timeout=10)
     assert not holder.is_alive(), "holder did not release the install lock"
     assert elapsed >= 12, elapsed
     assert root == store_env.store_dir
