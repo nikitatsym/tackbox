@@ -26,6 +26,11 @@ _ROOT = Path(__file__).resolve().parent
 # discovered as bogus duplicate suites.
 _PRUNE = {".git", ".claude", ".venv", "venv", "node_modules", "build", "dist", "target", "engines", "__pycache__"}
 
+# The whole gate runs with UTF-8 text I/O: fixtures and engine output are
+# UTF-8 by contract, and a cp1252 console (Windows runner default) must not
+# leak its code page into pytest's own file writes or any python child.
+os.environ["PYTHONUTF8"] = "1"
+
 
 def _run(cmd: list[str]) -> int:
     # Windows CreateProcess has no PATHEXT: resolve npm/mvn to their .cmd shims.

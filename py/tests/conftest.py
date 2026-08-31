@@ -26,6 +26,14 @@ from pathlib import Path
 # interpreter imports the in-tree tackbox.
 _PY_DIR = Path(__file__).resolve().parents[1]
 
+# The suite's text I/O contract is UTF-8: fixtures are read by engines (node,
+# go, java) as UTF-8 regardless of the console code page, and tackbox children
+# emit UTF-8 (proc.py / cli reconfigure). Exporting PYTHONUTF8 makes every
+# python child locale-independent; a direct pytest run on a cp1252 box still
+# writes its OWN fixtures with the locale unless started via dev.py, which
+# exports this before pytest starts.
+os.environ.setdefault("PYTHONUTF8", "1")
+
 _HOST_GIT_ENV = (
     "GIT_DIR",
     "GIT_WORK_TREE",
