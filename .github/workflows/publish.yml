@@ -191,6 +191,7 @@ jobs:
               "tool": "bash",
               "targets": [],
               "unknown": None,
+              "targetless": "opaque",
               "succeeded": True,
           }))
           ' | "$tackbox" hook-protocol | python -c '
