@@ -340,7 +340,7 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          payload='{"protocol":1,"phase":"post","cwd":"/tmp","tool":"bash","targets":[],"unknown":null,"succeeded":true}'
+          payload='{"protocol":1,"phase":"post","cwd":"/tmp","tool":"bash","targets":[],"unknown":null,"targetless":"opaque","succeeded":true}'
           for i in $(seq 1 360); do
             err_file=$(mktemp)
             rc=0
