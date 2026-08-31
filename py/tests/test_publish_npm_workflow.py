@@ -1,11 +1,11 @@
 """npm publish workflow spec: OIDC Trusted Publishing, provenance, no stored
-token, version-from-tag; and the published tarball must exclude the test suites.
+token, verified-tag versioning, and release ordering.
 
 Structural fixtures for `.github/workflows/publish-npm.yml` plus a live
 `npm pack --dry-run` file-set check. The workflow can only be end-to-end
-exercised on a tag push once the npmjs.com Trusted Publisher is configured;
-until then this file is the executor-visible acceptance layer. Removing any
-contract below should turn the suite red before publish-npm.yml ships.
+exercised after the npmjs.com Trusted Publisher is configured; until then this
+file is the executor-visible acceptance layer. Removing any contract below
+should turn the suite red before publish-npm.yml ships.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from test_publish_workflow import _on, _steps_text
 
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO / ".github" / "workflows" / "publish-npm.yml"
+PUBLISH_WORKFLOW = REPO / ".github" / "workflows" / "publish.yml"
 PACKAGE_JSON = REPO / "package.json"
 
 
@@ -62,22 +63,28 @@ def _publish_job(workflow: dict) -> dict:
     raise AssertionError("no job runs `npm publish`")
 
 
-def test_trigger_is_v_tag_push_only(workflow):
-    """npm must publish in lockstep with the wheels: fire only on the same
-    `v*` release tags, never on branch push or pull_request (that would publish
-    an untagged snapshot or race ci.yml's tag creation)."""
+def test_trigger_waits_for_completed_publish_workflow(workflow):
+    """npm must wait for the successful PyPI workflow, not race the tag push."""
     on = _on(workflow)
-    assert "push" in on, "publish-npm.yml must trigger on push"
-    push = on["push"]
-    assert "tags" in push and push["tags"], "must trigger on tag push"
-    tags = push["tags"]
-    assert any("v" in t for t in tags), (
-        f"tag filter must accept semver v* tags, got {tags}"
+    workflow_run = on.get("workflow_run")
+    assert workflow_run is not None, "publish-npm.yml must trigger on workflow_run"
+    assert workflow_run.get("workflows") == ["publish"], (
+        "npm must wait for the PyPI publish workflow"
     )
-    assert "branches" not in push or not push["branches"], (
-        "must not fire on branch push - only on tag"
+    assert workflow_run.get("types") == ["completed"], (
+        "npm must evaluate the PyPI workflow's final result"
     )
+    assert "push" not in on, "independent tag pushes race PyPI availability"
     assert "pull_request" not in on, "must not fire on pull_request"
+
+
+def test_publish_job_accepts_only_successful_tagged_push_runs(workflow):
+    job = _publish_job(workflow)
+    condition = str(job.get("if", ""))
+    assert "workflow_run.conclusion" in condition and "'success'" in condition
+    assert "workflow_run.event" in condition and "'push'" in condition
+    assert "workflow_run.head_branch" in condition
+    assert "startsWith" in condition, "only release tags may publish npm"
 
 
 def test_publish_job_requests_oidc_id_token(workflow):
@@ -117,17 +124,44 @@ def test_no_long_lived_npm_token(workflow_text):
     )
 
 
-def test_version_comes_from_pushed_tag(workflow):
-    """The published version must be the pushed tag (leading `v` stripped) set
-    into package.json before publish, not the committed placeholder version."""
+def test_version_comes_from_the_completed_release_run_tag(workflow):
+    """The published version must come from the successful release run's tag."""
     job = _publish_job(workflow)
     text = _steps_text(job["steps"])
-    assert "GITHUB_REF_NAME" in text or "github.ref_name" in text, (
-        "publish job must derive the version from the pushed tag"
-    )
     assert "npm pkg set version" in text or "npm version" in text, (
         "publish job must write the resolved version into package.json"
     )
+    version_steps = [
+        step
+        for step in job["steps"]
+        if isinstance(step, dict) and step.get("id") == "ver"
+    ]
+    assert len(version_steps) == 1, "publish job must resolve one release version"
+    version_step = version_steps[0]
+    tag = str(version_step.get("env", {}).get("TAG", ""))
+    assert "workflow_run.head_branch" in tag
+    assert "${TAG#v}" in version_step.get("run", "")
+
+
+def test_checkout_uses_immutable_completed_release_source(workflow):
+    job = _publish_job(workflow)
+    checkouts = [
+        step
+        for step in job["steps"]
+        if isinstance(step, dict) and str(step.get("uses", "")).startswith("actions/checkout")
+    ]
+    assert len(checkouts) == 1, "npm must publish the release workflow's source"
+    ref = str(checkouts[0].get("with", {}).get("ref", ""))
+    assert "workflow_run.head_sha" in ref
+
+
+def test_pypi_hook_protocol_canary_completes_before_npm_trigger():
+    publish = yaml.safe_load(PUBLISH_WORKFLOW.read_text())
+    canary = publish["jobs"].get("verify-thin")
+    assert canary is not None, "publish must verify the thin wheel before npm"
+    assert canary.get("needs") == "publish-thin"
+    text = _steps_text(canary.get("steps", []))
+    assert "uvx --refresh" in text and "hook-protocol" in text
 
 
 def test_npm_is_trusted_publishing_capable(workflow):
@@ -161,6 +195,10 @@ def test_published_tarball_excludes_test_suites():
         for required in (
             "js/eslint-plugin.js",
             "js/report.js",
+            "js/omp/index.mjs",
+            "js/omp/index.js",
+            "js/omp/hook.js",
+            "js/omp/payload.js",
             "bin/tackbox-eslint.js",
             "bin/tackbox-mdlint.js",
             "eslint.config.preset.js",
@@ -184,3 +222,21 @@ def test_published_tarball_excludes_test_suites():
         assert not any("test" in entry for entry in files), (
             f"files allowlist must not name a tests path: {files}"
         )
+
+
+def test_omp_extension_manifest_resolves_on_disk():
+    """`omp plugin install tackbox` loads the extension through this manifest
+    entry: a stale or misspelled path installs a plugin that registers nothing.
+    The entry must be one of the files the tarball ships (above)."""
+    pkg = json.loads(PACKAGE_JSON.read_text())
+    entries = pkg.get("omp", {}).get("extensions")
+    assert entries == ["./js/omp/index.mjs"], f"unexpected omp manifest: {entries}"
+    for entry in entries:
+        assert (REPO / entry).is_file(), f"omp extension entry does not exist: {entry}"
+    for required in (
+        "js/omp/index.mjs",
+        "js/omp/index.js",
+        "js/omp/hook.js",
+        "js/omp/payload.js",
+    ):
+        assert required in pkg.get("files", []), f"files allowlist omits {required}"

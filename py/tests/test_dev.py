@@ -103,7 +103,7 @@ def _pom(artifact: str, modules: list[str] | None = None) -> str:
 
 
 def _rel(paths, root):
-    return {str(Path(p).relative_to(root)) for p in paths}
+    return {Path(p).relative_to(root).as_posix() for p in paths}
 
 
 def test_pyproject_with_tests_yields_a_runner(tmp_path):
@@ -162,6 +162,13 @@ def test_real_repo_discovery_contract():
     assert _rel(dev._maven_root_poms(root), root) == {"java/pom.xml", "java/report/pom.xml"}
 
 
+
+
+def test_go_test_argv_uses_race_off_windows(monkeypatch):
+    monkeypatch.setattr(dev.sys, "platform", "linux")
+    assert "-race" in dev._go_test_argv()
+
+
 def test_test_runs_every_discovered_runner_even_after_a_failure(monkeypatch):
     # test() must invoke go, npm, and every discovered python + maven runner, and
     # one failing runner must not short-circuit the rest (all-runners-run).
@@ -178,7 +185,7 @@ def test_test_runs_every_discovered_runner_even_after_a_failure(monkeypatch):
     with redirect_stdout(buf):
         rc = dev.test()
     assert ran == [
-        ["go", "test", "-race", "-count=1", "./go/..."], ["npm", "test"],
+        dev._go_test_argv(), ["npm", "test"],
         ["PY1"], ["PY2"], ["MV1"], ["MV2"],
     ]
     assert rc != 0  # the PY1 failure surfaces

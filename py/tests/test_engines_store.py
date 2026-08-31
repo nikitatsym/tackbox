@@ -15,7 +15,6 @@ developer's real `~/.local/share/tackbox`.
 from __future__ import annotations
 
 import concurrent.futures
-import ctypes
 import io
 import json
 import os
@@ -158,6 +157,9 @@ def test_ensure_absent_fetches_verifies_and_atomically_installs(store_env):
     assert sha256_tree(root) == store_env.store_sha
 
 
+@pytest.mark.skipif(
+    os.name == "nt", reason="Windows does not preserve POSIX executable bits"
+)
 def test_ensure_restores_executable_bit_on_binaries(store_env):
     root = engines.ensure_engines(fetcher=store_env.fetcher)
     for rel in _EXEC:
@@ -196,8 +198,7 @@ def test_concurrent_ensure_fetches_once(store_env):
     def slow_fetcher(engines_json: dict, workdir: Path) -> Path:
         with calls_lock:
             store_env.calls["n"] += 1
-        # Keep the winner in the fetch long enough for every other caller to
-        # contend on the install lock. Without the lock this reaches `workers`.
+        # Delay fetch so every caller contends on the install lock.
         time.sleep(0.1)
         out = workdir / store_env.wheel.name
         out.write_bytes(store_env.wheel.read_bytes())
@@ -215,43 +216,31 @@ def test_concurrent_ensure_fetches_once(store_env):
     assert sha256_tree(store_env.store_dir) == store_env.store_sha
 
 
-def test_windows_lock_api_signatures_match_win32(monkeypatch):
-    class FakeAPI:
-        argtypes = None
-        restype = None
+def test_ensure_waits_for_long_held_install_lock(store_env, capsys):
+    entered = threading.Event()
 
-    class FakeKernel32:
-        LockFileEx = FakeAPI()
-        UnlockFileEx = FakeAPI()
+    def hold_lock():
+        with engines._engine_install_lock(store_env.store_dir):
+            entered.set()
+            time.sleep(12.25)
 
-    kernel32 = FakeKernel32()
-    monkeypatch.setattr(
-        engines.ctypes,
-        "WinDLL",
-        lambda name, use_last_error: kernel32,
-        raising=False,
-    )
+    holder = threading.Thread(target=hold_lock)
+    holder.start()
+    assert entered.wait(timeout=1), "holder did not acquire the install lock"
 
-    lock = engines._windows_lock_api("LockFileEx")
-    unlock = engines._windows_lock_api("UnlockFileEx")
+    started = time.monotonic()
+    root = engines.ensure_engines(fetcher=store_env.fetcher)
+    elapsed = time.monotonic() - started
 
-    assert lock.argtypes == [
-        ctypes.c_void_p,
-        ctypes.c_uint32,
-        ctypes.c_uint32,
-        ctypes.c_uint32,
-        ctypes.c_uint32,
-        ctypes.POINTER(engines._WindowsOverlapped),
-    ]
-    assert unlock.argtypes == [
-        ctypes.c_void_p,
-        ctypes.c_uint32,
-        ctypes.c_uint32,
-        ctypes.c_uint32,
-        ctypes.POINTER(engines._WindowsOverlapped),
-    ]
-    assert lock.restype is ctypes.c_int
-    assert unlock.restype is ctypes.c_int
+    holder.join(timeout=1)
+    assert not holder.is_alive(), "holder did not release the install lock"
+    assert elapsed >= 12, elapsed
+    assert root == store_env.store_dir
+    assert store_env.calls["n"] == 1
+    if os.name == "nt":
+        assert "waiting for engines lock (another tackbox is fetching)" in (
+            capsys.readouterr().err
+        )
 
 
 # -- ensure: override ------------------------------------------------------

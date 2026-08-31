@@ -1,7 +1,7 @@
 {
   "name": "tackbox",
   "version": "0.1.0",
-  "description": "ESLint and Markdown lint plugins plus direct error-reporting helpers for JavaScript and TypeScript.",
+  "description": "ESLint and Markdown lint plugins, an Oh My Pi extension, plus direct error-reporting helpers for JavaScript and TypeScript.",
   "license": "MIT",
   "main": "./js/eslint-plugin.js",
   "exports": {
@@ -12,11 +12,20 @@
     "tackbox-eslint": "./bin/tackbox-eslint.js",
     "tackbox-mdlint": "./bin/tackbox-mdlint.js"
   },
+  "omp": {
+    "extensions": [
+      "./js/omp/index.mjs"
+    ]
+  },
   "files": [
     "js/eslint-plugin.js",
     "js/report.js",
     "js/rules/",
     "js/markdownlint-rules/",
+    "js/omp/index.mjs",
+    "js/omp/index.js",
+    "js/omp/hook.js",
+    "js/omp/payload.js",
     "js/README.md",
     "bin/",
     "eslint.config.preset.js"

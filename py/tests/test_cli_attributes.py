@@ -9,6 +9,7 @@ fixtures run in-process (seam spy).
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -289,6 +290,20 @@ def test_warm_cache_go_removing_attribute_brings_findings_back(tmp_path):
     assert second.returncode == 1, f"unmarked ERC must fail:\n{second.stdout}\n{second.stderr}"
     assert "ERC001" in second.stdout
     assert "a.go" in second.stdout
+
+
+def test_erclint_filter_recognizes_json_escaped_windows_path(monkeypatch):
+    result = cli.EngineResult(
+        "erclint",
+        0,
+        json.dumps({"pkg": {"errcheck": [{"posn": r"C:\repo\kan\a.go:7:2"}]}}),
+        "",
+    )
+    monkeypatch.setattr(cli, "_posn_excluded", lambda item, root, paths: True)
+    filtered = cli._filter_erclint_result(
+        result, Path("/repo"), frozenset({"kan/a.go"})
+    )
+    assert filtered.stdout == ""
 
 
 def test_broken_excluded_file_in_mixed_package_fails_loudly(tmp_path):

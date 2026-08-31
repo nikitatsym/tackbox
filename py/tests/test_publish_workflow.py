@@ -157,6 +157,18 @@ def test_smoke_installs_built_wheels_into_fresh_venv(workflow):
         "smoke must materialize the shared fixture, not roll its own"
     )
 
+def test_smoke_runs_hook_protocol_against_the_built_artifact(workflow):
+    smoke = _find_smoke_job(workflow["jobs"])
+    assert smoke is not None
+    steps = [
+        step
+        for step in smoke["steps"]
+        if isinstance(step, dict) and step.get("name") == "hook-protocol artifact canary"
+    ]
+    assert len(steps) == 1, "the built wheel must exercise hook-protocol"
+    text = _steps_text(steps)
+    assert "succeeded" in text and "hook-protocol" in text
+
 
 def test_publish_fat_job_uses_oidc_no_tokens(workflow):
     fat = _publish_fat_job(workflow["jobs"])
@@ -365,15 +377,18 @@ def test_canary_runs_after_publish_and_on_schedule(verify_workflow):
     )
 
 
-def test_publish_has_no_pypi_smoke(workflow):
-    """The canary moved to verify-release.yml; publish must not wait on PyPI
-    CDN convergence."""
-    for name, job in workflow["jobs"].items():
-        text = _steps_text((job or {}).get("steps", []))
-        assert not ("uvx" in text and "tackbox@" in text), (
-            f"publish job {name!r} installs from PyPI - that belongs to "
-            f"verify-release.yml"
-        )
+def test_publish_verifies_the_exact_thin_wheel_before_release(workflow):
+    """The fresh resolver canary is a release dependency, not an async report."""
+    jobs = workflow["jobs"]
+    canary = jobs.get("verify-thin")
+    assert canary is not None, "publish must contain an exact-wheel canary"
+    assert canary.get("needs") == "publish-thin"
+    text = _steps_text(canary.get("steps", []))
+    assert "uvx --refresh" in text and "tackbox@${VERSION#v}" in text
+    assert "hook-protocol" in text
+    assert "actions/checkout" not in text, "canary must use a fresh runner"
+    release = jobs.get("github-release")
+    assert release is not None and release.get("needs") == "verify-thin"
 
 
 def _find_matrix_job(jobs: dict, required_platforms: set) -> dict | None:

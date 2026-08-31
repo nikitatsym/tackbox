@@ -20,7 +20,7 @@ from conftest import commit_all, git, init_repo, tackbox_env
 from test_cli_fixture import REDUNDANT_DUP_MARKER, callable_header_pair
 
 from tackbox import cli, gitfiles
-from tackbox.cli import _finding_line, _partition_findings, _span_lines
+from tackbox.cli import _finding_line, _partition_by_scope, _span_lines
 from tackbox.engines import Finding, active_engines, lintable
 
 TACKBOX_ROOT = Path(__file__).resolve().parents[2]
@@ -441,13 +441,13 @@ def test_post_edit_finding_line_blocks_and_summarizes_pre_existing(tmp_path):
 def test_span_lines_multiline_and_repeat():
     # A repeated substring counts every occurrence (over-report), and a two-line
     # substring spans both its lines.
-    assert _span_lines("a\nX\nb\nX\nc\n", ["X"]) == {2, 4}
-    assert _span_lines("p\nq\nr\n", ["q\nr"]) == {2, 3}
+    assert _span_lines("a\nX\nb\nX\nc\n", ["X"]) == ({2, 4}, False)
+    assert _span_lines("p\nq\nr\n", ["q\nr"]) == ({2, 3}, False)
 
 
 def test_partition_location_unknown_over_reports():
     unknown = Finding(rule="opengrep-json-unparseable", file=None, line=None)
-    on, els = _partition_findings([unknown], "a.go", {1})
+    on, els = _partition_by_scope([unknown], {"a.go": {1}})
     assert on == [unknown] and els == []
 
 
@@ -455,14 +455,14 @@ def test_partition_scopes_by_file_and_line():
     on_diff = Finding(rule="errcheck", file="a.go", line=7)
     off_line = Finding(rule="errcheck", file="a.go", line=99)
     other_file = Finding(rule="errcheck", file="b.go", line=7)
-    on, els = _partition_findings([on_diff, off_line, other_file], "a.go", {7})
+    on, els = _partition_by_scope([on_diff, off_line, other_file], {"a.go": {7}})
     assert on == [on_diff]
     assert els == [off_line, other_file]
 
 
 def test_partition_whole_file_when_affected_none():
     f = Finding(rule="errcheck", file="a.go", line=7)
-    on, els = _partition_findings([f], "a.go", None)
+    on, els = _partition_by_scope([f], {"a.go": None})
     assert on == [f] and els == []
 
 
@@ -1128,17 +1128,14 @@ def test_post_marker_in_excluded_file_no_block(tmp_path):
     )
     (tmp_path / "b.py").write_text("y = 1\n")
     _init(tmp_path)
+    (tmp_path / "b.py").write_text("y = 2\n")
     r = _post_edit(tmp_path, "b.py", old="y = 1", new="y = 2")
     assert r.returncode == 0 and r.stdout == "", (
         f"a marker in an excluded file must not block:\n{r.stdout}\n{r.stderr}"
     )
 
 
-def test_pre_resolution_failure_is_loud_not_traceback(tmp_path, monkeypatch, capsys):
-    # ADVERSARIAL hook contract: a genuine check-attr failure during a Pre event
-    # (the excluded-target arm resolves attributes) must surface as
-    # `tackbox hook: <msg>` + exit 1, non-blocking - never an uncaught traceback.
-    # The call RETURNING (not raising) is the proof no traceback escapes.
+def test_pre_resolution_failure_denies_without_traceback(tmp_path, monkeypatch, capsys):
     _dev_py(tmp_path)
     (tmp_path / "svc.py").write_text("x = 1\n")
     _init(tmp_path)
@@ -1159,7 +1156,54 @@ def test_pre_resolution_failure_is_loud_not_traceback(tmp_path, monkeypatch, cap
     }
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(event)))
     rc = cli._run_hook()
-    assert rc == 1
-    err = capsys.readouterr().err.strip()
-    assert err == "tackbox hook: check-attr exploded", err
-    assert err.count("\n") == 0  # exactly one line
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    decision = out["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "deny"
+    assert "cannot resolve target attributes: check-attr exploded" in decision[
+        "permissionDecisionReason"
+    ]
+
+
+def test_pre_malformed_claude_tool_input_denies_without_traceback(tmp_path):
+    _dev_py(tmp_path)
+    approvals = tmp_path / ".tackbox" / "approvals"
+    approvals.parent.mkdir()
+    approvals.write_text("")
+    _init(tmp_path)
+    for tool, tool_input in (
+        (
+            "MultiEdit",
+            {"file_path": str(approvals), "edits": [["not an edit object"]]},
+        ),
+        ("Write", {"file_path": str(approvals), "content": 7}),
+    ):
+        r = _hook({
+            "hook_event_name": "PreToolUse",
+            "tool_name": tool,
+            "cwd": str(tmp_path),
+            "tool_input": tool_input,
+        })
+        assert r.returncode == 0, r.stdout + r.stderr
+        decision = json.loads(r.stdout)["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "deny"
+        assert "malformed" in decision["permissionDecisionReason"]
+        assert "Traceback" not in r.stderr, r.stderr
+
+
+def test_post_malformed_claude_tool_input_emits_shared_unverified_facts(tmp_path):
+    _dev_py(tmp_path)
+    target = tmp_path / "svc.py"
+    target.write_text("x = 1\n")
+    _init(tmp_path)
+    r = _hook({
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Write",
+        "cwd": str(tmp_path),
+        "tool_input": {"file_path": str(target), "content": 7},
+    })
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert r.stdout == ""
+    assert "The mutation may already have landed." in r.stderr
+    assert "Tackbox verification did not complete:" in r.stderr
+    assert "Do not repeat the mutation; dev.py check remains required." in r.stderr

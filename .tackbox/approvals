@@ -11,6 +11,10 @@ java/src/main/java/nl/tsym/tackbox/javalint/rules/Flow.java#Flow.DoubleScan.step
 java/src/main/java/nl/tsym/tackbox/javalint/rules/Flow.java#Flow.DoubleScan.step(Statement,St): dup-ok: parallel state walkers kept separate on purpose; generic merge couples them
 java/src/main/java/nl/tsym/tackbox/javalint/rules/Flow.java#Flow.SilentScan.step(Statement,St): dup-ok: parallel state walkers kept separate on purpose; generic merge couples them
 java/src/main/java/nl/tsym/tackbox/javalint/rules/Flow.java#Flow.SilentScan.step(Statement,St): dup-ok: parallel state walkers kept separate on purpose; generic merge couples them
+js/omp/hook.js#execute.<h5fabee14>: no-report: a synchronous stdin failure has the same unverified outcome as EPIPE.
+js/omp/hook.js#execute.<h5fabee14>: no-report: synchronous spawn failure resolves the protocol failure outcome.
+js/omp/hook.js#parseJson: no-report: malformed JSON becomes an explicit unverified outcome.
+js/omp/hook.js#parseJson: parse-skip: protocol JSON is intentionally parsed only at this boundary.
 js/report.js#dispatchEventSafely: no-report: dispatch failure loses only the notice; the verb's local log already ran
 js/report.js#maskDSN: no-report: malformed user DSN, opaque marker is the recovery
 py/tackbox/cache.py#_module_digests: no-report: dir outside repo boundary - not ours to digest, skip
@@ -19,6 +23,7 @@ py/tackbox/cache.py#gc_soft_cap: no-report: best-effort GC unlink; a miss is nev
 py/tackbox/cache.py#gc_soft_cap._mtime: no-report: missing marker sorts as oldest for GC, never fails the run
 py/tackbox/cache.py#is_cached: no-report: cache is transparent - a miss is never a run failure
 py/tackbox/cache.py#mark_clean: no-report: cache is transparent - a write miss is never a run failure
+py/tackbox/cli.py#_claude_event: no-report: malformed Claude tool input must deny before execution
 py/tackbox/cli.py#_clean_args: no-report: crashed run never produced json -> attribute nothing, never a false clean
 py/tackbox/cli.py#_clean_args: no-report: nonzero = reporter-resolution crash, no json -> attribute nothing
 py/tackbox/cli.py#_clean_args: no-report: unparseable erclint json -> attribute nothing, never a false clean
@@ -28,13 +33,11 @@ py/tackbox/cli.py#_dispatch: no-report: CLI boundary: a resolution failure is lo
 py/tackbox/cli.py#_dispatch: no-report: CLI boundary: surface as message + exit 2; a traceback here is the bug
 py/tackbox/cli.py#_dispatch: no-report: standalone approvals infra failure -> exit 1 (as everywhere)
 py/tackbox/cli.py#_erclint_has_findings: no-report: unparseable erclint output -> failing aggregate, never a false clean
-py/tackbox/cli.py#_hook_rel_strict: no-report: an outside or unresolvable target is not a repo-relative hook path
-py/tackbox/cli.py#_hook_post: no-report: hook contract: infra error -> exit 1 + stderr, non-blocking
-py/tackbox/cli.py#_hook_rel: no-report: unresolvable path - fall back to the raw target for the message
-py/tackbox/cli.py#_hook_repo_root: no-report: git rev-parse cannot run here - not a git repo, the hook is a deliberate no-op
-py/tackbox/cli.py#_run_hook: no-report: hook contract: bad stdin -> exit 1 + one stderr line, non-blocking
-py/tackbox/cli.py#_run_hook: no-report: hook contract: infra error -> exit 1 + stderr, non-blocking
-py/tackbox/cli.py#_same_path: no-report: unresolvable path is simply not the reporters file - guard
+py/tackbox/cli.py#_hook_event_outcome: no-report: shared host boundary renders typed infrastructure as unverified
+py/tackbox/cli.py#_hook_repository: no-report: repository discovery returns its explicit three-state result
+py/tackbox/cli.py#_hook_stdin_payload: no-report: raw stdin boundary emits the documented one-line diagnostic
+py/tackbox/cli.py#_post_scope: no-report: retain other targets while recording partial verification failure
+py/tackbox/cli.py#_run_hook_protocol: no-report: malformed protocol has no safe phase to classify
 py/tackbox/cli.py#main: no-report: best-effort devnull redirect for the atexit flush; nothing to report
 py/tackbox/cli.py#main: no-report: downstream pipe closed (lint | head) - exit 141, no traceback
 py/tackbox/doctor.py#_check_ast_grep: no-report: doctor reports the ast-grep probe failure via CheckResult (no short-circuit)

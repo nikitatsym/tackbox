@@ -13,6 +13,14 @@ lint:
 uvx tackbox@latest lint .
 ```
 
+## Oh My Pi extension
+
+The same npm package carries tackbox's Oh My Pi extension, so
+`omp plugin install tackbox` wires the rules into an agent's edit loop
+with nothing else to configure. See
+[Agent hook](../README.md#agent-hook) for what it gates, how a decision
+reaches the agent, and the development command override.
+
 ## Direct ESLint integration
 
 To wire the plugin into your own ESLint run instead, install it from

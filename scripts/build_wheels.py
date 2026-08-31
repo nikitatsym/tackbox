@@ -142,17 +142,30 @@ def build_javalint_jar() -> Path:
     return jar
 
 
-def wipe_dir(path: Path) -> None:
+def _stage_fat_project(staging_root: Path) -> Path:
+    for name in ("pyproject.toml", "setup.py", "VERSION", "manifest.json", "lock.json"):
+        shutil.copy2(ENGINES_DIR / name, staging_root / name)
+    fat_root = staging_root / "src" / "tackbox_engines"
+    fat_root.mkdir(parents=True)
+    shutil.copy2(
+        ENGINES_DIR / "src" / "tackbox_engines" / "__init__.py",
+        fat_root / "__init__.py",
+    )
+    return fat_root
+
+
+def _cleanup_staging_root(staging_root: Path) -> None:
+    shutil.rmtree(staging_root, ignore_errors=True)
+
+
+def _reset_generated_dir(path: Path) -> None:
     if path.exists():
         shutil.rmtree(path)
 
 
-def prepare_fat(pl: Platform, manifest: dict, engines_version: str) -> tuple[Path, list[dict]]:
-    fat_root = ENGINES_DIR / "src" / "tackbox_engines"
-    wipe_dir(fat_root / "bin")
-    wipe_dir(fat_root / "vendor")
-    wipe_dir(fat_root / "third_party")
-
+def prepare_fat(
+    pl: Platform, manifest: dict, engines_version: str, fat_root: Path
+) -> tuple[Path, list[dict]]:
     (fat_root / "bin").mkdir(parents=True)
     (fat_root / "third_party" / "licenses").mkdir(parents=True)
 
@@ -304,9 +317,9 @@ def prepare_thin(
     fat_wheel: Path,
 ) -> tuple[Path, list[dict], str]:
     thin_root = PY_DIR / "tackbox"
-    wipe_dir(thin_root / "bin")
-    wipe_dir(thin_root / "rules")
-    wipe_dir(thin_root / "third_party")
+    _reset_generated_dir(thin_root / "bin")
+    _reset_generated_dir(thin_root / "rules")
+    _reset_generated_dir(thin_root / "third_party")
     (thin_root / "bin").mkdir(parents=True)
     (thin_root / "rules" / "bin").mkdir(parents=True)
     (thin_root / "third_party" / "licenses").mkdir(parents=True)
@@ -475,7 +488,12 @@ def compute_payload_sha(entries: list[dict]) -> str:
 
 def build_wheel(project_dir: Path, plat_tag: str, outdir: Path, env_extras: dict) -> Path:
     outdir.mkdir(parents=True, exist_ok=True)
-    print(f"build wheel in {project_dir.relative_to(REPO)} -> {plat_tag}", file=sys.stderr)
+    project_label = (
+        project_dir.relative_to(REPO)
+        if project_dir.is_relative_to(REPO)
+        else project_dir
+    )
+    print(f"build wheel in {project_label} -> {plat_tag}", file=sys.stderr)
     env = {**os.environ, **env_extras}
     stage = project_dir / "build"
     if stage.exists():
@@ -503,7 +521,7 @@ def restore_thin_tree() -> None:
     binaries would ride into every cached build (gigabytes of uv cache)."""
     pkg = PY_DIR / "tackbox"
     for sub in ("bin", "rules", "third_party"):
-        wipe_dir(pkg / sub)
+        _reset_generated_dir(pkg / sub)
     (pkg / "engines.json").unlink(missing_ok=True)
 
 
@@ -530,18 +548,22 @@ def main() -> int:
     outdir = Path(args.outdir).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
 
-    _, engines_entries = prepare_fat(pl, manifest, engines_version)
-
-    fat_wheel = build_wheel(
-        ENGINES_DIR,
-        pl.wheel_plat,
-        outdir,
-        env_extras={"TACKBOX_ENGINES_VERSION": engines_version},
-    )
-    print(f"fat wheel: {fat_wheel.name}", file=sys.stderr)
-    verify_wheel_payload(
-        fat_wheel, ENGINES_DIR / "src" / "tackbox_engines", "tackbox_engines"
-    )
+    fat_stage = Path(tempfile.mkdtemp(prefix="tackbox-engines-"))
+    try:
+        fat_root = _stage_fat_project(fat_stage)
+        _, engines_entries = prepare_fat(
+            pl, manifest, engines_version, fat_root
+        )
+        fat_wheel = build_wheel(
+            fat_stage,
+            pl.wheel_plat,
+            outdir,
+            env_extras={"TACKBOX_ENGINES_VERSION": engines_version},
+        )
+        print(f"fat wheel: {fat_wheel.name}", file=sys.stderr)
+        verify_wheel_payload(fat_wheel, fat_root, "tackbox_engines")
+    finally:
+        _cleanup_staging_root(fat_stage)
 
     prepare_thin(pl, engines_entries, version, engines_version, fat_wheel)
 

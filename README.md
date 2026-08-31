@@ -169,6 +169,10 @@ past (argparse misuse, and the per-command cases below).
   PostToolUse finding on the edited lines, a non-compiling Go
   package, or an approvals inconsistency anywhere in the worktree,
   which blocks the edit in-loop.
+- **hook-protocol** - `0` whenever a decision was reached, whatever the
+  decision says (it rides the JSON on stdout, never the exit code); `1`
+  plus one stderr line when none was: unreadable stdin, or a request
+  whose protocol version this tackbox does not speak.
 - **escapes** - `0` whenever it runs, entries or not (an inventory,
   not a gate); `1` only for a bad `--since` rev.
 
@@ -569,34 +573,44 @@ specified in [docs/report-contracts.md](docs/report-contracts.md).
 - [Python](py/tackbox_report/README.md)
 - [Java](java/report/README.md)
 
-## Agent hook (Claude Code)
+## Agent hook
 
-`tackbox hook` wires the rules into an agent's edit loop. It reads a
-Claude Code hook event on stdin and dispatches by `hook_event_name`:
+The rules wire into a coding agent's edit loop through one shared core: the
+approval gates, the diff-scoped lint, and the whole-tree consistency check
+are the same whichever host drives them. In host-neutral terms:
 
-- **PostToolUse** on an Edit/Write re-lints the edited file (Go: its
-  package). On a finding it exits 2 with the finding on stderr, so
-  the model sees it and fixes it in-loop. Every Post event - **Bash**
-  included - also runs the whole-tree approvals consistency check:
-  an unapproved marker, an orphaned entry, or an unresolvable file
-  blocks with the entry named and the fix - add the manifest line,
-  which asks, or revert. Stateless and tree-shaped: a commit changes
-  nothing, and the block repeats on every event until the tree is
-  consistent. The authoritative gate stays pre-commit / CI.
-- **PreToolUse** asks for approval before a new `.tackbox/approvals`
-  line or a new `.tackbox/reporters` line lands, before a positive
-  exclusion line is added to any `.gitattributes`, and before an edit
-  to an attribute-excluded file (see "Generated and vendored code");
-  removing a line is free. Editing markers in code draws no Pre ask -
-  the consistency check owns them.
+- **Post-edit** re-lints the touched files (Go: their package). A finding on
+  the lines the edit added blocks with the finding text. Every post event -
+  including an opaque channel - also runs the whole-tree approvals consistency
+  check: an unapproved marker, an orphaned entry, or an unresolvable file blocks
+  with the named fix. A verified violation is always a tool error. A post event
+  that cannot be verified reports three facts: the mutation may already have
+  landed, why verification did not complete, and that the mutation must not be
+  repeated before `dev.py check`. OMP appends that warning to the model-facing
+  tool result without changing a successful tool state. Claude Code writes it
+  to user-visible PostToolUse stderr with exit 1, so it is not model-visible.
+- **Pre-edit** asks for approval before a new `.tackbox/approvals` line or a
+  new `.tackbox/reporters` line lands, before a positive exclusion line is
+  added to any `.gitattributes`, before editing an attribute-excluded file, and
+  before deleting or moving the root `dev.py`; removing a gate line is free.
+  A known target whose content is ambiguous asks when it reaches a bypass
+  surface. An unclassifiable file mutation or a failed policy dependency blocks
+  before it can run; it is never weakened into an approval prompt.
 
 Only markers in files an engine would lint participate in the check
 (D012): a marker in a Go `testdata/` path or a non-lintable fixture
 extension (a `.java.txt`) is dead text - no entry needed, no
 question - while the `.tackbox/reporters` gate stays unconditional.
 
-The hook is a no-op unless the edit's `cwd` is a git repo with a
-`dev.py` at its root. Wire it once, globally, in
+The hook is inactive only when `git rev-parse --show-toplevel` emits C-locale
+stderr containing `not a git repository`, or after its discovered root has no
+`dev.py`. A missing git executable, corrupt Git config, or another discovery
+failure is unverified, not a no-op.
+
+### Claude Code
+
+`tackbox hook` reads a Claude Code hook event on stdin and dispatches by
+`hook_event_name` (`PreToolUse`, `PostToolUse`). Wire it once, globally, in
 `~/.claude/settings.json`:
 
 ```json
@@ -616,6 +630,104 @@ The hook is a no-op unless the edit's `cwd` is a git repo with a
 
 `uvx tackbox hook` runs the cached tackbox (no `@latest`): the hook is
 fast in-loop feedback, not the authoritative gate.
+
+### Oh My Pi
+
+```bash
+omp plugin install tackbox
+```
+OMP loads the ESM entry point `js/omp/index.mjs`, which delegates to the internal
+CommonJS implementation.
+
+That is the whole wiring: the npm package declares an extension
+(`package.json#omp.extensions`) and OMP loads it. The extension subscribes to
+the public `tool_call` / `tool_result` events and covers all five OMP 18.x
+`edit` modes: `replace`, `patch`, `hashline`, `apply_patch`, and `sloppy`,
+including multi-file edits, clipboard registers, moves, and deletes. Its
+compatibility parser accepts `U+00B6PATH#TAG` headers plus sloppy `[path]`,
+`U+00A7path`, and `U+00A7*path` section openers; bare `U+00A7` forms continue
+the current file.
+
+- a pre-edit ask becomes a confirmation dialog. In a headless or subagent
+  session, where nobody can answer, it blocks with the reason instead of
+  approving itself; a denied ask blocks before the tool runs.
+- a verified post violation becomes a tool error carrying the findings, which
+  keeps the agent in-loop on them.
+- an unverified pre event blocks. The child has a 20-second deadline inside
+  OMP's 30-second handler budget. An unverified post event carries the shared
+  three-fact warning, omits an `isError` override so OMP preserves the host
+  state, and tells the model not to repeat the mutation before `dev.py check`.
+- an opaque write channel (`xd://` tool devices, archive members, SQLite rows),
+  every `bash` call, and every `eval` call name no file, so they run the
+  whole-tree approvals wall alone.
+- MCP tool names are not enumerated by this extension. Their file mutations are
+  an explicit residual outside its pre gate and post wall; review their diff and
+  run `dev.py check`.
+- the post adapter consumes each result-detail record independently. It falls
+  back to a snapshot only for that record when the record is pruned; failed
+  records do not widen the scope of successful landed records. OMP 18.x does
+  not identify a landed subset for a single aggregate error without per-file
+  details, so Tackbox runs its whole-tree wall, preserves the host error, and
+  cannot safely perform targeted lint for that residual.
+
+The extension runs `uvx tackbox@<npm package version> hook-protocol`. A tagged
+wheel is built and protocol-canary tested, published to PyPI, then a successful
+release workflow automatically publishes the matching npm package from its
+immutable completed-run source. If a pending npm job is canceled, rerun `publish`
+from the Actions UI; there is no standalone npm redispatch.
+
+For development against a working tree, name the command explicitly - a JSON array
+of argv, never a shell string:
+
+```bash
+TACKBOX_OMP_COMMAND='["uv","run","--directory","py","python","-m","tackbox.cli"]'
+```
+
+The subcommand is appended by the extension, never taken from the override, so
+a development command cannot answer a different protocol. There is no
+`@latest` fallback: an unpinned wheel could answer a protocol version the
+extension does not speak.
+
+### Other hosts
+
+`tackbox hook-protocol` is the host-neutral wire - one JSON event on stdin,
+one JSON decision on stdout:
+
+```json
+{"protocol": 1, "phase": "pre", "cwd": "/repo", "tool": "edit",
+ "targets": [{"path": "/repo/app/svc.py", "op": "edit",
+              "expectedPresent": true,
+              "added": ["x = 2"], "removed": ["x = 1"]}],
+ "unknown": null}
+```
+
+```json
+{"protocol": 1, "decision": "ask",
+ "reason": "approve suppression marker: app/svc.py: no-report: covered upstream"}
+```
+
+- `cwd` is the host session's non-empty absolute working directory.
+- `phase` is `pre` (before the tool runs, still refusable) or `post` (after it
+  landed). Pre requests omit `succeeded`; post requests require the boolean
+  `succeeded`, so a failed tool is not misreported as a missing landed file.
+- `tool` is one of `edit`, `apply_patch`, `write`, `bash`, or `eval`. `bash` and
+  `eval` are target-free wall-only channels.
+- a **target** is one file mutation with an absolute `path`, `op`, and
+  `expectedPresent`. `edit` and `write` expect the path to exist, `delete`
+  expects it absent, and a move reports an absent source plus a present
+  destination. `content` is a full replacement; otherwise `added` and
+  `removed` are text fragments. `content` and fragments are mutually exclusive.
+  `ambiguous: true` means a known target needs whole-file treatment.
+- **zero targets** is the opaque channel: the whole-tree wall runs, nothing
+  file-scoped does. `unknown` is a non-empty reason only when no concrete
+  target can be named; it blocks pre and warns post.
+- the wire decisions are `allow`, `ask`, `block`, and `warn`. The semantic
+  outcomes are inactive, allow, approval-required, violation, and unverified:
+  unverified maps to `block` pre and `warn` post. Hosts must make a post warning
+  visible without turning a successful mutation into a repeatable tool error.
+- exit is `0` whenever a decision was reached, whatever it says; `1` plus one
+  stderr line means no decision (unreadable stdin, or a protocol version this
+  tackbox does not speak).
 
 ## Escapes inventory
 
@@ -728,7 +840,7 @@ exit 1.
 dev.py                                 # lint / test / e2e / check (dev-script)
 hygiene.py                             # dev.py lint hygiene (conflict/yaml/ws/newline)
 go.mod                                 # Go module
-package.json                           # npm package (ESLint plugin + report helper)
+package.json                           # npm package (ESLint plugin + OMP extension + report helper)
 eslint.config.preset.js                # default config used by tackbox-eslint bin
 bin/tackbox-eslint.js                  # ESLint CLI wrapper with bundled preset
 bin/tackbox-mdlint.js                  # markdownlint wrapper with bundled preset
@@ -749,6 +861,7 @@ js/
   rules/                               # 14 frontend rules
   markdownlint-rules/                  # custom markdownlint rules
   report.js                            # browser capture helper (@sentry/browser)
+  omp/                                 # Oh My Pi extension (payload parser + hook-protocol client)
   tests/                               # RuleTester + node:test
 py/
   tackbox/                             # lint / hook / doctor CLI, cache, engines

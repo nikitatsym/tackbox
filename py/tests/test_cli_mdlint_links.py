@@ -11,9 +11,8 @@ Two levels:
 
 from __future__ import annotations
 
-import os
+import subprocess
 
-import pytest
 from conftest import commit_all, git, init_repo, run_lint
 
 from tackbox.gitfiles import collect_link_targets
@@ -37,18 +36,25 @@ def test_inventory_excludes_gitignored_includes_untracked_not_ignored(tmp_path):
 
 
 def test_inventory_marks_tracked_symlink_L_and_gitlink_G(tmp_path):
-    if os.name == "nt":
-        pytest.skip("symlink creation is privileged on Windows")
     init_repo(tmp_path)
     (tmp_path / "real.md").write_text("# real\n")
-    (tmp_path / "link.md").symlink_to("real.md")
+    blob = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"],
+        cwd=tmp_path,
+        input="real.md\n",
+        capture_output=True,
+        check=True,
+        text=True,
+    ).stdout.strip()
+    # Stage a symlink index entry without requiring Windows symlink privileges.
+    git(tmp_path, "update-index", "--add", "--cacheinfo", f"120000,{blob},link.md")
     # A committed nested repo becomes a gitlink (mode 160000) in the parent index.
     sub = tmp_path / "vendor" / "sub"
     sub.mkdir(parents=True)
     init_repo(sub)
     (sub / "doc.md").write_text("# sub doc\n")
     commit_all(sub)
-    git(tmp_path, "add", "real.md", "link.md", "vendor/sub")
+    git(tmp_path, "add", "real.md", "vendor/sub")
     git(tmp_path, "commit", "-q", "-m", "with symlink and gitlink")
 
     inv = {path: kind for kind, path in collect_link_targets(tmp_path)}

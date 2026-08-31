@@ -167,7 +167,9 @@ def test_global_attributes_file_ignored(tmp_path, monkeypatch):
     # Point the process env's HOME + a repo-level config at the global file; the
     # sanitized invocation neutralizes core.attributesFile to os.devnull.
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gc"))
-    (tmp_path / "gc").write_text(f"[core]\n\tattributesFile = {glob}\n")
+    (tmp_path / "gc").write_text(
+        f"[core]\n\tattributesFile = {glob.as_posix()}\n"
+    )
     # Sanity: without sanitization git would resolve plain.go as set.
     raw = subprocess.run(
         ["git", "check-attr", "-z", "--stdin", "linguist-generated"],

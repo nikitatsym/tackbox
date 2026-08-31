@@ -26,6 +26,7 @@ import tempfile
 import time
 import zipfile
 from contextlib import contextmanager
+from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -65,21 +66,28 @@ _PLATFORM_KEYS = {
 
 ENGINES_DIR_ENV = "TACKBOX_ENGINES_DIR"
 
+_LOCKFILE_FAIL_IMMEDIATELY = 0x1
+_LOCKFILE_EXCLUSIVE_LOCK = 0x2
+_ERROR_LOCK_VIOLATION = 33
+
+
+class _WindowsOverlapped(ctypes.Structure):
+    """Minimal OVERLAPPED layout used by blocking Win32 file locks."""
+    _fields_ = [
+        ("internal", ctypes.c_size_t),
+        ("internal_high", ctypes.c_size_t),
+        ("offset", wintypes.DWORD),
+        ("offset_high", wintypes.DWORD),
+        ("event", wintypes.HANDLE),
+    ]
+
+
+
 
 class EnginesStoreError(RuntimeError):
     """The engine store could not be resolved, fetched, or verified."""
 
 
-class _WindowsOverlapped(ctypes.Structure):
-    """Minimal OVERLAPPED layout used by blocking Win32 file locks."""
-
-    _fields_ = [
-        ("Internal", ctypes.c_void_p),
-        ("InternalHigh", ctypes.c_void_p),
-        ("Offset", ctypes.c_uint32),
-        ("OffsetHigh", ctypes.c_uint32),
-        ("hEvent", ctypes.c_void_p),
-    ]
 
 
 def detect_platform_key() -> str | None:
@@ -170,79 +178,91 @@ def _engine_install_lock(root: Path):
     root.parent.mkdir(parents=True, exist_ok=True)
     lock_path = root.parent / f".{root.name}.install.lock"
     with lock_path.open("a+b") as handle:
-        lock_token = _lock_file(handle)
+        token = _lock_file(handle)
         try:
             yield
         finally:
-            _unlock_file(handle, lock_token)
+            _unlock_file(handle, token)
 
 
-def _windows_lock_api(name: str):
+def _windows_file_lock_api():
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    api = getattr(kernel32, name)
-    overlapped = ctypes.POINTER(_WindowsOverlapped)
-    if name == "LockFileEx":
-        api.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_uint32,
-            ctypes.c_uint32,
-            ctypes.c_uint32,
-            ctypes.c_uint32,
-            overlapped,
-        ]
-    elif name == "UnlockFileEx":
-        api.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_uint32,
-            ctypes.c_uint32,
-            ctypes.c_uint32,
-            overlapped,
-        ]
-    else:
-        raise ValueError(f"unsupported Windows lock API: {name}")
-    api.restype = ctypes.c_int
-    return api
+    lock = kernel32.LockFileEx
+    lock.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(_WindowsOverlapped),
+    ]
+    lock.restype = wintypes.BOOL
+    unlock = kernel32.UnlockFileEx
+    unlock.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(_WindowsOverlapped),
+    ]
+    unlock.restype = wintypes.BOOL
+    return lock, unlock
 
 
 def _lock_file(handle) -> _WindowsOverlapped | None:
     if os.name == "nt":
         msvcrt = importlib.import_module("msvcrt")
-
         handle.seek(0, os.SEEK_END)
         if handle.tell() == 0:
             handle.write(b"\0")
             handle.flush()
         handle.seek(0)
-        overlapped = _WindowsOverlapped()
-        os_handle = ctypes.c_void_p(msvcrt.get_osfhandle(handle.fileno()))
-        # Flags zero means wait until the holder exits or unlocks. The kernel
-        # releases the lock automatically if this process dies.
-        if not _windows_lock_api("LockFileEx")(
-            os_handle, 0, 0, 1, 0, ctypes.byref(overlapped)
+        raw_handle = msvcrt.get_osfhandle(handle.fileno())
+        lock = _windows_file_lock_api()[0]
+        token = _WindowsOverlapped()
+        # The nonblocking probe makes a long cold-start wait diagnosable.
+        if not lock(
+            raw_handle,
+            _LOCKFILE_EXCLUSIVE_LOCK | _LOCKFILE_FAIL_IMMEDIATELY,
+            0,
+            1,
+            0,
+            ctypes.byref(token),
         ):
-            raise ctypes.WinError(ctypes.get_last_error())
-        return overlapped
-    else:
-        fcntl = importlib.import_module("fcntl")
+            error = ctypes.get_last_error()
+            if error != _ERROR_LOCK_VIOLATION:
+                raise ctypes.WinError(error)
+            sys.stderr.write(
+                "waiting for engines lock (another tackbox is fetching)\n"
+            )
+            token = _WindowsOverlapped()
+            if not lock(
+                raw_handle,
+                _LOCKFILE_EXCLUSIVE_LOCK,
+                0,
+                1,
+                0,
+                ctypes.byref(token),
+            ):
+                raise ctypes.WinError(ctypes.get_last_error())
+        return token
+    fcntl = importlib.import_module("fcntl")
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    return None
 
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        return None
 
-
-def _unlock_file(handle, lock_token: _WindowsOverlapped | None) -> None:
+def _unlock_file(handle, token: _WindowsOverlapped | None) -> None:
     if os.name == "nt":
+        if token is None:
+            raise RuntimeError("Windows lock token missing")
         msvcrt = importlib.import_module("msvcrt")
-
-        handle.seek(0)
-        os_handle = ctypes.c_void_p(msvcrt.get_osfhandle(handle.fileno()))
-        if not _windows_lock_api("UnlockFileEx")(
-            os_handle, 0, 1, 0, ctypes.byref(lock_token)
-        ):
+        unlock = _windows_file_lock_api()[1]
+        raw_handle = msvcrt.get_osfhandle(handle.fileno())
+        if not unlock(raw_handle, 0, 1, 0, ctypes.byref(token)):
             raise ctypes.WinError(ctypes.get_last_error())
-    else:
-        fcntl = importlib.import_module("fcntl")
-
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return
+    fcntl = importlib.import_module("fcntl")
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _assert_runtime_platform(data: dict) -> None:

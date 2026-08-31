@@ -7,6 +7,7 @@ validation (scope-independent), and the BrokenPipe guard.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -258,22 +259,49 @@ def test_py_dead_symbol_exit_2(tmp_path):
 
 
 def test_broken_pipe_exit_141(tmp_path):
-    # `head -c 0` closes the read end before tackbox writes; the guarded flush
-    # then hits a closed pipe. The guard must exit 141 with no traceback rather
-    # than crash on BrokenPipeError.
+    # A pipe with no reader makes the first tackbox write fail deterministically.
     blocks = "\n".join(
         f"def f{i}():\n    try:\n        g()\n    except ValueError:\n        pass\n"
         for i in range(20)
     )
     (tmp_path / "big.py").write_text(blocks)
     _init(tmp_path)
-    cmd = (
-        f"{sys.executable} -m tackbox.cli lint . --no-cache | head -c 0 >/dev/null; "
-        "echo EXIT=${PIPESTATUS[0]}"
+    read_fd, write_fd = os.pipe()
+    os.close(read_fd)
+    try:
+        r = subprocess.run(
+            [sys.executable, "-m", "tackbox.cli", "lint", ".", "--no-cache"],
+            cwd=tmp_path,
+            env=tackbox_env(),
+            stdout=write_fd,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    finally:
+        os.close(write_fd)
+    assert r.returncode == 141, (
+        f"expected tackbox exit 141 on broken pipe:\n{r.stderr}"
     )
-    r = subprocess.run(
-        ["bash", "-c", cmd], cwd=tmp_path, env=tackbox_env(), capture_output=True, text=True
-    )
-    assert "EXIT=141" in r.stdout, f"expected tackbox exit 141 on broken pipe:\n{r.stdout}\n{r.stderr}"
     assert "Traceback" not in r.stderr, r.stderr
     assert "BrokenPipeError" not in r.stderr, r.stderr
+
+
+def test_filesystem_einval_under_piped_stdout_is_not_a_broken_pipe(tmp_path):
+    """A filesystem EINVAL (carries a filename) must stay a loud error even when
+    stdout is a pipe: only a bare pipe-write EINVAL may take the 141 exit."""
+    (tmp_path / "ok.py").write_text("def f():\n    return 1\n")
+    _init(tmp_path)
+    # An invalid report path produces OSError(EINVAL, ..., filename) on Windows
+    # and a plain failure elsewhere; neither may masquerade as a closed pipe.
+    r = subprocess.run(
+        [sys.executable, "-m", "tackbox.cli", "lint", ".", "--no-cache",
+         "--codequality", "reports/lint?report.json"],
+        cwd=tmp_path,
+        env=tackbox_env(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert r.returncode != 141, f"filesystem error relabeled as broken pipe:\n{r.stderr}"
+    assert r.returncode != 0, "invalid --codequality path must fail loudly"
+    assert r.stderr.strip() != "", "the failure must be visible on stderr"

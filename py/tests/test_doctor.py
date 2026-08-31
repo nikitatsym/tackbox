@@ -477,5 +477,5 @@ def test_attributes_linked_worktree_info_attributes_common_dir(tmp_path, monkeyp
     doctor._attributes_section(out)
     text = out.getvalue()
     assert "info/attributes mentions exclusion attributes:" in text
-    common = str((main / ".git" / "info" / "attributes").resolve())
+    common = (main / ".git" / "info" / "attributes").resolve().as_posix()
     assert common in text, f"expected common-dir path {common!r} in:\n{text}"

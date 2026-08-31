@@ -3,15 +3,30 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 from collections import Counter
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
-from . import __version__, approvals, cache, codequality, doctor, escapes, proc, reporters, scopes
+from . import (
+    __version__,
+    approvals,
+    cache,
+    codequality,
+    doctor,
+    escapes,
+    hookproto,
+    proc,
+    reporters,
+    scopes,
+)
 from .engines import (
     EngineResult,
     EnginesStoreError,
@@ -52,12 +67,68 @@ from .source_set import (
 class ChangedScopeError(ValueError):
     """Raised when the git commands backing --changed / --since fail."""
 
+
+
+class HookInfrastructureError(RuntimeError):
+    """A recoverable dependency, process, or filesystem failure in the hook."""
+
+
+
+
+class HookFileError(HookInfrastructureError):
+    """A hook target could not be read or resolved safely."""
+
+
+class HookRepositoryState(str, Enum):
+    """The three states repository discovery can establish."""
+
+    INACTIVE = "inactive"
+    ACTIVE = "active"
+    INFRASTRUCTURE_FAILURE = "infrastructure-failure"
+
+
+@dataclass(frozen=True)
+class HookRepository:
+    """The repository root when known, plus its discovery state and detail."""
+
+    state: HookRepositoryState
+    root: Path | None = None
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class HookPostScope:
+    """Landed file scope and any uncertainty that must remain model-visible."""
+
+    files: dict[str, set[int] | None]
+    failures: tuple[str, ...] = ()
+
 _BANNER_ORDER = ("erclint", "opengrep", "node", "eslint", "markdownlint")
+
+
+def _is_closed_stdout(error: OSError) -> bool:
+    if isinstance(error, BrokenPipeError):
+        return True
+    # Windows reports a no-reader pipe write as EINVAL instead of BrokenPipeError.
+    # A pipe-write EINVAL carries no filename; a filesystem EINVAL does - without
+    # that discriminator any EINVAL under piped stdout becomes a silent exit 141.
+    return (
+        os.name == "nt"
+        and error.errno == errno.EINVAL
+        and error.filename is None
+        and error.filename2 is None
+        and stat.S_ISFIFO(os.fstat(sys.stdout.fileno()).st_mode)
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     try:
-        return _dispatch(argv)
+        try:
+            return _dispatch(argv)
+        except OSError as error:
+            if _is_closed_stdout(error):
+                raise BrokenPipeError from error
+            raise
     except BrokenPipeError:
         # no-report: downstream pipe closed (lint | head) - exit 141, no traceback
         # dup2 to devnull so the interpreter's atexit flush does not re-raise.
@@ -134,6 +205,8 @@ def _dispatch(argv: list[str] | None) -> int:
             return 1
     if args.command == "hook":
         return _run_hook()
+    if args.command == "hook-protocol":
+        return _run_hook_protocol()
     print(f"tackbox: unknown command {args.command!r}", file=sys.stderr)
     return 2
 
@@ -195,6 +268,11 @@ def _parse_argv(argv: list[str]) -> argparse.Namespace:
         "hook",
         help="Claude Code hook: PostToolUse lint + approvals consistency, "
         "PreToolUse manifest gate",
+    )
+    sub.add_parser(
+        "hook-protocol",
+        help="host-neutral agent hook protocol v1: one JSON event on stdin, "
+        "one JSON decision on stdout",
     )
     return parser.parse_args(argv)
 
@@ -632,10 +710,10 @@ def _filter_erclint_result(
 ) -> EngineResult:
     """erclint's -json tree with excluded-file findings removed. Byte-identical
     when nothing is dropped (the common no-exclusion path never reparses)."""
-    # An excluded file's repo-relative path is a substring of its absolute erclint
-    # posn, so if none appears there is nothing to drop: skip the reparse (and the
-    # pathological non-JSON crash dump, which the verdict path surfaces loudly).
-    if not any(ef in r.stdout for ef in excluded):
+    # JSON escapes Windows separators; inspect both serialized spellings.
+    if not any(
+        ef in r.stdout or ef.replace("/", "\\\\") in r.stdout for ef in excluded
+    ):
         return r
     changed = False
     kept_objs: list[dict] = []
@@ -771,7 +849,12 @@ def _print_banner(tackbox_root: Path) -> None:
     print(f"tackbox {__version__} engines={engines_id} {parts}", file=sys.stderr)
 
 
-# -- Claude Code hook -----------------------------------------------------
+# -- Agent hook -----------------------------------------------------------
+#
+# Two hosts, one core. `tackbox hook` speaks Claude Code's event JSON and its
+# exit-code contract; `tackbox hook-protocol` speaks the versioned host-neutral
+# protocol in hookproto. Both normalize into one `hookproto.Event`, run the same
+# gates and lint arms, then render the closed semantic outcome for their host.
 
 _HOOK_TOOLS = frozenset({"Edit", "Write", "MultiEdit"})
 # Suppression markers: the pattern the approvals check (scopes / approvals)
@@ -779,6 +862,13 @@ _HOOK_TOOLS = frozenset({"Edit", "Write", "MultiEdit"})
 # suppression (D017), so it is deliberately absent here.
 _MARKER_RE = re.compile(
     r"(?:no-report|parse-skip|nil-return|long-comment|test-skip|dup-ok):"
+)
+
+# A gated file whose additions the host could not enumerate. The gate cannot
+# decide, so it asks - never a silent allow (the whole point of the wall).
+_UNCLASSIFIED = (
+    "cannot classify what this edit adds (register paste, move, or unrecognized"
+    " operation): {rel}"
 )
 
 
@@ -789,113 +879,643 @@ def _run_hook() -> int:
     hook consumer). Unreadable stdin / bad JSON -> exit 1 + one stderr line
     (non-blocking). No version banner in hook mode.
     """
-    try:
-        event = json.loads(sys.stdin.read())
-        if not isinstance(event, dict):
-            raise ValueError("hook event is not a JSON object")
-    except (json.JSONDecodeError, ValueError, OSError) as e:
-        # no-report: hook contract: bad stdin -> exit 1 + one stderr line, non-blocking
-        print(f"tackbox hook: unreadable stdin: {e}", file=sys.stderr)
+    event = _hook_stdin_payload()
+    if event is None:
         return 1
     name = event.get("hook_event_name")
     if name == "PreToolUse":
-        try:
-            return _hook_pre(event)
-        except (AttributeResolutionError, subprocess.CalledProcessError) as e:
-            # no-report: hook contract: infra error -> exit 1 + stderr, non-blocking
-            print(f"tackbox hook: {e}", file=sys.stderr)
-            return 1
+        return _hook_pre(event)
     if name == "PostToolUse":
         return _hook_post(event)
     return 0
 
 
-def _hook_repo_root(event: dict) -> Path | None:
-    """Repo root for the event's cwd, or None if the guard fails.
-
-    Guard (both modes): cwd must sit inside a git repo whose root holds a
-    `dev.py`. Anywhere else the hook is a deliberate no-op.
-    """
-    cwd = event.get("cwd")
-    if not cwd:
-        return None
+def _run_hook_protocol() -> int:
+    """Dispatch one host-neutral protocol event and render one wire decision."""
+    payload = _hook_stdin_payload()
+    if payload is None:
+        return 1
     try:
-        r = proc.run(
+        event = hookproto.parse_request(payload)
+    except hookproto.HookProtocolError as e:
+        # no-report: malformed protocol has no safe phase to classify
+        print(f"tackbox hook: {e}", file=sys.stderr)
+        return 1
+    outcome = _hook_event_outcome(_hook_repository(event.cwd), event)
+    print(hookproto.render_decision(outcome, event.phase))
+    return 0
+
+
+def _hook_stdin_payload() -> dict | None:
+    """The hook event JSON object on stdin, or None after one stderr line."""
+    try:
+        payload = json.loads(sys.stdin.read())
+        if not isinstance(payload, dict):
+            raise ValueError("hook event is not a JSON object")
+    except (json.JSONDecodeError, ValueError, OSError) as e:
+        # no-report: raw stdin boundary emits the documented one-line diagnostic
+        print(f"tackbox hook: unreadable stdin: {e}", file=sys.stderr)
+        return None
+    return payload
+
+
+def _hook_repository(cwd: str | None) -> HookRepository:
+    """Discover inactive, active, and broken hook roots without conflating them."""
+    try:
+        return _discover_hook_repository(cwd)
+    except HookInfrastructureError as e:
+        # no-report: repository discovery returns its explicit three-state result
+        return HookRepository(HookRepositoryState.INFRASTRUCTURE_FAILURE, reason=str(e))
+
+
+def _discover_hook_repository(cwd: str | None) -> HookRepository:
+    """Discover a hook root, raising typed failures for the state boundary."""
+    if not isinstance(cwd, str) or not cwd:
+        raise HookInfrastructureError("event cwd is missing")
+    cwd_path = Path(cwd)
+    if not cwd_path.is_absolute():
+        raise HookInfrastructureError(f"event cwd is not absolute: {cwd!r}")
+    git_env = os.environ | {"LC_ALL": "C", "LANG": "C"}
+    try:
+        result = proc.run(
             ["git", "rev-parse", "--show-toplevel"],
             cwd=cwd,
             capture_output=True,
+            env=git_env,
         )
-    except (OSError, subprocess.SubprocessError):
-        # no-report: git rev-parse cannot run here - not a git repo, the hook is a deliberate no-op
-        return None
-    if r.returncode != 0:
-        return None
-    root = Path(r.stdout.strip())
-    if not (root / "dev.py").is_file():
-        return None
-    return root
+    except (
+        OSError,
+        ValueError,
+        subprocess.SubprocessError,
+        proc.ChildStreamError,
+    ) as e:
+        raise HookInfrastructureError(f"cannot discover hook repository: {e}") from e
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        if "not a git repository" in stderr:
+            return HookRepository(HookRepositoryState.INACTIVE)
+        detail = stderr or result.stdout.strip() or f"exit {result.returncode}"
+        raise HookInfrastructureError(
+            f"cannot discover hook repository: git rev-parse failed: {detail}"
+        )
+    root_text = result.stdout.strip()
+    if not root_text:
+        raise HookInfrastructureError("cannot parse hook repository root: empty output")
+    try:
+        root = Path(root_text)
+    except ValueError as e:
+        raise HookInfrastructureError(
+            f"cannot parse hook repository root: {e}"
+        ) from e
+    if not root.is_absolute():
+        raise HookInfrastructureError(
+            f"cannot parse hook repository root: relative root {root_text!r}"
+        )
+    try:
+        root_exists = root.is_dir()
+        root_has_dev_py = (root / "dev.py").is_file()
+    except (OSError, ValueError) as e:
+        raise HookInfrastructureError(f"cannot inspect hook repository: {e}") from e
+    if not root_exists:
+        raise HookInfrastructureError(f"git rev-parse returned a missing root: {root}")
+    if not root_has_dev_py:
+        return HookRepository(HookRepositoryState.INACTIVE, root=root)
+    return HookRepository(HookRepositoryState.ACTIVE, root=root)
 
 
-def _hook_target(event: dict) -> tuple[Path | None, dict]:
-    """(file_path, tool_input) for an Edit/Write/MultiEdit event, else
-    (None, _) so the caller no-ops on other tools or a missing path."""
-    if event.get("tool_name") not in _HOOK_TOOLS:
-        return None, {}
-    tool_input = event.get("tool_input") or {}
+def _hook_event_outcome(
+    repository: HookRepository, event: hookproto.Event
+) -> hookproto.Outcome:
+    """Render every typed hook infrastructure failure as an unverified outcome."""
+    try:
+        outcome = _hook_event_outcome_inner(repository, event)
+    except HookInfrastructureError as e:
+        # no-report: shared host boundary renders typed infrastructure as unverified
+        outcome = hookproto.Outcome(
+            hookproto.OutcomeKind.UNVERIFIED,
+            f"tackbox hook: {e}",
+        )
+    return _post_unverified_outcome(event, outcome)
+
+
+def _post_unverified_outcome(
+    event: hookproto.Event, outcome: hookproto.Outcome
+) -> hookproto.Outcome:
+    """Add the retry-safety facts once before either host renders a post warning."""
+    if event.phase != hookproto.POST or outcome.kind is not hookproto.OutcomeKind.UNVERIFIED:
+        return outcome
+    return hookproto.Outcome(
+        hookproto.OutcomeKind.UNVERIFIED,
+        "\n".join((
+            "The mutation may already have landed.",
+            f"Tackbox verification did not complete: {outcome.reason}",
+            "Do not repeat the mutation; dev.py check remains required.",
+        )),
+    )
+
+def _hook_event_outcome_inner(
+    repository: HookRepository, event: hookproto.Event
+) -> hookproto.Outcome:
+    """Run the shared semantic core after repository discovery."""
+    if repository.state is HookRepositoryState.INFRASTRUCTURE_FAILURE:
+        return hookproto.Outcome(hookproto.OutcomeKind.UNVERIFIED, repository.reason)
+    if repository.state is HookRepositoryState.INACTIVE:
+        removed_root_dev_py = (
+            event.phase == hookproto.POST
+            and repository.root is not None
+            and _removes_root_dev_py(repository.root, event)
+        )
+        if removed_root_dev_py:
+            return hookproto.Outcome(
+                hookproto.OutcomeKind.UNVERIFIED,
+                "root dev.py was removed or moved",
+            )
+        return hookproto.Outcome(hookproto.OutcomeKind.INACTIVE)
+    assert repository.root is not None
+    if event.phase == hookproto.PRE:
+        return _hook_pre_decision(repository.root, event)
+    return _hook_post_decision(repository.root, event)
+
+
+# -- Claude Code adapter --------------------------------------------------
+
+
+def _claude_event(phase: str, event: dict) -> hookproto.Event:
+    """Normalize Claude's edit metadata into the shared policy event."""
+    tool = event.get("tool_name")
+    cwd = event.get("cwd")
+    if not isinstance(tool, str):
+        return hookproto.Event(
+            phase=phase,
+            cwd=cwd,
+            tool="",
+            unknown="Claude Code supplied a non-string tool name",
+        )
+    if tool not in _HOOK_TOOLS:
+        return hookproto.Event(phase=phase, cwd=cwd, tool=tool)
+    tool_input = event.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return hookproto.Event(
+            phase=phase,
+            cwd=cwd,
+            tool=tool,
+            unknown="Claude Code supplied a non-object tool input",
+        )
     file_path = tool_input.get("file_path")
-    if not file_path:
-        return None, tool_input
-    return Path(file_path), tool_input
+    if not isinstance(file_path, str) or not file_path:
+        return hookproto.Event(
+            phase=phase,
+            cwd=cwd,
+            tool=tool,
+            unknown="Claude Code supplied a non-empty string file path",
+        )
+    try:
+        target = _claude_target(Path(file_path), tool, tool_input, cwd)
+    except hookproto.HookProtocolError as e:
+        # no-report: malformed Claude tool input must deny before execution
+        return hookproto.Event(
+            phase=phase,
+            cwd=cwd,
+            tool=tool,
+            unknown=f"Claude Code supplied malformed {tool} input: {e}",
+        )
+    return hookproto.Event(phase=phase, cwd=cwd, tool=tool, targets=(target,))
+
+
+def _claude_target(
+    path: Path, tool: str, tool_input: dict, cwd: object
+) -> hookproto.Target:
+    """Validate Claude fields through the same strict protocol as OMP."""
+    if tool == "Write":
+        target = {
+            "path": str(path),
+            "op": hookproto.WRITE,
+            "expectedPresent": True,
+            "content": _claude_string(tool_input, "content", "Write"),
+        }
+        protocol_tool = hookproto.WRITE
+    elif tool == "MultiEdit":
+        edits = tool_input.get("edits", [])
+        if not isinstance(edits, list):
+            raise hookproto.HookProtocolError("Claude Code MultiEdit edits must be a list")
+        added: list[str] = []
+        removed: list[str] = []
+        for index, edit in enumerate(edits):
+            if not isinstance(edit, dict):
+                raise hookproto.HookProtocolError(
+                    f"Claude Code MultiEdit edits[{index}] must be an object"
+                )
+            added.append(_claude_string(edit, "new_string", f"MultiEdit edits[{index}]"))
+            removed.append(_claude_string(edit, "old_string", f"MultiEdit edits[{index}]"))
+        target = {
+            "path": str(path),
+            "op": hookproto.EDIT,
+            "expectedPresent": True,
+            "added": added,
+            "removed": removed,
+        }
+        protocol_tool = hookproto.EDIT
+    else:
+        target = {
+            "path": str(path),
+            "op": hookproto.EDIT,
+            "expectedPresent": True,
+            "added": [_claude_string(tool_input, "new_string", "Edit")],
+            "removed": [_claude_string(tool_input, "old_string", "Edit")],
+        }
+        protocol_tool = hookproto.EDIT
+    request = {
+        "protocol": hookproto.VERSION,
+        "phase": hookproto.PRE,
+        "cwd": cwd,
+        "tool": protocol_tool,
+        "targets": [target],
+    }
+    return hookproto.parse_request(request).targets[0]
+
+
+def _claude_string(values: dict, key: str, label: str) -> str:
+    """Return an optional Claude string while rejecting a supplied non-string."""
+    if key not in values:
+        return ""
+    value = values[key]
+    if not isinstance(value, str):
+        raise hookproto.HookProtocolError(f"Claude Code {label}.{key} must be a string")
+    return value
+
+
+def _hook_pre(event: dict) -> int:
+    """Render the shared Pre outcome through Claude Code's permission surface."""
+    outcome = _hook_event_outcome(
+        _hook_repository(event.get("cwd")),
+        _claude_event(hookproto.PRE, event),
+    )
+    if outcome.kind is hookproto.OutcomeKind.APPROVAL_REQUIRED:
+        return _hook_ask_reason(outcome.reason)
+    if outcome.kind in {
+        hookproto.OutcomeKind.VIOLATION,
+        hookproto.OutcomeKind.UNVERIFIED,
+    }:
+        return _hook_deny_reason(outcome.reason)
+    return 0
 
 
 def _hook_post(event: dict) -> int:
-    """PostToolUse: the worktree-wide approvals wall first (for a Bash event and
-    every edit tool alike), then, for an edit tool, the diff-scoped lint arm.
-
-    The consistency check is tree-shaped (D011): an inconsistency planted anywhere
-    by any channel - a shelled-in marker, a committed-but-unapproved marker, an
-    orphaned manifest line - blocks the next hook event of any kind. An edit tool
-    reports it as the lint arm does (block lines on stderr, exit 2); a Bash event
-    has no edit target, so the wall is its only arm and a hit rides the existing
-    top-level `decision: block` JSON (exit 0).
-    """
-    root = _hook_repo_root(event)
-    if root is None:
+    """Render a landed Claude mutation without hiding policy violations."""
+    normalized = _claude_event(hookproto.POST, event)
+    outcome = _hook_event_outcome(
+        _hook_repository(event.get("cwd")),
+        normalized,
+    )
+    if outcome.kind is hookproto.OutcomeKind.UNVERIFIED:
+        return _hook_unverified(outcome)
+    if outcome.kind is not hookproto.OutcomeKind.VIOLATION:
         return 0
-    try:
-        # One snapshot for both the whole-tree wall and the diff-scoped lint arm.
-        snapshot = collect_snapshot(root)
-        # [1:] drops the lint-section header: the hook payload is the canonical
-        # block texts alone (render_blocks returns [] when clean).
-        blocks = approvals.render_blocks(_approvals_report(root, snapshot=snapshot))[1:]
-        target, tool_input = _hook_target(event)
-        if target is None:
-            # Bash / non-edit tool: the consistency wall is its only arm
-            if blocks:
-                print(json.dumps({"decision": "block", "reason": "\n".join(blocks)}))
-            return 0
-        if blocks:
-            for line in blocks:
-                sys.stderr.write(line + "\n")
-            return 2
-        rel = _hook_rel_strict(target, root)
-        if rel is None:
-            return 0
-        # Hook targets are literal files; CLI path-scope validation does not apply.
-        results, _warnings, _orphans = _lint_results(
-            root, _tackbox_root(), ".", no_cache=False, changed_scope={rel},
-            snapshot=snapshot, machine=True,
+    if not normalized.targets:
+        print(json.dumps({"decision": "block", "reason": outcome.reason}))
+        return 0
+    for line in outcome.reason.splitlines():
+        sys.stderr.write(line + "\n")
+    return 2
+
+
+def _hook_unverified(outcome: hookproto.Outcome) -> int:
+    """Write a non-blocking post diagnostic without treating it as a policy hit."""
+    if outcome.kind is not hookproto.OutcomeKind.UNVERIFIED:
+        return 0
+    text = outcome.reason
+    sys.stderr.write(text if text.endswith("\n") else text + "\n")
+    return 1
+
+
+def _hook_ask_reason(reason: str) -> int:
+    return _hook_permission_reason("ask", reason)
+
+
+def _hook_deny_reason(reason: str) -> int:
+    return _hook_permission_reason("deny", reason)
+
+
+def _hook_permission_reason(decision: str, reason: str) -> int:
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": decision,
+                    "permissionDecisionReason": reason,
+                }
+            }
         )
-        if results is None:
-            return 0  # scope matched no files
-        # A non-compiling Go package must block with a readable line, not a raw
-        # analyzer-load dump; checked before _located, which would raise on it.
+    )
+    return 0
+
+
+# -- Pre phase: the approval gates ----------------------------------------
+
+
+def _hook_pre_decision(
+    root: Path, event: hookproto.Event
+) -> hookproto.Outcome:
+    """Classify a Pre mutation; typed policy failures reach the shared boundary."""
+    if event.unknown:
+        return hookproto.Outcome(hookproto.OutcomeKind.UNVERIFIED, event.unknown)
+    reasons = _pre_gate_reasons(root, event)
+    if reasons:
+        return hookproto.Outcome(
+            hookproto.OutcomeKind.APPROVAL_REQUIRED,
+            "\n".join(reasons),
+        )
+    return hookproto.Outcome(hookproto.OutcomeKind.ALLOW)
+
+
+def _pre_gate_reasons(root: Path, event: hookproto.Event) -> list[str]:
+    """Return every user-approvable gate in deterministic target order."""
+    reasons: list[str] = []
+    ordinary: list[str] = []
+    for target in event.targets:
+        if _target_removes_root_dev_py(root, target):
+            reasons.append(
+                "remove or move root dev.py (disables the tackbox hook): dev.py"
+            )
+        gate = _gated_file(root, target.path)
+        if gate is not None:
+            reason = _named_gate_ask(gate, root, target)
+            if reason is not None:
+                reasons.append(reason)
+            continue
+        rel = _hook_rel_strict(target.path, root)
+        if rel is not None:
+            ordinary.append(rel)
+    if not ordinary:
+        return reasons
+    try:
+        attrs = resolve_attributes(root, ordinary)
+    except (
+        AttributeResolutionError,
+        OSError,
+        subprocess.SubprocessError,
+        proc.ChildStreamError,
+    ) as e:
+        raise HookInfrastructureError(f"cannot resolve target attributes: {e}") from e
+    for rel in ordinary:
+        excluded = attrs.get(rel)
+        if excluded:
+            reasons.append(
+                f"edit attribute-excluded file ({', '.join(excluded)}): {rel}"
+            )
+    return reasons
+
+
+def _removes_root_dev_py(root: Path, event: hookproto.Event) -> bool:
+    """True when an event declares the removal or move of the hook root."""
+    return any(_target_removes_root_dev_py(root, target) for target in event.targets)
+
+
+def _target_removes_root_dev_py(root: Path, target: hookproto.Target) -> bool:
+    """True when one declared source mutation would disable an active hook root."""
+    return (
+        target.operation in {hookproto.DELETE, hookproto.MOVE}
+        and not target.expected_present
+        and _same_path(target.path, root / "dev.py")
+    )
+
+
+def _gated_file(root: Path, path: Path) -> str | None:
+    """Which named gate owns `path` - the approval manifest, the reporters file, or
+    a `.gitattributes` - or None for an ordinary file. Attributes govern their
+    subtree, so a `.gitattributes` in any directory gates; root-only would be a
+    hole. The two `.tackbox/` files are root-only: a same-named file elsewhere
+    does not participate."""
+    if _same_path(path, root / approvals.FILENAME):
+        return approvals.FILENAME
+    if _same_path(path, root / reporters.FILENAME):
+        return reporters.FILENAME
+    if path.name == ".gitattributes":
+        return ".gitattributes"
+    return None
+
+
+def _named_gate_ask(
+    gate: str, root: Path, target: hookproto.Target
+) -> str | None:
+    """The ask for one named gate, or None when the change is free - a removal, or
+    a line that sets no honored attribute."""
+    if target.ambiguous:
+        return _UNCLASSIFIED.format(rel=_hook_rel(target.path, root))
+    added = _pre_added(target)
+    if gate == approvals.FILENAME:
+        return _manifest_ask(added)
+    if gate == reporters.FILENAME:
+        line = _reporters_added_line(added)
+        return None if line is None else f".tackbox/reporters line added: {line} ({gate})"
+    return _gitattributes_exclusion_ask(added)
+
+
+def _pre_added(target: hookproto.Target) -> Counter[str]:
+    """Return trim-normalized additions, failing closed when a full read fails."""
+    if target.content is None:
+        old, new = "\n".join(target.removed), "\n".join(target.added)
+        return _line_counter(new) - _line_counter(old)
+    try:
+        old = target.path.read_text(encoding="utf-8") if target.path.is_file() else ""
+    except (OSError, UnicodeDecodeError) as e:
+        raise HookFileError(
+            f"cannot read {target.path} before full replacement: {e}"
+        ) from e
+    return _line_counter(target.content) - _line_counter(old)
+
+
+def _line_counter(text: str) -> Counter[str]:
+    return Counter(s.strip() for s in text.splitlines() if s.strip())
+
+
+def _manifest_ask(added: Counter[str]) -> str | None:
+    """The manifest approval ask for the added `.tackbox/approvals` lines, or None
+    when the change adds no entry line (removals are free).
+
+    One call adding several entries draws ONE ask (the permission is per-call and
+    indivisible - approved or rejected atomically). Duplicate entries collapse to
+    one line with ` x<count>`; the header counts total occurrences. Entries are
+    listed in deterministic lexicographic line order."""
+    if not added:
+        return None
+    ordered = sorted(added)
+    total = sum(added.values())
+    if total == 1:
+        return f"approve suppression marker: {ordered[0]}"
+    header = (
+        f"approve {total} suppression markers (Allow = all, Deny = none;"
+        " re-add one by one to decide individually):"
+    )
+    body = [
+        f"  {line}" + (f" x{added[line]}" if added[line] > 1 else "") for line in ordered
+    ]
+    return "\n".join([header, *body])
+
+
+def _reporters_added_line(added: Counter[str]) -> str | None:
+    """The first added `.tackbox/reporters` line, or None when the change only
+    removes lines."""
+    return next(added.elements(), None)
+
+
+def _gitattributes_exclusion_ask(added: Counter[str]) -> str | None:
+    """The ask for added `.gitattributes` line(s) positively setting one of the
+    three honored attributes (bare `<attr>` or `<attr>=true`), or None when the
+    change adds none. Removals, `=false`, `-attr`, `!attr`, and non-exclusion
+    lines are free - only the widening direction gates. One call adding several
+    such lines draws ONE joint ask (the permission is per-call and indivisible),
+    lines listed in deterministic lexicographic order. Prediction is textual over
+    the added lines, a superset, and recognizes literal attribute names only (a
+    macro-referencing line is R2's plane)."""
+    exclusions = Counter(
+        {line: n for line, n in added.items() if _is_exclusion_line(line)}
+    )
+    if not exclusions:
+        return None
+    ordered = sorted(exclusions)
+    total = sum(exclusions.values())
+    if total == 1:
+        return f".gitattributes exclusion line added: {ordered[0]}"
+    header = (
+        f"add {total} .gitattributes exclusion lines (Allow = all, Deny = none;"
+        " re-add one by one to decide individually):"
+    )
+    body = [
+        f"  {ln}" + (f" x{exclusions[ln]}" if exclusions[ln] > 1 else "")
+        for ln in ordered
+    ]
+    return "\n".join([header, *body])
+
+
+def _is_exclusion_line(line: str) -> bool:
+    """True iff a `.gitattributes` line positively sets one of the three honored
+    attributes for its pattern. The first whitespace token is the pattern; a later
+    token that is a bare honored name or `<name>=true` sets it. `-name`, `!name`,
+    `<name>=false`, a comment, and a non-honored attribute do not."""
+    if line.startswith("#"):
+        return False
+    tokens = line.split()
+    for tok in tokens[1:]:
+        name, sep, value = tok.partition("=")
+        if name not in EXCLUSION_ATTRIBUTES:
+            continue
+        if sep == "" or value == "true":
+            return True
+    return False
+
+
+# -- Post phase: the consistency wall + the diff-scoped lint arm ----------
+
+
+def _hook_post_decision(
+    root: Path, event: hookproto.Event
+) -> hookproto.Outcome:
+    """Check the landed tree while keeping violations distinct from uncertainty."""
+    snapshot, blocks = _hook_snapshot_and_blocks(root)
+    if blocks:
+        if event.unknown:
+            blocks.append(f"verification uncertainty: tackbox hook: {event.unknown}")
+        return hookproto.Outcome(hookproto.OutcomeKind.VIOLATION, "\n".join(blocks))
+    if event.unknown:
+        return hookproto.Outcome(
+            hookproto.OutcomeKind.UNVERIFIED,
+            f"tackbox hook: {event.unknown}",
+        )
+    if not event.succeeded and not event.targets:
+        return hookproto.Outcome(hookproto.OutcomeKind.ALLOW)
+    scope = _post_scope(root, event)
+    if not scope.files:
+        return _with_scope_failures(
+            hookproto.Outcome(hookproto.OutcomeKind.ALLOW),
+            scope,
+        )
+    try:
+        results, _warnings, _orphans = _hook_lint_results(root, snapshot, scope.files)
+    except HookInfrastructureError as e:
+        raise _scoped_hook_error(e, scope) from e
+    if results is None:
+        return _with_scope_failures(
+            hookproto.Outcome(hookproto.OutcomeKind.ALLOW),
+            scope,
+        )
+    try:
         break_lines = _hook_compile_break(results)
-        if break_lines:
-            for line in break_lines:
-                sys.stderr.write(line + "\n")
-            return 2
+    except ValueError as e:
+        raise _scoped_hook_error(
+            HookInfrastructureError(f"cannot parse linter output: {e}"),
+            scope,
+        ) from e
+    if break_lines:
+        return _with_scope_failures(
+            hookproto.Outcome(
+                hookproto.OutcomeKind.VIOLATION,
+                "\n".join(break_lines),
+            ),
+            scope,
+        )
+    try:
         findings = _located(results, root)
+    except ValueError as e:
+        raise _scoped_hook_error(
+            HookInfrastructureError(f"cannot parse linter output: {e}"),
+            scope,
+        ) from e
+    if findings:
+        return _with_scope_failures(_hook_findings_outcome(findings, scope.files), scope)
+    return _with_scope_failures(_hook_infra_or_clean(results), scope)
+
+
+def _scoped_hook_error(
+    error: HookInfrastructureError, scope: HookPostScope
+) -> HookInfrastructureError:
+    """Attach prior target uncertainty before it reaches the shared boundary."""
+    if not scope.failures:
+        return error
+    return HookInfrastructureError(
+        f"{error}\nverification uncertainty: {'; '.join(scope.failures)}"
+    )
+
+
+def _hook_snapshot_and_blocks(root: Path) -> tuple[Snapshot, list[str]]:
+    """Build the one shared snapshot used by the wall and the scoped lint arm."""
+    try:
+        snapshot = collect_snapshot(root)
+        blocks = approvals.render_blocks(
+            _approvals_report(root, snapshot=snapshot)
+        )[1:]
+    except (
+        PathspecMagicError,
+        cache.GoListError,
+        reporters.ReportersError,
+        approvals.ApprovalsError,
+        scopes.ScopesError,
+        AttributeResolutionError,
+        EnginesStoreError,
+        OSError,
+        UnicodeDecodeError,
+        subprocess.SubprocessError,
+        proc.ChildStreamError,
+    ) as e:
+        raise HookInfrastructureError(f"cannot inspect the worktree: {e}") from e
+    return snapshot, blocks
+
+
+def _hook_lint_results(
+    root: Path, snapshot: Snapshot, scope: dict[str, set[int] | None]
+):
+    """Run hook-scoped engines and translate known runtime dependencies."""
+    try:
+        return _lint_results(
+            root,
+            _tackbox_root(),
+            ".",
+            no_cache=False,
+            changed_scope=set(scope),
+            snapshot=snapshot,
+            machine=True,
+        )
     except (
         PathspecMagicError,
         ChangedScopeError,
@@ -905,52 +1525,172 @@ def _hook_post(event: dict) -> int:
         scopes.ScopesError,
         AttributeResolutionError,
         EnginesStoreError,
-        subprocess.CalledProcessError,
-        ValueError,  # a non-compile erclint analyzer-load error
+        OSError,
+        UnicodeDecodeError,
+        subprocess.SubprocessError,
+        proc.ChildStreamError,
     ) as e:
-        # no-report: hook contract: infra error -> exit 1 + stderr, non-blocking
-        print(f"tackbox hook: {e}", file=sys.stderr)
-        return 1
+        raise HookInfrastructureError(f"cannot lint landed files: {e}") from e
 
-    if not findings:
-        return _hook_infra_or_clean(results)
 
-    on_diff, elsewhere = _partition_findings(
-        findings, rel, _affected_lines(event["tool_name"], tool_input, target)
-    )
-    if not on_diff:
-        return 0  # nothing on the edited lines; dev.py check owns the whole file
-    for f in on_diff:
-        sys.stderr.write(_finding_line(f) + "\n")
-    if elsewhere:
-        sys.stderr.write(
-            f"{len(elsewhere)} pre-existing elsewhere (dev.py check enforces)\n"
+def _post_scope(root: Path, event: hookproto.Event) -> HookPostScope:
+    """Build landed line scope while recording every failed verification edge."""
+    files: dict[str, set[int] | None] = {}
+    failures: list[str] = []
+    for target in event.targets:
+        if not target.expected_present:
+            continue
+        try:
+            rel = _hook_rel_strict(target.path, root)
+            if rel is None:
+                continue
+            affected, failure = _affected_for(target, rel)
+        except HookFileError as e:
+            # no-report: retain other targets while recording partial verification failure
+            failures.append(str(e))
+            continue
+        if failure is not None:
+            failures.append(failure)
+        if rel not in files:
+            files[rel] = affected
+            continue
+        prior = files[rel]
+        files[rel] = None if prior is None or affected is None else prior | affected
+    return HookPostScope(files, tuple(failures))
+
+
+def _affected_for(
+    target: hookproto.Target, rel: str
+) -> tuple[set[int] | None, str | None]:
+    """Return landed scope or raise a typed failure when it cannot be verified."""
+    if not target.path.is_file():
+        raise HookFileError(f"expected post file is absent: {rel}")
+    try:
+        text = target.path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        raise HookFileError(f"cannot read expected post file {rel}: {e}") from e
+    if target.content is not None or target.ambiguous:
+        return None, None
+    fragments = [fragment for fragment in target.added if fragment]
+    if not fragments:
+        return None, None
+    lines, missing = _span_lines(text, fragments)
+    if missing:
+        return (
+            None,
+            f"added fragment was not found in landed {rel}; lint widened to the whole file",
         )
-    return 2
+    return lines, None
 
 
-def _finding_line(f) -> str:
-    """`file:line: rule: message` hook line; message whitespace collapsed to
-    single spaces, `file:line: rule` when the engine carried no message."""
-    loc = f"{f.file}:{f.line}" if f.line is not None else (f.file or "?")
-    if f.message:
-        return f"{loc}: {f.rule}: {' '.join(f.message.split())}"
-    return f"{loc}: {f.rule}"
+def _span_lines(content: str, substrings: list[str]) -> tuple[set[int], bool]:
+    """Locate every added fragment and report whether any fragment was absent."""
+    lines: set[int] = set()
+    missing = False
+    for sub in substrings:
+        if not sub:
+            continue
+        start = 0
+        found = False
+        while (idx := content.find(sub, start)) >= 0:
+            found = True
+            first = content.count("\n", 0, idx) + 1
+            lines.update(range(first, first + sub.count("\n") + 1))
+            start = idx + 1
+        if not found:
+            missing = True
+    return lines, missing
+
+
+def _with_scope_failures(
+    outcome: hookproto.Outcome, scope: HookPostScope
+) -> hookproto.Outcome:
+    """Keep scope uncertainty visible without letting it hide a known violation."""
+    if not scope.failures:
+        return outcome
+    detail = "\n".join(scope.failures)
+    if outcome.kind is hookproto.OutcomeKind.VIOLATION:
+        return hookproto.Outcome(
+            hookproto.OutcomeKind.VIOLATION,
+            f"{outcome.reason}\nverification uncertainty: {detail}",
+        )
+    if outcome.kind is hookproto.OutcomeKind.UNVERIFIED:
+        return hookproto.Outcome(
+            hookproto.OutcomeKind.UNVERIFIED,
+            f"{outcome.reason}\n{detail}",
+        )
+    return hookproto.Outcome(hookproto.OutcomeKind.UNVERIFIED, detail)
+
+
+def _hook_findings_outcome(
+    findings: list, scope: dict[str, set[int] | None]
+) -> hookproto.Outcome:
+    """Findings on touched lines are violations; pre-existing findings are brief."""
+    on_diff, elsewhere = _partition_by_scope(findings, scope)
+    if not on_diff:
+        return hookproto.Outcome(hookproto.OutcomeKind.ALLOW)
+    lines = [_finding_line(finding) for finding in on_diff]
+    if elsewhere:
+        lines.append(f"{len(elsewhere)} pre-existing elsewhere (dev.py check enforces)")
+    return hookproto.Outcome(hookproto.OutcomeKind.VIOLATION, "\n".join(lines))
+
+
+def _partition_by_scope(
+    findings: list, scope: dict[str, set[int] | None]
+) -> tuple[list, list]:
+    """Split findings into touched and pre-existing locations."""
+    on_diff: list = []
+    elsewhere: list = []
+    for finding in findings:
+        if finding.file is None:
+            on_diff.append(finding)
+        elif finding.file not in scope:
+            elsewhere.append(finding)
+        elif (
+            (affected := scope[finding.file]) is None
+            or finding.line is None
+            or finding.line in affected
+        ):
+            on_diff.append(finding)
+        else:
+            elsewhere.append(finding)
+    return on_diff, elsewhere
+
+
+def _finding_line(finding) -> str:
+    """Render one stable hook finding line."""
+    loc = (
+        f"{finding.file}:{finding.line}"
+        if finding.line is not None
+        else (finding.file or "?")
+    )
+    if finding.message:
+        return f"{loc}: {finding.rule}: {' '.join(finding.message.split())}"
+    return f"{loc}: {finding.rule}"
 
 
 def _located(results: list, root: Path) -> list:
-    return [f for r in results for f in located_findings(r.engine_id, r.stdout, root)]
+    return [
+        finding
+        for result in results
+        for finding in located_findings(result.engine_id, result.stdout, root)
+    ]
 
 
-def _hook_infra_or_clean(results: list) -> int:
-    """No parseable findings: a nonzero engine exit is an infra failure (exit 1
-    plus its stderr); otherwise the scope is clean."""
+def _hook_infra_or_clean(results: list) -> hookproto.Outcome:
+    """Treat a nonzero engine without findings as unverified, never as clean."""
     if _aggregate_exit(results) == 0:
-        return 0
-    for r in results:
-        if r.exit_code != 0 and r.stderr.strip():
-            sys.stderr.write(r.stderr if r.stderr.endswith("\n") else r.stderr + "\n")
-    return 1
+        return hookproto.Outcome(hookproto.OutcomeKind.ALLOW)
+    parts = [
+        result.stderr.rstrip()
+        for result in results
+        if result.exit_code != 0 and result.stderr.strip()
+    ]
+    detail = "\n".join(parts) or "a linter exited nonzero without a diagnostic"
+    return hookproto.Outcome(
+        hookproto.OutcomeKind.UNVERIFIED,
+        f"tackbox hook: {detail}",
+    )
 
 
 _GO_COMPILE_ERR = re.compile(r"^[^/\s].*\.go:\d+:\d+: .")
@@ -980,244 +1720,37 @@ def _hook_compile_break(results: list) -> list[str]:
     return [f"package {p} does not compile; first error: {first}" for p in pkgs]
 
 
-def _affected_lines(tool_name: str, tool_input: dict, target: Path) -> set[int] | None:
-    """Line numbers the edit touched in the post-edit file, or None for the whole
-    file (Write leaves no pre-edit content to diff against).
-
-    Edit spans its new_string; MultiEdit unions every edit's new_string. Every
-    occurrence counts, so a coincidental repeat over-reports, never under-.
-    """
-    if tool_name == "Write":
-        return None
-    news = (
-        [e.get("new_string") or "" for e in tool_input.get("edits") or []]
-        if tool_name == "MultiEdit"
-        else [tool_input.get("new_string") or ""]
-    )
-    if not any(news):
-        return None  # no usable new_string -> whole file (over-report, never under)
-    return _span_lines(target.read_text(), news)
-
-
-def _span_lines(content: str, substrings: list[str]) -> set[int]:
-    lines: set[int] = set()
-    for sub in substrings:
-        if not sub:
-            continue
-        start = 0
-        while (idx := content.find(sub, start)) >= 0:
-            first = content.count("\n", 0, idx) + 1
-            lines.update(range(first, first + sub.count("\n") + 1))
-            start = idx + 1
-    return lines
-
-
-def _partition_findings(
-    findings: list, rel: str, affected: set[int] | None
-) -> tuple[list, list]:
-    """(on the edited diff, pre-existing elsewhere). An unknown location (file or
-    line None) over-reports as on-diff rather than being dropped."""
-    on_diff: list = []
-    elsewhere: list = []
-    for f in findings:
-        if f.file is None:
-            on_diff.append(f)
-        elif f.file != rel:
-            elsewhere.append(f)
-        elif affected is None or f.line is None or f.line in affected:
-            on_diff.append(f)
-        else:
-            elsewhere.append(f)
-    return on_diff, elsewhere
-
-
-def _hook_pre(event: dict) -> int:
-    """PreToolUse Edit/Write/MultiEdit: the manifest, reporters, and generated /
-    vendored exclusion gates. Adding a `.tackbox/approvals` line asks (quoting the
-    entry); adding a `.tackbox/reporters` line asks; adding a positive exclusion
-    line to any `.gitattributes` asks; editing an effective-excluded file asks.
-    Removals are free. Code markers no longer ask here - approval rides the
-    manifest, and an unapproved marker surfaces at the next Post consistency
-    event."""
-    root = _hook_repo_root(event)
-    if root is None:
-        return 0
-    target, tool_input = _hook_target(event)
-    if target is None:
-        return 0
-    old, new = _hook_pre_content(event["tool_name"], tool_input, target)
-
-    if _same_path(target, root / approvals.FILENAME):
-        ask = _manifest_ask(old, new)
-        return _hook_ask_reason(ask) if ask is not None else 0
-    if _same_path(target, root / reporters.FILENAME):
-        added = _reporters_added_line(old, new)
-        if added is not None:
-            return _hook_ask(
-                f".tackbox/reporters line added: {added}", _hook_rel(target, root)
-            )
-        return 0
-    # Attributes govern their subtree, so any-directory `.gitattributes` gates -
-    # root-only would be a hole.
-    if target.name == ".gitattributes":
-        ask = _gitattributes_exclusion_ask(old, new)
-        return _hook_ask_reason(ask) if ask is not None else 0
-    # The excluded population is exactly where lint, the marker inventory, and
-    # host diff review are all blind, so the agent's write channel into it is loud.
-    rel = _hook_rel_strict(target, root)
-    if rel is not None:
-        attrs = resolve_attributes(root, [rel]).get(rel)
-        if attrs:
-            return _hook_ask_reason(
-                f"edit attribute-excluded file ({', '.join(attrs)}): {rel}"
-            )
-    return 0
-
-
-def _gitattributes_exclusion_ask(old: str, new: str) -> str | None:
-    """The ask for a `.gitattributes` edit that adds line(s) positively setting one
-    of the three honored attributes (bare `<attr>` or `<attr>=true`), or None when
-    it adds none. Removals, `=false`, `-attr`, `!attr`, and non-exclusion lines are
-    free - only the widening direction gates. One edit adding several such lines
-    draws ONE joint ask (the permission is per-edit and indivisible), lines listed
-    in deterministic lexicographic order. Prediction is textual over the edit
-    fragment, a superset, and recognizes literal attribute names only (a
-    macro-referencing line is R2's plane)."""
-    old_c = Counter(s.strip() for s in old.splitlines() if s.strip())
-    new_c = Counter(s.strip() for s in new.splitlines() if s.strip())
-    added = Counter(
-        {ln: n for ln, n in (new_c - old_c).items() if _is_exclusion_line(ln)}
-    )
-    if not added:
-        return None
-    ordered = sorted(added)
-    total = sum(added.values())
-    if total == 1:
-        return f".gitattributes exclusion line added: {ordered[0]}"
-    header = (
-        f"add {total} .gitattributes exclusion lines (Allow = all, Deny = none;"
-        " re-add one by one to decide individually):"
-    )
-    body = [
-        f"  {ln}" + (f" x{added[ln]}" if added[ln] > 1 else "") for ln in ordered
-    ]
-    return "\n".join([header, *body])
-
-
-def _is_exclusion_line(line: str) -> bool:
-    """True iff a `.gitattributes` line positively sets one of the three honored
-    attributes for its pattern. The first whitespace token is the pattern; a later
-    token that is a bare honored name or `<name>=true` sets it. `-name`, `!name`,
-    `<name>=false`, a comment, and a non-honored attribute do not."""
-    if line.startswith("#"):
-        return False
-    tokens = line.split()
-    for tok in tokens[1:]:
-        name, sep, value = tok.partition("=")
-        if name not in EXCLUSION_ATTRIBUTES:
-            continue
-        if sep == "" or value == "true":
-            return True
-    return False
+# -- shared path helpers --------------------------------------------------
 
 
 def _hook_rel_strict(target: Path, root: Path) -> str | None:
-    """Repo-relative POSIX path for `target`, or None when it resolves outside the
-    repo. Shared by both hook arms so exact source-set matching and attribute
-    resolution use Git's forward-slash path spelling on every platform."""
+    """Return a repo-relative POSIX path, or None only for a real outside path."""
     try:
-        return target.resolve().relative_to(root.resolve()).as_posix()
-    except (ValueError, OSError):
-        # no-report: an outside or unresolvable target is not a repo-relative hook path
+        resolved_target = target.resolve()
+        resolved_root = root.resolve()
+    except OSError as e:
+        raise HookFileError(f"cannot resolve hook target {target}: {e}") from e
+    if not resolved_target.is_relative_to(resolved_root):
         return None
-
-
-def _hook_pre_content(tool_name: str, tool_input: dict, target: Path) -> tuple[str, str]:
-    """(old, new) content for the added-line diff.
-
-    Write compares against the file on disk (absent -> empty); Edit uses its
-    old/new strings; MultiEdit concatenates every edit's strings.
-    """
-    if tool_name == "Write":
-        old = target.read_text(encoding="utf-8") if target.is_file() else ""
-        return old, tool_input.get("content") or ""
-    if tool_name == "MultiEdit":
-        edits = tool_input.get("edits") or []
-        old = "\n".join(e.get("old_string") or "" for e in edits)
-        new = "\n".join(e.get("new_string") or "" for e in edits)
-        return old, new
-    return tool_input.get("old_string") or "", tool_input.get("new_string") or ""
-
-
-def _manifest_ask(old: str, new: str) -> str | None:
-    """The manifest approval ask for a proposed `.tackbox/approvals` edit, or None
-    when it adds no entry line (removals are free).
-
-    One edit adding several entries draws ONE ask (the permission is per-edit and
-    indivisible - approved or rejected atomically). Duplicate entries collapse to
-    one line with ` x<count>`; the header counts total occurrences. Entries are
-    listed in deterministic lexicographic line order."""
-    old_c = Counter(s.strip() for s in old.splitlines() if s.strip())
-    new_c = Counter(s.strip() for s in new.splitlines() if s.strip())
-    added = new_c - old_c
-    if not added:
-        return None
-    ordered = sorted(added)
-    total = sum(added.values())
-    if total == 1:
-        return f"approve suppression marker: {ordered[0]}"
-    header = (
-        f"approve {total} suppression markers (Allow = all, Deny = none;"
-        " re-add one by one to decide individually):"
-    )
-    body = [
-        f"  {line}" + (f" x{added[line]}" if added[line] > 1 else "") for line in ordered
-    ]
-    return "\n".join([header, *body])
-
-
-def _reporters_added_line(old: str, new: str) -> str | None:
-    """A `.tackbox/reporters` line in new but not old (trim-normalized), or
-    None when the change only removes lines."""
-    old_c = Counter(s.strip() for s in old.splitlines() if s.strip())
-    new_c = Counter(s.strip() for s in new.splitlines() if s.strip())
-    added = list((new_c - old_c).elements())
-    return added[0] if added else None
-
-
-def _hook_ask(reason: str, rel: str) -> int:
-    return _hook_ask_reason(f"{reason} ({rel})")
-
-
-def _hook_ask_reason(reason: str) -> int:
-    print(
-        json.dumps(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "ask",
-                    "permissionDecisionReason": reason,
-                }
-            }
-        )
-    )
-    return 0
+    return resolved_target.relative_to(resolved_root).as_posix()
 
 
 def _same_path(a: Path, b: Path) -> bool:
     try:
         return a.resolve() == b.resolve()
-    except OSError:
-        # no-report: unresolvable path is simply not the reporters file - guard
-        return False
+    except OSError as e:
+        raise HookFileError(f"cannot resolve hook path {a}: {e}") from e
 
 
 def _hook_rel(target: Path, root: Path) -> str:
     try:
-        return target.resolve().relative_to(root.resolve()).as_posix()
-    except (ValueError, OSError):
-        # no-report: unresolvable path - fall back to the raw target for the message
+        resolved_target = target.resolve()
+        resolved_root = root.resolve()
+    except OSError as e:
+        raise HookFileError(f"cannot resolve hook target {target}: {e}") from e
+    if not resolved_target.is_relative_to(resolved_root):
         return str(target)
+    return resolved_target.relative_to(resolved_root).as_posix()
 
 
 if __name__ == "__main__":

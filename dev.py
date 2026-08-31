@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -27,7 +28,9 @@ _PRUNE = {".git", ".claude", ".venv", "venv", "node_modules", "build", "dist", "
 
 
 def _run(cmd: list[str]) -> int:
-    return subprocess.run(cmd).returncode
+    # Windows CreateProcess has no PATHEXT: resolve npm/mvn to their .cmd shims.
+    exe = shutil.which(cmd[0])
+    return subprocess.run([exe, *cmd[1:]] if exe else cmd).returncode
 
 
 def _aggregate(codes: list[int]) -> int:
@@ -104,7 +107,7 @@ def test() -> int:
     # Python and Maven suites are auto-discovered (dev-script spec), so a new
     # nested project or pom is covered with no edit here. `mvn verify` also builds
     # the shaded javalint.jar the thin wheel ships. go/npm self-discover in-tree.
-    runners = [["go", "test", "-race", "-count=1", "./go/..."], ["npm", "test"]]
+    runners = [_go_test_argv(), ["npm", "test"]]
     runners += _python_runners()
     runners += _maven_runners()
     codes: list[int] = []
@@ -112,6 +115,15 @@ def test() -> int:
         print(f"dev.py: {shlex.join(cmd)}", flush=True)  # make each discovered suite visible
         codes.append(_run(cmd))
     return _aggregate(codes)
+
+
+def _go_test_argv() -> list[str]:
+    # The race detector needs cgo; a Windows box without gcc runs the suite
+    # without it (CI keeps -race), loudly rather than silently.
+    if sys.platform == "win32" and not shutil.which("gcc"):
+        print("dev.py: no cgo toolchain; go tests run without -race", flush=True)
+        return ["go", "test", "-count=1", "./go/..."]
+    return ["go", "test", "-race", "-count=1", "./go/..."]
 
 
 def e2e() -> int:

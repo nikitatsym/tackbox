@@ -1,10 +1,10 @@
-"""ARG_MAX safety: every engine hands its file/package list to the child through
+"""Long-argv safety: every engine hands its file/package list to the child through
 a list-file (go/node: --paths-from/--files-from) or a JDK @argfile (javalint),
 never as thousands of positional argv entries.
 
 The unit tests pin the argv shape plus the list-file content (order preserved);
-the adversarial test proves a >1 MB list spawns clean through the new mechanism,
-where the same list as raw argv would exceed ARG_MAX (E2BIG).
+the adversarial test proves a 1 MiB list spawns clean without becoming positional
+child-process argv.
 """
 
 from __future__ import annotations
@@ -33,6 +33,13 @@ def _herm(id_):
 
 def _lines(path: str) -> list[str]:
     return Path(path).read_text(encoding="utf-8").splitlines()
+
+# Every @argfile token is quoted: '#' starts a comment in the JDK argfile
+# grammar, and an unquoted space would split one path into two arguments.
+def _java_argfile_token(value: str | Path) -> str:
+    text = str(value)
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
 
 
 def _after(argv: list[str], flag: str) -> str:
@@ -82,6 +89,9 @@ def test_dev_opengrep_argv_uses_paths_from_not_positional(monkeypatch, tmp_path)
     assert _lines(_after(argv, "--paths-from")) == ["x.go", "y.go"]
 
 
+@pytest.mark.skipif(
+    os.name == "nt", reason="jscpd test stubs require POSIX shell execution"
+)
 def test_dev_jscpd_argv_uses_paths_from_not_positional(monkeypatch, tmp_path):
     _stub_go_binary(monkeypatch)
     jscpd = tmp_path / "jscpd"
@@ -108,6 +118,9 @@ def test_hermetic_opengrep_argv_uses_paths_from(tmp_path):
     assert _lines(_after(argv, "--paths-from")) == ["x.go"]
 
 
+@pytest.mark.skipif(
+    os.name == "nt", reason="jscpd test stubs require POSIX shell execution"
+)
 def test_hermetic_jscpd_argv_uses_paths_from(monkeypatch, tmp_path):
     # env override makes hermetic_engines_root() resolve without engines.json.
     store = tmp_path / "store"
@@ -316,11 +329,11 @@ def test_jscpd_preparation_unmappable_endpoints_get_explicit_empty_sidecar(
 def test_jscpd_preparation_huge_file_set_stays_off_inner_argv(
     monkeypatch, tmp_path
 ):
-    arg_max = os.sysconf("SC_ARG_MAX")
+    argv_budget = 1 << 20
     template = f"src/{'d' * 180}/file_{{i:06d}}.go"
     per_path = len(template.format(i=0)) + 1
-    paths = [template.format(i=i) for i in range(arg_max // per_path + 512)]
-    assert sum(len(path.encode()) + 1 for path in paths) > arg_max
+    paths = [template.format(i=i) for i in range(argv_budget // per_path + 512)]
+    assert sum(len(path.encode()) + 1 for path in paths) > argv_budget
 
     calls: list[list[str]] = []
     configs: list[dict] = []
@@ -385,23 +398,25 @@ def test_hermetic_mdlint_argv_uses_files_from(monkeypatch, tmp_path):
 
 
 def test_dev_javalint_argv_uses_argfile_not_positional(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        engines, "_built_javalint_jar", lambda root: Path("/fake/javalint.jar")
-    )
+    jar = Path("/fake/javalint.jar")
+    monkeypatch.setattr(engines, "_built_javalint_jar", lambda root: jar)
     argv = _dev("javalint").build_argv(
         Path("/repo"), Path("/tb"), ["A.java", "B.java"], (), tmp_path
     )
     assert argv[0] == "java"
     assert len(argv) == 2 and argv[1].startswith("@")
     assert "A.java" not in argv and "B.java" not in argv
-    # The whole invocation rides the argfile (expansion only happens in the
-    # launcher-options slot): -jar, jar path, then the files, each a quoted token.
     body = _lines(argv[1][1:])
-    assert body == ['"-jar"', '"/fake/javalint.jar"', '"A.java"', '"B.java"']
+    assert body == [
+        _java_argfile_token("-jar"),
+        _java_argfile_token(jar),
+        _java_argfile_token("A.java"),
+        _java_argfile_token("B.java"),
+    ]
 
 
 def test_hermetic_javalint_argfile_quotes_reporters_and_paths(tmp_path):
-    jar = str(engines._TACKBOX_PKG_ROOT / "bin" / "javalint.jar")
+    jar = engines._TACKBOX_PKG_ROOT / "bin" / "javalint.jar"
     argv = _herm("javalint").build_argv(
         Path("/repo"),
         Path("/tb"),
@@ -411,13 +426,11 @@ def test_hermetic_javalint_argfile_quotes_reporters_and_paths(tmp_path):
     )
     assert argv[0] == "java" and argv[1].startswith("@")
     body = _lines(argv[1][1:])
-    # '#' is the argfile comment char, so the reporters flag must be quoted; a
-    # space in a path must survive too.
     assert body == [
-        '"-jar"',
-        f'"{jar}"',
-        '"--reporters=Rep.java#Rep.report"',
-        '"dir with space/C.java"',
+        _java_argfile_token("-jar"),
+        _java_argfile_token(jar),
+        _java_argfile_token("--reporters=Rep.java#Rep.report"),
+        _java_argfile_token("dir with space/C.java"),
     ]
 
 
@@ -532,36 +545,47 @@ def test_pyrules_checker_cli_clean_file_exits_zero(tmp_path):
 # -- adversarial: >1 MB list spawns clean where raw argv would E2BIG -------
 
 
-def _stub_exit0(path: Path) -> None:
+def _stub_exit0(path: Path) -> Path:
+    if os.name == "nt":
+        path = path.with_suffix(".cmd")
+        path.write_text(
+            "@echo off\r\n"
+            "setlocal EnableDelayedExpansion\r\n"
+            "set /a count=0\r\n"
+            'for /f "usebackq delims=" %%L in ("%2") do set /a count+=1\r\n'
+            "echo !count!\r\n"
+            "exit /b 0\r\n",
+            encoding="utf-8",
+        )
+        return path
     path.write_text(
-        "#!/bin/sh\n# argv: <bin> --paths-from <listfile>; count the lines it holds\n"
-        'wc -l < "$2"\nexit 0\n',
+        "#!/bin/sh\n"
+        'wc -l < "$2"\n'
+        "exit 0\n",
         encoding="utf-8",
     )
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return path
 
 
-def test_listfile_spawn_survives_a_path_list_that_would_exceed_arg_max(
+def test_listfile_spawn_survives_a_path_list_larger_than_product_argv_budget(
     monkeypatch, tmp_path
 ):
-    # Enough long paths to exceed the PLATFORM's ARG_MAX (1 MiB on macOS, ~2 MiB
-    # on Linux runners - a fixed count is not adversarial everywhere); passed as
-    # raw argv this is the E2BIG crash the fix removes.
-    arg_max = os.sysconf("SC_ARG_MAX")
+    # One MiB exceeds both platform branches of the Go wrapper's argv budget.
+    stress_bytes = 1 << 20
     template = f"src/{'d' * 180}/file_{{i:06d}}.go"
     per_path = len(template.format(i=0)) + 1
-    paths = [template.format(i=i) for i in range(arg_max // per_path + 512)]
-    raw_bytes = sum(len(p.encode("utf-8")) + 1 for p in paths)
-    assert raw_bytes > arg_max, raw_bytes
+    paths = [template.format(i=i) for i in range(stress_bytes // per_path + 512)]
+    raw_bytes = sum(len(path.encode("utf-8")) + 1 for path in paths)
+    assert raw_bytes > stress_bytes, raw_bytes
 
-    stub = tmp_path / "stub-engine"
-    _stub_exit0(stub)
+    stub = _stub_exit0(tmp_path / "stub-engine")
     monkeypatch.setattr(engines, "_built_go_binary", lambda root, name: stub)
 
     argv = _dev("erclint-opengrep").build_argv(
         Path("/repo"), Path("/tb"), paths, (), tmp_path
     )
-    # The spawned argv itself is tiny - the list never touches the boundary.
+    # Only the list-file reference reaches the child process.
     spawn_bytes = sum(len(a.encode("utf-8")) + 1 for a in argv)
     assert spawn_bytes < 4096, spawn_bytes
 

@@ -76,7 +76,7 @@ def hermetic_venv(tmp_path_factory, wheels) -> Path:
         check=True, capture_output=True, text=True, env=env,
     )
     result = subprocess.run(
-        ["uv", "pip", "install", "--python", str(v / "bin" / "python"), str(wheels["thin"])],
+        ["uv", "pip", "install", "--python", str(_venv_bin(v, "python")), str(wheels["thin"])],
         capture_output=True, text=True, env=env,
     )
     if result.returncode != 0:
@@ -107,8 +107,15 @@ def fixture_repo(tmp_path_factory) -> Path:
     return root
 
 
+def _venv_bin(venv: Path, name: str) -> Path:
+    # POSIX venvs use bin/<name>; Windows venvs use Scripts/<name>.exe.
+    if os.name == "nt":
+        return venv / "Scripts" / f"{name}.exe"
+    return venv / "bin" / name
+
+
 def _tackbox(venv: Path) -> Path:
-    return venv / "bin" / "tackbox"
+    return _venv_bin(venv, "tackbox")
 
 
 def _hermetic_env(engines_payload: Path) -> dict:
@@ -301,4 +308,6 @@ def test_hermetic_banner_carries_engines_sha_and_versions(hermetic_venv, fixture
 
 
 def _site_packages(venv: Path) -> Path:
+    if os.name == "nt":
+        return venv / "Lib" / "site-packages"
     return next((venv / "lib").glob("python*/site-packages"))

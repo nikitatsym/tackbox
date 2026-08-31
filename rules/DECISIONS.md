@@ -580,7 +580,7 @@ resolution. A provenance firewall (attr.tree / `GIT_ATTR_SOURCE`
 detection, info/attributes and macro scans, carrier and index-state
 preflights) - rolled back deliberately: tackbox is a guardrail, not a
 security boundary (D011 A1), against the lazy agent every exotic path
-is dominated by the accepted Bash residual (R2), and the firewall's
+is dominated by the accepted opaque-channel residual (R2), and the firewall's
 false-positive surface (merge conflicts, sparse checkout) hit
 legitimate work.
 
@@ -604,10 +604,10 @@ CI-red (the wall holds, CI resolves from a fresh sanitized clone),
 local narrowing is merely stricter than CI, a committed macro applies
 identically both places; the doctor section names the sources, nothing
 blocks. (R2) the Pre asks cover only the Edit/Write/MultiEdit channel
-with literal attribute names; Bash, checkout, and merge can write into
-excluded targets or add/widen exclusion rules, and an Edit referencing
-a pre-existing macro widens without the ask - by design (no second
-manifest, no Bash parsing); the integrated change stays in the
+with literal attribute names; Bash, eval, unenumerated MCP tools, checkout,
+and merge can write into excluded targets or add/widen exclusion rules, and an
+Edit referencing a pre-existing macro widens without the ask - by design (no
+second manifest, no opaque-channel parsing); the integrated change stays in the
 commit/PR diff, the summary line and escapes name the population, and
 review owns the rest (hosts collapse excluded diffs - reviewers must
 expand them). (R3) textual Pre prediction over-asks on lookalikes
