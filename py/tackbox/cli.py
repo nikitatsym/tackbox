@@ -122,6 +122,11 @@ def _is_closed_stdout(error: OSError) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # cp1252 consoles (Windows default) cannot encode engine output glyphs;
+    # a crashed print must never masquerade as a lint verdict.
+    if os.name == "nt":
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     try:
         try:
             return _dispatch(argv)

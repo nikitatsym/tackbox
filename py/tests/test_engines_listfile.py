@@ -470,9 +470,9 @@ def _mdlint_run(engine, tmp_path):
     )
 
 
-def test_dev_mdlint_run_appends_repo_root_and_link_targets():
+def test_dev_mdlint_run_appends_repo_root_and_link_targets(tmp_path):
     run = _mdlint_run(_dev("tackbox-mdlint"), None)
-    argv = engines._link_target_argv(run, ["node", "wrapper", "--files-from", "L"], Path("/tmp"))
+    argv = engines._link_target_argv(run, ["node", "wrapper", "--files-from", "L"], tmp_path)
     assert argv[:4] == ["node", "wrapper", "--files-from", "L"]
     assert argv[argv.index("--repo-root") + 1] == str(Path("/repo"))
     assert "--link-targets-from" in argv

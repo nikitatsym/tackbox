@@ -1,0 +1,5 @@
+# No EOL conversion anywhere: committed bytes are the bytes on disk on every
+# platform. GitHub Windows runners set core.autocrlf=true globally, which
+# otherwise rewrites text files at checkout and breaks byte-hash contracts
+# (engines/lock.json pins the sha256 of engines/manifest.json).
+* -text
