@@ -189,6 +189,9 @@ def test_published_tarball_excludes_test_suites():
             check=True,
         )
         entries = json.loads(proc.stdout)
+        # npm <= 11 prints a list of packages; npm 12 keys them by name.
+        if isinstance(entries, dict):
+            entries = list(entries.values())
         paths = {f["path"] for f in entries[0]["files"]}
         leaked = sorted(p for p in paths if p.startswith("js/tests/"))
         assert not leaked, f"npm tarball must not ship test suites: {leaked}"
