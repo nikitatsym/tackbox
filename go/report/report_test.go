@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -45,6 +46,35 @@ func TestLocalLogCarriesTagsWhenCaptureDisabled(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "vault.unlock") {
 		t.Errorf("dedupKey leaked into local log: %q", buf.String())
+	}
+}
+
+// The default sink must follow a later os.Stderr replacement: a Windows
+// service points stderr at a log file after package init.
+func TestDefaultLoggerFollowsStderrReplacement(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "stderr-*.log")
+	if err != nil {
+		t.Fatalf("create temp: %v", err)
+	}
+	defer file.Close()
+	orig := os.Stderr
+	os.Stderr = file
+	prevLogger := logger
+	logger = newJSONLogger(stderrWriter{})
+	t.Cleanup(func() { os.Stderr = orig; logger = prevLogger })
+	if err := Init(Options{SilentMissing: true}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	Warn(context.Background(), "redirected", errors.New("boom"), map[string]string{"k": "v"}, "test.redirected")
+
+	data, err := os.ReadFile(file.Name())
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	rec := decodeLine(t, data)
+	if rec["msg"] != "redirected" || rec["err"] != "boom" {
+		t.Fatalf("log line = %s, want msg=redirected err=boom", data)
 	}
 }
 

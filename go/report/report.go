@@ -49,8 +49,16 @@ var (
 	rateWindow   = 60 * time.Second
 	flushTimeout = 2 * time.Second
 	lastSent     sync.Map
-	logger       = newJSONLogger(os.Stderr)
+	logger       = newJSONLogger(stderrWriter{})
 )
+
+// stderrWriter resolves os.Stderr on every write. A process that replaces
+// os.Stderr after init (a Windows service has no console handle, so it
+// points stderr at a log file) keeps report's local log without passing
+// Options.Logger.
+type stderrWriter struct{}
+
+func (stderrWriter) Write(p []byte) (int, error) { return os.Stderr.Write(p) }
 
 // levelFatal sits above slog's ERROR; renameFatalLevel prints it FATAL.
 const levelFatal = slog.LevelError + 4
