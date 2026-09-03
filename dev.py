@@ -88,7 +88,9 @@ def _python_runners(root: Path = _ROOT) -> list[list[str]]:
 
 
 def _maven_runners(root: Path = _ROOT) -> list[list[str]]:
-    return [["mvn", "-q", "-B", "-f", str(p), "verify"] for p in _maven_root_poms(root)]
+    # `clean` first: surefire reads test resources from target/, and a fixture
+    # deleted in source otherwise survives there as a phantom test case.
+    return [["mvn", "-q", "-B", "-f", str(p), "clean", "verify"] for p in _maven_root_poms(root)]
 
 
 def lint() -> int:
