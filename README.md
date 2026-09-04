@@ -877,3 +877,24 @@ docs/
 - Versioned via git tags (`vMAJOR.MINOR.PATCH`); CI auto-bumps the
   patch tag on every green push to `main` and publishes the wheels.
   Consumers track `@latest`, never a pinned version.
+
+### Working on tackbox
+
+Run `pre-commit install` (or `uvx pre-commit install`) once per checkout.
+The hook in `.pre-commit-config.yaml` runs `python3 dev.py check` on every
+commit, and CI runs the identical gate.
+
+The following host toolchains must be on `PATH`:
+
+- Go, pinned by `go.mod`;
+- Node 22 with npm; CI's Node version is in `.github/workflows/ci.yml`, while
+  the bundled engine's Node version is pinned in `engines/manifest.json`;
+- JDK 17 with Maven; the Java level and Maven configuration live in
+  `java/pom.xml`;
+- opengrep, pinned in `engines/manifest.json` and installed at that version
+  by CI;
+- uv, which is not version-pinned.
+
+Everything else - `node_modules`, Maven build output, Python virtual
+environments, and Go modules - is reproduced by `dev.py check`; nothing needs
+to be synchronized by hand.
