@@ -216,9 +216,21 @@ def test_real_repo_discovery_contract():
 
 
 
-def test_go_test_argv_uses_race_off_windows(monkeypatch):
-    monkeypatch.setattr(dev.sys, "platform", "linux")
-    assert "-race" in dev._go_test_argv()
+def test_test_fails_closed_without_gcc_on_windows(monkeypatch):
+    monkeypatch.setattr(dev, "_bootstrap", lambda: 0)
+    monkeypatch.setattr(dev.sys, "platform", "win32")
+    monkeypatch.setattr(dev.shutil, "which", lambda name: None)
+    ran = []
+    monkeypatch.setattr(dev, "_run", lambda cmd: ran.append(cmd) or 0)
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = dev.test()
+
+    assert rc == 2
+    assert ran == []
+    assert "install gcc" in buf.getvalue()
+    assert "go test -race" in buf.getvalue()
 
 
 def test_test_runs_every_discovered_runner_even_after_a_failure(monkeypatch):

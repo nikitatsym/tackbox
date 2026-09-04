@@ -129,6 +129,13 @@ def test() -> int:
     code = _bootstrap()
     if code != 0:
         return code
+    if sys.platform == "win32" and not shutil.which("gcc"):
+        print(
+            "dev.py: gcc is required on Windows for go test -race; "
+            "install gcc and ensure it is on PATH",
+            flush=True,
+        )
+        return 2
     # -count=1 disables the go test cache: golden tests build erclint via a
     # subprocess, so analyzer changes would not otherwise invalidate cached runs.
     # Python and Maven suites are auto-discovered (dev-script spec), so a new
@@ -145,11 +152,6 @@ def test() -> int:
 
 
 def _go_test_argv() -> list[str]:
-    # The race detector needs cgo; a Windows box without gcc runs the suite
-    # without it (CI keeps -race), loudly rather than silently.
-    if sys.platform == "win32" and not shutil.which("gcc"):
-        print("dev.py: no cgo toolchain; go tests run without -race", flush=True)
-        return ["go", "test", "-count=1", "./go/..."]
     return ["go", "test", "-race", "-count=1", "./go/..."]
 
 
