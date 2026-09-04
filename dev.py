@@ -2,9 +2,9 @@
 """tackbox dev script: lint / test / e2e / check (dev-script spec).
 
 One entry point for the same checks locally and in CI. `check` = lint +
-test and is what the pre-commit hook and CI run. Assumes the toolchain is
-present (go, node + npm deps, opengrep, uv, java >= 17 + maven); it
-orchestrates, it does not install.
+test and is what the pre-commit hook and CI run. Host toolchains are assumed
+present; repo-local dependency state (`node_modules`) is reproduced from the
+lock on every run.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent
+_bootstrapped = False
 
 # Dirs never walked for suites: VCS, virtualenvs, vendored deps, build output,
 # and engines/ (bundled third-party runtimes, not our tests). egg-info is pruned
@@ -35,7 +36,20 @@ os.environ["PYTHONUTF8"] = "1"
 def _run(cmd: list[str]) -> int:
     # Windows CreateProcess has no PATHEXT: resolve npm/mvn to their .cmd shims.
     exe = shutil.which(cmd[0])
-    return subprocess.run([exe, *cmd[1:]] if exe else cmd).returncode
+    return subprocess.run([exe, *cmd[1:]] if exe else cmd, cwd=_ROOT).returncode
+
+
+def _bootstrap() -> int:
+    global _bootstrapped
+    if _bootstrapped:
+        return 0
+    cmd = ["npm", "ci", "--no-audit", "--no-fund"]
+    print(f"dev.py: {shlex.join(cmd)}", flush=True)
+    code = _run(cmd)
+    if code != 0:
+        return code
+    _bootstrapped = True
+    return 0
 
 
 def _aggregate(codes: list[int]) -> int:
@@ -94,6 +108,9 @@ def _maven_runners(root: Path = _ROOT) -> list[list[str]]:
 
 
 def lint() -> int:
+    code = _bootstrap()
+    if code != 0:
+        return code
     # tackbox self-lint runs in-tree (dev mode), not `uvx tackbox@latest`: a
     # commit that changes a rule must be validated by that rule from the tree.
     return _aggregate(
@@ -109,6 +126,9 @@ def lint() -> int:
 
 
 def test() -> int:
+    code = _bootstrap()
+    if code != 0:
+        return code
     # -count=1 disables the go test cache: golden tests build erclint via a
     # subprocess, so analyzer changes would not otherwise invalidate cached runs.
     # Python and Maven suites are auto-discovered (dev-script spec), so a new

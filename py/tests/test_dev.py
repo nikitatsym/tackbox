@@ -60,6 +60,58 @@ def test_check_runs_test_even_when_lint_fails(monkeypatch):
     assert calls == ["lint", "test"]
 
 
+def _record_commands(monkeypatch, code=0):
+    monkeypatch.setattr(dev, "_bootstrapped", False)
+    monkeypatch.setattr(dev, "_python_runners", lambda: [])
+    monkeypatch.setattr(dev, "_maven_runners", lambda: [])
+    ran = []
+    monkeypatch.setattr(dev, "_run", lambda cmd: ran.append(cmd) or code)
+    return ran
+
+
+def test_check_bootstraps_once_before_the_first_lint_command(monkeypatch):
+    ran = _record_commands(monkeypatch)
+
+    assert dev.check() == 0
+    npm_ci = ["npm", "ci", "--no-audit", "--no-fund"]
+    assert ran[0] == npm_ci
+    assert ran.count(npm_ci) == 1
+    assert ran[1] == ["go", "build", "./go/..."]
+
+
+def test_lint_starts_with_npm_ci(monkeypatch):
+    ran = _record_commands(monkeypatch)
+
+    assert dev.lint() == 0
+    assert ran[0] == ["npm", "ci", "--no-audit", "--no-fund"]
+
+
+def test_test_starts_with_npm_ci(monkeypatch):
+    ran = _record_commands(monkeypatch)
+
+    assert dev.test() == 0
+    assert ran[0] == ["npm", "ci", "--no-audit", "--no-fund"]
+
+
+def test_failing_npm_ci_aborts_lint(monkeypatch):
+    ran = _record_commands(monkeypatch, code=1)
+
+    assert dev.lint() == 1
+    assert ran == [["npm", "ci", "--no-audit", "--no-fund"]]
+
+
+def test_run_pins_the_repo_root_as_cwd(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(dev.subprocess, "run", fake_run)
+    assert dev._run(["tool", "arg"]) == 0
+    assert calls == [(["tool", "arg"], {"cwd": dev._ROOT})]
+
+
 def test_unknown_command_exits_2():
     r = subprocess.run(
         [sys.executable, str(ROOT / "dev.py"), "bogus"], capture_output=True, text=True
@@ -175,6 +227,7 @@ def test_test_runs_every_discovered_runner_even_after_a_failure(monkeypatch):
     monkeypatch.setattr(dev, "_python_runners", lambda *a, **k: [["PY1"], ["PY2"]])
     monkeypatch.setattr(dev, "_maven_runners", lambda *a, **k: [["MV1"], ["MV2"]])
     ran = []
+    monkeypatch.setattr(dev, "_bootstrap", lambda: 0)
 
     def fake_run(cmd):
         ran.append(cmd)

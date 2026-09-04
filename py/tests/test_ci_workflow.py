@@ -77,3 +77,21 @@ def test_tag_job_does_not_use_default_token_on_checkout(workflow):
             "tag job checkout must not use GITHUB_TOKEN - "
             "publish.yml does not wake on tags pushed by GITHUB_TOKEN"
         )
+
+
+@pytest.mark.parametrize(
+    ("job_name", "check_command"),
+    [("test", "python3 dev.py check"), ("test-windows", "python dev.py check")],
+)
+def test_test_jobs_leave_npm_install_to_dev_py(workflow, job_name, check_command):
+    job = (workflow.get("jobs") or {}).get(job_name)
+    assert job, f"ci.yml must have a `{job_name}` job"
+    run_steps = [
+        step["run"]
+        for step in job.get("steps") or []
+        if isinstance(step, dict) and "run" in step
+    ]
+    assert len(run_steps) == 2
+    assert "opengrep" in run_steps[0] and "--version" in run_steps[0]
+    assert run_steps[1].strip() == check_command
+    assert all("npm " not in command for command in run_steps)
