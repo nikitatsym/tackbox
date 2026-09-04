@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import subprocess
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -64,6 +67,7 @@ def _record_commands(monkeypatch, code=0):
     monkeypatch.setattr(dev, "_bootstrapped", False)
     monkeypatch.setattr(dev, "_python_runners", lambda: [])
     monkeypatch.setattr(dev, "_maven_runners", lambda: [])
+    monkeypatch.setattr(dev, "_check_opengrep", lambda: 0)
     ran = []
     monkeypatch.setattr(dev, "_run", lambda cmd: ran.append(cmd) or code)
     return ran
@@ -110,6 +114,96 @@ def test_run_pins_the_repo_root_as_cwd(monkeypatch):
     monkeypatch.setattr(dev.subprocess, "run", fake_run)
     assert dev._run(["tool", "arg"]) == 0
     assert calls == [(["tool", "arg"], {"cwd": dev._ROOT})]
+
+
+def _capture_stdout(call):
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        code = call()
+    return code, buf.getvalue()
+
+
+def _unexpected_run(cmd):
+    pytest.fail(f"unexpected command: {cmd}")
+
+
+def _set_opengrep_version(monkeypatch, version):
+    monkeypatch.setattr(
+        dev,
+        "_opengrep_pin",
+        lambda: ("1.25.0", "https://example.invalid/opengrep"),
+    )
+    executable = None if version is None else "/opengrep"
+    monkeypatch.setattr(dev.shutil, "which", lambda name: executable)
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return subprocess.CompletedProcess(cmd, 0, stdout=f"{version}\n")
+
+    if executable:
+        monkeypatch.setattr(dev.subprocess, "run", fake_run)
+    return calls
+
+
+def test_matching_opengrep_version_runs_lint(monkeypatch):
+    monkeypatch.setattr(dev, "_bootstrap", lambda: 0)
+    calls = _set_opengrep_version(monkeypatch, "1.25.0")
+    monkeypatch.setattr(dev, "_run", lambda cmd: calls.append((cmd, {})) or 0)
+
+    assert dev.lint() == 0
+    commands = [cmd for cmd, _kwargs in calls]
+    assert commands[:2] == [
+        ["/opengrep", "--version"],
+        ["go", "build", "./go/..."],
+    ]
+    assert commands.count(["/opengrep", "--version"]) == 1
+
+
+@pytest.mark.parametrize(
+    ("version", "found"),
+    [("1.21.0", "1.21.0"), (None, "missing")],
+    ids=["mismatch", "missing"],
+)
+def test_unusable_opengrep_aborts_lint(monkeypatch, version, found):
+    monkeypatch.setattr(dev, "_bootstrap", lambda: 0)
+    version_calls = _set_opengrep_version(monkeypatch, version)
+    monkeypatch.setattr(dev, "_run", _unexpected_run)
+
+    rc, output = _capture_stdout(dev.lint)
+
+    assert rc == 2
+    assert len(version_calls) == (version is not None)
+    assert output == (
+        f"dev.py: opengrep version mismatch: found {found}, pinned 1.25.0; "
+        "install from https://example.invalid/opengrep\n"
+    )
+
+
+def test_opengrep_pin_is_read_from_the_manifest(tmp_path, monkeypatch):
+    entries = {
+        key: {
+            "opengrep": {
+                "version": "9.8.7",
+                "source_url": "https://example.invalid/9.8.7",
+            }
+        }
+        for key in (
+            "linux-x86_64",
+            "linux-aarch64",
+            "macos-aarch64",
+            "windows-x86_64",
+        )
+    }
+    manifest = tmp_path / "engines" / "manifest.json"
+    manifest.parent.mkdir()
+    manifest.write_text(json.dumps({"platforms": entries}))
+    monkeypatch.setattr(dev, "_ROOT", tmp_path)
+
+    assert dev._opengrep_pin() == (
+        "9.8.7",
+        "https://example.invalid/9.8.7",
+    )
 
 
 def test_unknown_command_exits_2():
@@ -220,17 +314,13 @@ def test_test_fails_closed_without_gcc_on_windows(monkeypatch):
     monkeypatch.setattr(dev, "_bootstrap", lambda: 0)
     monkeypatch.setattr(dev.sys, "platform", "win32")
     monkeypatch.setattr(dev.shutil, "which", lambda name: None)
-    ran = []
-    monkeypatch.setattr(dev, "_run", lambda cmd: ran.append(cmd) or 0)
+    monkeypatch.setattr(dev, "_run", _unexpected_run)
 
-    buf = io.StringIO()
-    with redirect_stdout(buf):
-        rc = dev.test()
+    rc, output = _capture_stdout(dev.test)
 
     assert rc == 2
-    assert ran == []
-    assert "install gcc" in buf.getvalue()
-    assert "go test -race" in buf.getvalue()
+    assert "install gcc" in output
+    assert "go test -race" in output
 
 
 def test_test_runs_every_discovered_runner_even_after_a_failure(monkeypatch):

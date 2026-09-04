@@ -9,7 +9,9 @@ lock on every run.
 
 from __future__ import annotations
 
+import json
 import os
+import platform
 import shlex
 import shutil
 import subprocess
@@ -51,6 +53,43 @@ def _bootstrap() -> int:
     _bootstrapped = True
     return 0
 
+
+def _opengrep_pin() -> tuple[str, str]:
+    system = sys.platform
+    if system.startswith("linux"):
+        system = "linux"
+    elif system.startswith("win") or system == "cygwin":
+        system = "windows"
+    elif system == "darwin":
+        system = "macos"
+    machine = platform.machine().lower()
+    machine = {"amd64": "x86_64", "arm64": "aarch64"}.get(machine, machine)
+    key = f"{system}-{machine}"
+    manifest = json.loads((_ROOT / "engines" / "manifest.json").read_text())
+    entry = manifest["platforms"][key]["opengrep"]
+    return entry["version"], entry["source_url"]
+
+
+def _check_opengrep() -> int:
+    pinned, source_url = _opengrep_pin()
+    executable = shutil.which("opengrep")
+    found = "missing"
+    if executable:
+        result = subprocess.run(
+            [executable, "--version"],
+            cwd=_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        found = result.stdout.strip() if result.returncode == 0 else f"exit {result.returncode}"
+    if found == pinned:
+        return 0
+    print(
+        f"dev.py: opengrep version mismatch: found {found}, pinned {pinned}; "
+        f"install from {source_url}",
+        flush=True,
+    )
+    return 2
 
 def _aggregate(codes: list[int]) -> int:
     return next((c for c in codes if c != 0), 0)
@@ -109,6 +148,9 @@ def _maven_runners(root: Path = _ROOT) -> list[list[str]]:
 
 def lint() -> int:
     code = _bootstrap()
+    if code != 0:
+        return code
+    code = _check_opengrep()
     if code != 0:
         return code
     # tackbox self-lint runs in-tree (dev mode), not `uvx tackbox@latest`: a
