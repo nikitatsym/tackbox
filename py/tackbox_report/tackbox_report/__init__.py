@@ -33,10 +33,10 @@ __all__ = [
 ]
 
 # ---------------------------------------------------------------------------
-# FATAL sits above CRITICAL for panic logs. addLevelName only adds a name
-# for 60; it does not rename CRITICAL.
+# FATAL sits above CRITICAL for panic logs. addLevelName only names
+# _LEVEL_FATAL; it does not rename CRITICAL.
 # ---------------------------------------------------------------------------
-_LEVEL_FATAL = logging.CRITICAL + 10  # 60
+_LEVEL_FATAL = logging.CRITICAL + 10
 logging.addLevelName(_LEVEL_FATAL, "FATAL")
 
 # Sentry level strings. The error/warning/fatal strings double as user-lane
@@ -394,8 +394,8 @@ def _log_at(
 
 
 def _should_drop(key: str) -> bool:
-    """In-memory 60s rate limit keyed by dedup_key. Empty key is never limited
-    (lets Sentry auto-group). Thread-safe."""
+    """In-memory rate limit over _rate_window, keyed by dedup_key. Empty key
+    is never limited (lets Sentry auto-group). Thread-safe."""
     if not key:
         return False
     now = time.monotonic()

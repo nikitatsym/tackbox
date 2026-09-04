@@ -114,7 +114,7 @@ def test_panic_logs_at_fatal_level(events, log):
 def test_rate_limit_drops_repeat_within_window(events):
     for _ in range(5):
         report.report_error("dup", None, None, "area.rl")
-    assert len(events) == 1  # 4 repeats dropped inside the 60s window
+    assert len(events) == 1  # the repeats are dropped inside _rate_window
 
 
 def test_distinct_keys_not_limited(events):
@@ -135,7 +135,7 @@ def test_rate_limit_reopens_after_window(events, monkeypatch):
     report.report_error("dup", None, None, "area.win")
     report.report_error("dup", None, None, "area.win")
     assert len(events) == 1
-    clock["t"] += 61.0  # advance past the 60s window
+    clock["t"] += 61.0  # advance past _rate_window
     report.report_error("dup", None, None, "area.win")
     assert len(events) == 2
 

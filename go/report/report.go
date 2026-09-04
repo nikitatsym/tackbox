@@ -25,8 +25,8 @@ type Options struct {
 	DSN          string
 	Release      string
 	Environment  string
-	FlushTimeout time.Duration // default 2s
-	RateWindow   time.Duration // default 60s
+	FlushTimeout time.Duration // zero keeps the flushTimeout default
+	RateWindow   time.Duration // zero keeps the rateWindow default
 	// Debug pipes sentry-go's transport diagnostics to stderr.
 	// Without it the SDK silently drops events that failed to ship.
 	Debug bool
@@ -35,7 +35,7 @@ type Options struct {
 	// times out. Glitchtip groups all healthchecks into one issue,
 	// so this never spams.
 	Verify        bool
-	VerifyTimeout time.Duration // default 3s
+	VerifyTimeout time.Duration // zero keeps defaultVerifyTimeout
 	// SilentMissing suppresses the WARN log on empty DSN.
 	SilentMissing bool
 	// Logger overrides the local log sink. Nil uses a JSON handler on
@@ -51,6 +51,10 @@ var (
 	lastSent     sync.Map
 	logger       = newJSONLogger(stderrWriter{})
 )
+
+// defaultVerifyTimeout bounds the startup healthcheck when Options leaves
+// VerifyTimeout unset.
+const defaultVerifyTimeout = 3 * time.Second
 
 // stderrWriter resolves os.Stderr on every write. A process that replaces
 // os.Stderr after init (a Windows service has no console handle, so it
@@ -108,7 +112,7 @@ func Init(opts Options) error {
 	if opts.Verify {
 		timeout := opts.VerifyTimeout
 		if timeout <= 0 {
-			timeout = 3 * time.Second
+			timeout = defaultVerifyTimeout
 		}
 		if err := Verify(timeout); err != nil {
 			return fmt.Errorf("report.Init verify: %w", err)

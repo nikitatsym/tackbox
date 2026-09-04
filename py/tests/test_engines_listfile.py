@@ -542,7 +542,7 @@ def test_pyrules_checker_cli_clean_file_exits_zero(tmp_path):
     assert r.stdout == ""
 
 
-# -- adversarial: >1 MB list spawns clean where raw argv would E2BIG -------
+# -- adversarial: an oversized list spawns clean where raw argv would E2BIG -
 
 
 def _stub_exit0(path: Path) -> Path:
@@ -571,7 +571,7 @@ def _stub_exit0(path: Path) -> Path:
 def test_listfile_spawn_survives_a_path_list_larger_than_product_argv_budget(
     monkeypatch, tmp_path
 ):
-    # One MiB exceeds both platform branches of the Go wrapper's argv budget.
+    # stress_bytes exceeds both platform branches of the Go wrapper's argv budget.
     stress_bytes = 1 << 20
     template = f"src/{'d' * 180}/file_{{i:06d}}.go"
     per_path = len(template.format(i=0)) + 1

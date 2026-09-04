@@ -348,9 +348,9 @@ def _check_binaries_start() -> CheckResult:
     failures: list[str] = []
     for name, argv, require_zero in probes:
         try:
-            # 120s: the probe checks startability, not latency - the first
-            # exec of a binary just unpacked into the store can sit behind
-            # the Windows antivirus scan far past any interactive timeout.
+            # The probe checks startability, not latency - the first exec of
+            # a binary just unpacked into the store can sit behind the
+            # Windows antivirus scan far past any interactive timeout.
             completed = proc.run_bytes(
                 argv, capture_output=True, timeout=120, env=env
             )
