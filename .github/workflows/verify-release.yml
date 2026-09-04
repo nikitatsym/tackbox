@@ -90,9 +90,10 @@ jobs:
 
       # The real command is its own convergence gate: a separate resolve probe
       # proves nothing about the next request (CDN edges flip-flop while the
-      # index converges). Repeat uvx ONLY while the failure is the definite
-      # not-yet-visible resolver error for this exact version; anything else
-      # fails immediately. --refresh bypasses cached tool installs on a re-run.
+      # index converges). Repeat uvx ONLY while the exact version, or this
+      # platform's independently uploaded wheel, is definitely not yet visible;
+      # anything else fails immediately. --refresh bypasses cached tool installs
+      # on a re-run.
       - name: uvx doctor (waits out index convergence)
         shell: bash
         working-directory: fixture-repo
@@ -110,8 +111,12 @@ jobs:
               echo "doctor green after $(((i - 1) * 10))s"
               exit 0
             fi
-            if ! printf '%s' "$out" | grep -q "No solution found" \
-               || ! printf '%s' "$out" | grep -q "no version of ${PIP_SPEC}"; then
+            if ! printf '%s' "$out" | grep -q "No solution found"; then
+              echo "$out"
+              exit "$rc"
+            fi
+            if ! printf '%s' "$out" | grep -q "no version of ${PIP_SPEC}" \
+               && ! printf '%s' "$out" | grep -q "${PIP_SPEC} has no wheels with a matching platform tag"; then
               echo "$out"
               exit "$rc"
             fi

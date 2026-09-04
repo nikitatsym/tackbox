@@ -340,15 +340,19 @@ def test_canary_uses_uvx_from_pypi(verify_workflow):
 def test_canary_convergence_gate_is_the_real_command(verify_workflow):
     """A separate resolve probe proves nothing about the next request (CDN
     edges flip-flop while the index converges): the doctor loop itself is the
-    gate, retrying only on the definite not-yet-visible resolver error, and
-    lint reuses the tool env doctor resolved - no second resolution to race."""
+    gate, retrying only when the exact version or its matching platform wheel
+    is not yet visible. Lint reuses the resolved tool env, so there is no second
+    resolution to race."""
     canary = _canary_job(verify_workflow["jobs"])
     text = _steps_text(canary["steps"])
     assert "uv pip compile" not in text, (
         "no separate resolve probe: the doctor loop is the convergence gate"
     )
     assert "No solution found" in text and "no version of" in text, (
-        "doctor must retry only on the exact not-yet-visible resolver error"
+        "doctor must retry when the exact release is not yet visible"
+    )
+    assert "has no wheels with a matching platform tag" in text, (
+        "doctor must retry when a partially converged release omits this platform wheel"
     )
     lint_runs = [
         str(s.get("run", ""))
@@ -386,6 +390,9 @@ def test_publish_verifies_the_exact_thin_wheel_before_release(workflow):
     text = _steps_text(canary.get("steps", []))
     assert "uvx --refresh" in text and "tackbox@${VERSION#v}" in text
     assert "hook-protocol" in text
+    assert "has no wheels with a matching platform tag" in text, (
+        "exact-wheel canary must retry a partially converged release"
+    )
     assert "actions/checkout" not in text, "canary must use a fresh runner"
     release = jobs.get("github-release")
     assert release is not None and release.get("needs") == "verify-thin"

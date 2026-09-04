@@ -356,8 +356,14 @@ jobs:
               echo "hook-protocol green after $(((i - 1) * 10))s"
               exit 0
             fi
-            if ! printf '%s' "$err" | grep -q "No solution found" \
-               || ! printf '%s' "$err" | grep -q "no version of tackbox==${VERSION#v}"; then
+            if ! printf '%s' "$err" | grep -q "No solution found"; then
+              printf '%s\n' "$err"
+              exit "$rc"
+            fi
+            # PyPI exposes a release as its wheels upload one by one. An index
+            # edge may therefore know the version but not this runner's wheel.
+            if ! printf '%s' "$err" | grep -q "no version of tackbox==${VERSION#v}" \
+               && ! printf '%s' "$err" | grep -q "tackbox==${VERSION#v} has no wheels with a matching platform tag"; then
               printf '%s\n' "$err"
               exit "$rc"
             fi
