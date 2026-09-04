@@ -26,7 +26,7 @@ var Analyzer = &analysis.Analyzer{
 
 func inspect(idx *markers.Index, pass *analysis.Pass, n ast.Node) bool {
 	// Type-gate: only an `if <err> != nil` guard of an error-assignable
-	// identifier is an err-branch. `if conn != nil` on a *net.Conn is not one.
+	// identifier is an err-branch; `if conn != nil` on a *net.Conn is not.
 	ifst, errIdent, ok := astutil.ErrBranch(pass.TypesInfo, n)
 	if !ok {
 		return true
@@ -35,8 +35,8 @@ func inspect(idx *markers.Index, pass *analysis.Pass, n ast.Node) bool {
 	if m, ok := idx.Above(ifst); ok && m.Kind == markers.NoReport {
 		return true
 	}
-	// errors.As aliases hold the same error object: a handle through an alias
-	// is a handle of the guarded error.
+	// errors.As aliases hold the same error object: a handle through an
+	// alias handles the guarded error.
 	aliases := astutil.ErrAliases(ifst.Body, errName)
 	if hasSilentPath(pass.TypesInfo, ifst.Body, aliases) {
 		pass.Reportf(ifst.Pos(),

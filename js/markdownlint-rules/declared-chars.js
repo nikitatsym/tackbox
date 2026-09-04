@@ -74,10 +74,8 @@ function findMarkers(tokens) {
   return found
 }
 
-// Validate the marker set; emit findings for a misplaced / duplicate / invalid
-// marker. Return the allowed set list for a single valid marker (to check
-// content against), or null (do not check content) for no marker or any invalid
-// one.
+// Validate the markers; emit findings for misplaced / duplicate / invalid ones.
+// Returns the allowed set list, or null to skip the content check.
 function resolveMarkers(markers, onError) {
   if (markers.length === 0) return null
   const markerErr = (m, detail) =>

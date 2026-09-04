@@ -44,7 +44,7 @@ def _repo(tmp_path: Path, attributes: str, files: dict[str, str]) -> Path:
     return tmp_path
 
 
-# -- resolve_attributes: exclusion semantics ------------------------------
+# -- resolve_attributes: exclusion semantics
 
 
 def test_marked_tracked_file_excluded(tmp_path):
@@ -153,7 +153,7 @@ def test_stdin_batching_over_large_list(tmp_path):
     assert len(lines) > 4096
 
 
-# -- resolve_attributes: sanitized invocation -----------------------------
+# -- resolve_attributes: sanitized invocation
 
 
 def test_global_attributes_file_ignored(tmp_path, monkeypatch):
@@ -207,7 +207,7 @@ def test_attr_tree_config_neutralized(tmp_path):
     assert resolved == {"late.go": ["linguist-generated"]}
 
 
-# -- resolve_attributes: not-on-disk + source revision (the seam contract) -
+# -- resolve_attributes: not-on-disk + source revision (the seam contract)
 
 
 def test_resolves_path_not_on_disk(tmp_path):
@@ -227,7 +227,7 @@ def test_source_revision_reports_rev_attributes_not_worktree(tmp_path):
     head = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True
     ).stdout.strip()
-    # Add a worktree-only exclusion after the commit.
+    # Worktree-only exclusion, added after the commit.
     (root / ".gitattributes").write_text(
         "committed.go linguist-generated\nlate.go linguist-generated\n"
     )
@@ -249,7 +249,7 @@ def test_empty_paths_no_subprocess(tmp_path, monkeypatch):
     assert resolve_attributes(tmp_path, []) == {}
 
 
-# -- adversarial: resolution failure / malformed output is loud -----------
+# -- adversarial: resolution failure / malformed output is loud
 
 
 def test_malformed_check_attr_output_is_infra_error(tmp_path, monkeypatch):
@@ -281,7 +281,7 @@ def test_resolution_error_is_not_called_process_error(tmp_path):
     assert not issubclass(AttributeResolutionError, subprocess.CalledProcessError)
 
 
-# -- collect_snapshot ------------------------------------------------------
+# -- collect_snapshot
 
 
 def test_snapshot_returns_included_excluded_pairs_and_warnings(tmp_path):

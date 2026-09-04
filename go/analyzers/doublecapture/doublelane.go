@@ -9,21 +9,21 @@ import (
 
 // doubleLane reports a capture call and a notify call that both run on one
 // execution path through the err-branch body (D006 double-lane): error/warn
-// already reach the user lane, so pairing a capture with a notify double-shows
-// the user. It is path-sensitive - a notify in one if/else or switch/select leg
-// and a capture in an exclusive leg do not pair, nor does a capture after a
-// notify+return. if/else and the case legs of switch/type-switch/select are
-// followed precisely (only one runs); loops stay opaque (a body may run with
-// both legs across iterations - keep pairing there). Returns the first such
-// (capture, notify) pairing, or (nil, nil).
+// already reach the user, so the pair double-shows. Path-sensitive - a
+// notify in one if/else or switch/select leg and a capture in an exclusive
+// leg do not pair, nor does a capture after a notify+return. if/else and
+// switch/type-switch/select case legs are followed precisely (only one
+// runs); loops stay opaque (a body may run with both legs across iterations
+// - keep pairing there). Returns the first (capture, notify) pairing, or
+// (nil, nil).
 func doubleLane(info *types.Info, body *ast.BlockStmt, errNames []string) (*ast.CallExpr, *ast.CallExpr) {
 	ls := &laneScan{info: info, errNames: errNames}
 	ls.walk(body.List, []laneState{{}})
 	return ls.foundCap, ls.foundNotify
 }
 
-// laneState tracks, for one live path prefix, the first capture and first
-// notify seen. Both non-nil means that path double-shows the user.
+// laneState tracks, for one live path prefix, the first capture and notify
+// seen. Both non-nil means that path double-shows the user.
 type laneState struct {
 	capture *ast.CallExpr
 	notify  *ast.CallExpr
@@ -36,8 +36,8 @@ type laneScan struct {
 	foundNotify *ast.CallExpr
 }
 
-// walk threads the incoming live states through a statement list, returning the
-// live states that fall through to its end. Short-circuits once a pairing fires.
+// walk threads the live states through a statement list and returns the
+// states falling through to its end; short-circuits once a pairing fires.
 func (ls *laneScan) walk(stmts []ast.Stmt, in []laneState) []laneState {
 	cur := in
 	for _, st := range stmts {
@@ -129,9 +129,9 @@ func (ls *laneScan) caseLegs(clauses []ast.Stmt, base []laneState) []laneState {
 	return dedupLanes(exits)
 }
 
-// mark scans node for the first capture and first notify call (funclit bodies
-// excluded) and applies them to every live state, recording a pairing when a
-// state now carries both.
+// mark finds the first capture and notify call in node (funclit bodies
+// excluded), applies them to every live state, and records a pairing when
+// a state now carries both.
 func (ls *laneScan) mark(node ast.Node, in []laneState) []laneState {
 	var capture, notify *ast.CallExpr
 	ast.Inspect(node, func(n ast.Node) bool {
@@ -195,8 +195,8 @@ func mergeLanes(a, b []laneState) []laneState {
 	return dedupLanes(append(append([]laneState{}, a...), b...))
 }
 
-// dedupLanes collapses states that agree on which lanes have fired - the two
-// booleans are all that matter, so at most four states survive.
+// dedupLanes collapses states that agree on which lanes have fired - only
+// the two booleans matter, so at most four survive.
 func dedupLanes(states []laneState) []laneState {
 	var out []laneState
 	seen := map[[2]bool]bool{}

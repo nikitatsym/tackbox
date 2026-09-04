@@ -1,9 +1,9 @@
 // Package notifygate implements ERC009: a go/report.Notify that terminates a
-// failure path must be narrowed. Go has no typed catch, so the narrowing gate
-// is structural - the notify must sit under an ADDITIONAL condition (an
+// failure path must be narrowed. Go has no typed catch, so the gate is
+// structural - the notify must sit under an ADDITIONAL condition (an
 // if / switch / select branch inside the err-branch), not stand as the
 // unconditional sole handling of the whole `if err != nil` branch. An
-// unconditional notify would route every failure to a toast and blind the
+// unconditional notify routes every failure to a toast and blinds the
 // telemetry the operator watches (D006); gate strength is proportional to
 // observability loss, and notify drops the only channel the operator sees.
 //

@@ -1,10 +1,10 @@
 """Wheels CI matrix spec: 5 platforms, per-platform runners, no cross-compile.
 
-Pins the shape of `.github/workflows/wheels.yml` so a silent drop of any
-platform (say, someone removing `linux-aarch64` because it's slow) turns
-the test suite red before the wheels ever ship. On-disk fixture-tree
-generation stays a runtime step (per handover #4); we assert the workflow
-calls the materialize script rather than duplicating fixture files.
+Pins the shape of `.github/workflows/wheels.yml` so a silent platform drop
+(say, removing `linux-aarch64` because it's slow) turns the suite red before
+the wheels ship. Fixture-tree generation stays a runtime step (per handover
+#4); these tests assert the workflow calls the materialize script instead of
+duplicating fixture files.
 """
 
 from __future__ import annotations

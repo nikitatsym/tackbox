@@ -61,7 +61,6 @@ function load() {
   return require(REPORT_PATH)
 }
 
-// module.exports pins the exact ordered reporting-only key list.
 test('module.exports is the exact ordered reporting-only key list', () => {
   const report = load()
   assert.deepEqual(Object.keys(report), [

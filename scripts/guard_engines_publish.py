@@ -2,19 +2,19 @@
 
 publish-fat uploads with skip-existing: true, so a re-run under an unchanged
 engines/VERSION is a no-op on PyPI. That is safe only while the payload is
-identical: thin pins store_sha256 = the fat payload tree-sha, and install-time
-verification refuses a fetched fat whose tree-sha differs. If an engineer edits
-a fat input without bumping engines/VERSION, skip-existing keeps the OLD fat on
-PyPI while the new thin ships pointing at the NEW tree-sha - every fresh install
-then hits a permanent EnginesStoreError.
+identical: thin pins store_sha256 (the fat payload tree-sha) and install-time
+verification refuses a fetched fat whose tree-sha differs. Editing a fat input
+without bumping engines/VERSION leaves skip-existing holding the OLD fat on
+PyPI while the new thin ships pointing at the NEW tree-sha - every fresh
+install then hits a permanent EnginesStoreError.
 
-This guard runs before the publish action. For each local fat wheel about to be
-published it finds the same-platform wheel already on PyPI (matched by exact
-filename, the same key skip-existing uses) and compares payload tree-shas with
-engines_payload_tree_sha256 - the exact digest install-time verification uses.
-A version/platform not yet published is a fresh upload (nothing to verify); an
-identical payload is a safe idempotent re-run; a changed payload is a hard fail.
-Because it checks the already-converged published version, no CDN wait is needed.
+This guard runs before the publish action: for each local fat wheel it finds
+the same-platform wheel already on PyPI (matched by exact filename, the same
+key skip-existing uses) and compares payload tree-shas with
+engines_payload_tree_sha256 - the exact digest install-time verification
+uses. Unpublished version/platform is a fresh upload; identical payload an
+idempotent re-run; changed payload a hard fail. No CDN wait needed: it
+checks the already-converged published version.
 """
 
 from __future__ import annotations
@@ -41,9 +41,9 @@ FRESH = "fresh"
 MATCH = "match"
 MISMATCH = "mismatch"
 
-# GET returning (status, body). A 404 (package or version not yet on PyPI) comes
-# back as a status, not an exception, so it is ordinary control flow; a genuine
-# transport failure (DNS, TLS, refused) still raises loudly from .open().
+# GET returning (status, body). A 404 (package or version not yet on PyPI)
+# comes back as a status, not an exception - ordinary control flow; transport
+# failures (DNS, TLS, refused) still raise from .open().
 HttpGet = Callable[[str], "tuple[int, bytes]"]
 # (PyPI file entry, workdir) -> downloaded wheel path.
 Downloader = Callable[[dict, Path], Path]

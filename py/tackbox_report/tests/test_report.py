@@ -15,9 +15,7 @@ import tackbox_report as report
 from conftest import records
 
 
-# --------------------------------------------------------------------------
-# public surface: reporting verbs only
-# --------------------------------------------------------------------------
+# -- public surface: reporting verbs only
 def test_public_api_is_reporting_only():
     assert report.__all__ == [
         "ReportError",
@@ -37,9 +35,7 @@ def test_public_api_is_reporting_only():
     ]
 
 
-# --------------------------------------------------------------------------
-# init: empty DSN = log-only no-op
-# --------------------------------------------------------------------------
+# -- init: empty DSN = log-only no-op
 def test_init_empty_dsn_is_log_only_noop(log):
     report._reset_for_test()
     report.init("", logger=log)
@@ -67,9 +63,7 @@ def test_dsn_from_env(monkeypatch):
     assert report.dsn_from_env() == "https://k@h/1"  # SENTRY_DSN wins
 
 
-# --------------------------------------------------------------------------
-# capture core: level, fingerprint, tags, msg context
-# --------------------------------------------------------------------------
+# -- capture core: level, fingerprint, tags, msg context
 def test_report_error_shape(events):
     report.report_error("db down", ValueError("no conn"), {"db": "main"}, "vault.save")
     assert len(events) == 1
@@ -99,9 +93,7 @@ def test_report_panic_non_exception_value(events):
     assert events[0]["fingerprint"] == ["panic:worker"]
 
 
-# --------------------------------------------------------------------------
-# log-before-drop invariant
-# --------------------------------------------------------------------------
+# -- log-before-drop invariant
 def test_log_runs_before_rate_limit_drop(events, log):
     report.report_error("first", None, None, "area.dup")
     report.report_error("second", None, None, "area.dup")  # dropped by rate limit
@@ -118,9 +110,7 @@ def test_panic_logs_at_fatal_level(events, log):
     assert fatal[0].getMessage() == "panic in t"
 
 
-# --------------------------------------------------------------------------
-# rate limit
-# --------------------------------------------------------------------------
+# -- rate limit
 def test_rate_limit_drops_repeat_within_window(events):
     for _ in range(5):
         report.report_error("dup", None, None, "area.rl")
@@ -176,9 +166,7 @@ def test_concurrent_captures_no_scope_bleed(events):
         assert e["fingerprint"] == [f"area.k{worker_id[1:]}"]
 
 
-# --------------------------------------------------------------------------
-# user lane: report* -> notifier (always); quiet -> none; notify -> no capture
-# --------------------------------------------------------------------------
+# -- user lane: report* -> notifier (always); quiet -> none; notify -> no capture
 @pytest.fixture
 def notices():
     """Record every Notice the registered notifier receives; clear on teardown."""

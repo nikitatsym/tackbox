@@ -3,15 +3,14 @@
 The lock pins engines/VERSION together with sha256 of the two files that
 describe the engine payload:
 
-- engines/manifest.json      (node/opengrep versions + urls)
+- engines/manifest.json             (node/opengrep versions + urls)
 - engines/vendor/package-lock.json  (npm resolution)
 
-Bumping any of these without also bumping engines/VERSION would silently
-change the payload under the same fat wheel version pin in thin's METADATA
-- new engines shipping under an unchanged Requires-Dist. `--check` runs
-in the publish workflow before any wheel touches PyPI; `--write`
-regenerates the lock after an engineer bumps engines/VERSION or edits an
-engine source.
+Bumping either without bumping engines/VERSION would silently change the
+payload under the same fat wheel version pin in thin's METADATA - new
+engines shipping under an unchanged Requires-Dist. `--check` runs in the
+publish workflow before any wheel touches PyPI; `--write` regenerates the
+lock after a version bump or engine-source edit.
 """
 
 from __future__ import annotations

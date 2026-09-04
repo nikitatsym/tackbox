@@ -174,10 +174,9 @@ def _sort_key_entry(entry: Entry) -> tuple[str, str, str]:
 
 def check(root: Path, files: list[str], marker_re: re.Pattern[str],
           is_lintable) -> Report:
-    """Resolve the whole tree's marker inventory, load approvals, and report
-    uncovered markers, orphaned entries, and unresolvable files. Deterministic
-    order (path, chain, text). `files` is the whole-tree source set; the
-    approvals check always covers it regardless of any lint scope."""
+    """Uncovered markers, orphaned entries, and unresolvable files, in
+    deterministic (path, chain, text) order. `files` is the whole-tree source
+    set; the approvals check always covers it regardless of any lint scope."""
     parsed = parse((root / FILENAME).read_text(encoding="utf-8")) if (root / FILENAME).is_file() else []
 
     manifest_paths = {split_address(e.address)[0] for e, _ln in parsed}

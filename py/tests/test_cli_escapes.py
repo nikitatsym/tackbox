@@ -57,7 +57,7 @@ def _find(doc: dict, kind: str, file: str, needle: str) -> dict | None:
     return None
 
 
-# -- fixtures for the full inventory --------------------------------------
+# -- fixtures for the full inventory
 
 # Five keyword markers, one per line, lines 3..7 (line 1 package, line 2 blank).
 MARKERS_GO = (
@@ -309,7 +309,7 @@ def test_verb_word_boundaries(tmp_path):
     assert doc["counts"]["quiet-site"] == 0
 
 
-# -- attribute-excluded entries (schema v2) -------------------------------
+# -- attribute-excluded entries (schema v2)
 
 
 def _attr_entries(doc: dict) -> set[tuple[str, str]]:
@@ -384,7 +384,7 @@ def test_mixed_entry_total_ordering_is_stable(tmp_path):
     assert [e["line"] for e in z_markers] == [2, 5]  # (line, text) subkey
 
 
-# -- attr-aware --since ----------------------------------------------------
+# -- attr-aware --since
 
 
 def test_since_attribute_added_reports_newly_excluded(tmp_path):

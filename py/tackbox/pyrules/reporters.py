@@ -22,9 +22,8 @@ def resolve_declared(
     """Validate every `(file, func)` declaration, scope-independent.
 
     Returns (reporter names, None) when all resolve, or (empty, (file, func))
-    for the first declaration whose function has no module-level def - the
-    caller turns that dead symbol into a hard exit. Returning rather than
-    raising keeps the caller free of an except handler of its own.
+    for the first dead symbol - the caller turns that into a hard exit.
+    Returning rather than raising keeps the caller free of an except handler.
     """
     names: set[str] = set()
     for file, func in specs:

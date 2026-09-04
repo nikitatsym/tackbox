@@ -12,9 +12,8 @@ import ast
 
 _PACKAGE = "tackbox_report"
 
-# The five recognized verbs. report_error/report_warn/report_quiet/report_panic
-# are captures; notify is user-lane-only. This resolver only reports which verb
-# a call site resolves to - the checker splits capture from notify.
+# The four report_* verbs are captures; notify is user-lane-only. This resolver
+# only names the verb a call resolves to - the checker splits capture/notify.
 VERBS = frozenset(
     {"report_error", "report_warn", "report_quiet", "report_panic", "notify"}
 )
@@ -330,8 +329,7 @@ class _Resolver:
                 self._resolve_here(case.guard, state)
                 self._scan(case.body, state)
             return
-        # simple statement (Expr / Return / Raise / Assert / ...): resolve its
-        # direct expression children at the current state.
+        # Any other statement: resolve its direct expression children.
         for e in ast.iter_child_nodes(stmt):
             if isinstance(e, ast.expr):
                 self._resolve_here(e, state)

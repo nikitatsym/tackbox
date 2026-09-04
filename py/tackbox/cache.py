@@ -169,10 +169,9 @@ def gc_stale_engines(current: str, root: Path) -> None:
 
 
 def gc_soft_cap(engines_hash: str, cap: int, root: Path) -> None:
-    """Trim markers in the current dir when the count exceeds `cap`.
+    """Trim markers in the current dir when the count exceeds `cap`, oldest first.
 
-    Sort by mtime ascending; drop from the front until at or under cap. Files
-    that vanish under us (concurrent run) are ignored - GC never blocks.
+    Files that vanish under us (concurrent run) are ignored - GC never blocks.
     """
     d = root / engines_hash
     if not d.is_dir():
@@ -211,14 +210,10 @@ def erclint_package_digests(
 ) -> dict[str, str]:
     """Compute {package_dir: unit_digest} for erclint units.
 
-    Packages are grouped by their nearest enclosing go.mod and digested
-    per module: `go list -deps -json` runs with cwd at the module root,
-    and the module's own go.mod / go.sum enter the digest, so invalidation
-    never crosses a module boundary. Each package's own .go files hash
-    together with the .go files of its transitive in-module deps.
-
-    `policy` (the reporter-policy digest) folds into every package digest, so a
-    `.tackbox/reporters` change invalidates the packages it can affect.
+    Packages digest per their nearest enclosing go.mod, so invalidation never
+    crosses a module boundary. `policy` (the reporter-policy digest) folds
+    into every package digest, so a `.tackbox/reporters` change invalidates
+    the packages it can affect.
 
     Missing / not-a-package / no-enclosing-module entries are dropped from
     the returned map; the caller decides what to do (usually: skip caching

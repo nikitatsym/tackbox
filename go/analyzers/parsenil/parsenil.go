@@ -24,8 +24,8 @@ var Analyzer = &analysis.Analyzer{
 	Run:  markers.Runner(inspect),
 }
 
-// Identifiers are matched syntactically by their qualified package
-// name. Aliased imports or dot-imports are not resolved.
+// Identifiers are matched syntactically by qualified package name;
+// aliased imports and dot-imports are not resolved.
 var parsers = map[string]bool{
 	"json.Unmarshal":       true,
 	"xml.Unmarshal":        true,
@@ -43,8 +43,8 @@ var parsers = map[string]bool{
 	"net.ParseIP":          true,
 }
 
-// net.ParseIP returns a single value (net.IP) and signals failure
-// by returning nil. Treated separately from error-returning parsers.
+// net.ParseIP returns a single value (net.IP) and signals failure by
+// returning nil; treated separately from error-returning parsers.
 const parseIP = "net.ParseIP"
 
 func inspect(idx *markers.Index, pass *analysis.Pass, n ast.Node) bool {

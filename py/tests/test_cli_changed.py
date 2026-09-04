@@ -77,7 +77,7 @@ def _run_tackbox(
     )
 
 
-# -- --changed with an empty dirty tree ------------------------------------
+# -- --changed with an empty dirty tree
 
 
 def test_changed_on_clean_repo_reports_empty_scope(tmp_path):
@@ -95,7 +95,7 @@ def test_changed_on_clean_repo_reports_empty_scope(tmp_path):
     assert "matched no files" in r.stderr
 
 
-# -- --changed picks up each dirty-tree category --------------------------
+# -- --changed picks up each dirty-tree category
 
 
 def test_changed_picks_up_staged_file(tmp_path):
@@ -139,7 +139,6 @@ def test_changed_picks_up_untracked_file(tmp_path):
     commit_all(tmp_path)
 
     (tmp_path / "extra.md").write_text(MD_VIOLATE)
-    # extra.md is not tracked.
 
     r = _run_tackbox(tmp_path, "--changed")
     assert r.returncode == 1, (
@@ -171,7 +170,7 @@ def test_changed_excludes_committed_but_unmodified_files(tmp_path):
     assert "old-violation.md" not in r.stdout
 
 
-# -- --changed intersects with positional path ----------------------------
+# -- --changed intersects with positional path
 
 
 def test_changed_intersects_with_path_prefix(tmp_path):
@@ -185,7 +184,6 @@ def test_changed_intersects_with_path_prefix(tmp_path):
     init_repo(tmp_path)
     commit_all(tmp_path)
 
-    # Both files are dirty with violations.
     (tmp_path / "src" / "notes.md").write_text(MD_VIOLATE)
     (tmp_path / "docs" / "notes.md").write_text(MD_VIOLATE)
 
@@ -197,7 +195,7 @@ def test_changed_intersects_with_path_prefix(tmp_path):
     assert "src/notes.md" not in r.stdout
 
 
-# -- --changed with .go: package expansion --------------------------------
+# -- --changed with .go: package expansion
 
 
 def test_changed_go_file_expands_to_containing_package(tmp_path):
@@ -225,7 +223,7 @@ def test_changed_go_file_expands_to_containing_package(tmp_path):
     assert "violate.go" in r.stdout
 
 
-# -- --since=<ref>: three-dot semantics -----------------------------------
+# -- --since=<ref>: three-dot semantics
 
 
 def _setup_forked_repo(tmp_path: Path) -> Path:
@@ -344,7 +342,7 @@ def test_changed_and_since_together_equals_since_alone(tmp_path):
     assert sorted(only_since.stdout.splitlines()) == sorted(both.stdout.splitlines())
 
 
-# -- Flag parsing ---------------------------------------------------------
+# -- Flag parsing
 
 
 def test_since_requires_a_value(tmp_path):

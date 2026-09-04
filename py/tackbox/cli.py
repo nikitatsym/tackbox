@@ -337,8 +337,7 @@ def _lint_results(
     if is_hermetic():
         ensure_engines()
 
-    # Self-lint: tackbox lints itself. Cache is disabled so tackbox never
-    # self-caches its own bugs.
+    # Self-lint: tackbox never self-caches its own bugs.
     if tackbox_root.resolve() == repo_root.resolve():
         no_cache = True
 
@@ -462,10 +461,10 @@ def _run_lint(
 
 
 def _approvals_report(repo_root: Path, snapshot: Snapshot | None = None) -> approvals.Report:
-    """The whole-tree consistency report (D014/D015): resolve every marker to an
-    address, load the manifest, and pair them. Always whole-tree. Runs over the
-    snapshot's included files, so an attribute-excluded file's markers leave the
-    inventory (D012 cascade) and a manifest entry addressing it orphans."""
+    """The whole-tree consistency report (D014/D015). Always whole-tree: runs
+    over the snapshot's included files, so an attribute-excluded file's markers
+    leave the inventory (D012 cascade) and a manifest entry addressing it
+    orphans."""
     if snapshot is None:
         snapshot = collect_snapshot(repo_root)
     engines = active_engines()

@@ -94,7 +94,7 @@ def two_engine_repo(tmp_path_factory) -> Path:
     return root
 
 
-# --------- Golden --------------------------------------------------------
+# -- Golden
 
 
 def test_codequality_report_matches_golden(two_engine_repo, tmp_path):
@@ -123,7 +123,7 @@ def test_flag_does_not_change_exit_code(two_engine_repo, tmp_path):
     assert out.is_file()
 
 
-# --------- approvals findings + fingerprint override seam ----------------
+# -- approvals findings + fingerprint override seam
 
 
 def test_fingerprint_override_seam():
@@ -197,7 +197,7 @@ def test_codequality_approvals_multiplicity_and_orphan(tmp_path):
     ]
 
 
-# --------- Adversarial ---------------------------------------------------
+# -- Adversarial
 
 
 @pytest.fixture(scope="module")
@@ -226,7 +226,7 @@ def test_unwritable_path_fails_loudly(two_engine_repo, tmp_path):
     assert "no_such_dir" in result.stderr
 
 
-# --------- Unit: report shape --------------------------------------------
+# -- Unit: report shape
 
 
 def test_build_report_dup_rule_is_duplication_category():

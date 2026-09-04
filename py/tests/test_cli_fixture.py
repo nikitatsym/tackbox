@@ -254,7 +254,7 @@ def _normalize(text: str, fixture_repo: Path) -> str:
     return text.replace(str(fixture_repo), FIXTURE_MARKER)
 
 
-# --------- Acceptance ----------------------------------------------------
+# -- Acceptance
 
 
 def test_exit_code_is_nonzero_when_any_engine_finds_violations(fixture_repo):
@@ -391,7 +391,7 @@ def test_scoped_go_only_run_promotes_erclint_findings(fixture_repo):
     assert "ERC001" in sections["erclint"]
 
 
-# --------- Migrated / new rules (step B1) --------------------------------
+# -- Migrated / new rules (step B1)
 
 
 def _nows(text: str) -> str:

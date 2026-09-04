@@ -1,8 +1,8 @@
 """Build tackbox thin/fat wheels for the current platform.
 
-Populates engines/src/tackbox_engines/ and py/tackbox/ from local
-sources plus assets fetched per engines/manifest.json, then invokes
-`python -m build --wheel` for each package with platform tagging.
+Populates engines/src/tackbox_engines/ and py/tackbox/ from local sources
+plus assets fetched per engines/manifest.json, then runs
+`python -m build --wheel` per package with platform tagging.
 """
 
 from __future__ import annotations
@@ -126,9 +126,9 @@ def copy_binary(src: Path, dest: Path) -> None:
 def build_javalint_jar() -> Path:
     """Build the shaded, platform-independent javalint.jar via maven.
 
-    The jar rides in the thin wheel (one build per platform run; the bytes are
-    arch-independent). Tests already ran in dev.py check, so packaging skips
-    them here.
+    The jar rides in the thin wheel (one build per platform run; the bytes
+    are arch-independent). Tests already ran in dev.py check, so packaging
+    skips them.
     """
     print("mvn package javalint.jar", file=sys.stderr)
     mvn = shutil.which("mvn") or "mvn"
@@ -216,8 +216,8 @@ def prepare_fat(
         "path": f"tackbox_engines/bin/{pl.opengrep['bin_name']}",
     })
 
-    # jscpd rides as an npm platform-package tarball (.tgz); the binary sits at a
-    # fixed member path inside, so extract it by name like the node archive.
+    # jscpd rides as an npm platform-package tarball (.tgz) with the binary
+    # at a fixed member path; extract it by name like the node archive.
     jscpd_archive = fetch(pl.jscpd["source_url"], pl.jscpd["archive_sha256"])
     jscpd_bin = fat_root / "bin" / pl.jscpd["bin_name"]
     member = pl.jscpd["archive_member"]
@@ -269,9 +269,9 @@ def prepare_fat(
         shutil.copyfile(td_path / "package-lock.json", dest_vendor / "package-lock.json")
         shutil.copytree(td_path / "node_modules", dest_vendor / "node_modules")
 
-    # setuptools package-data globs never match dot-prefixed path
-    # components, so anything dot-named would silently stay out of the
-    # wheel while still being part of the staged tree hashes.
+    # setuptools package-data globs never match dot-prefixed path components:
+    # dot-named files would silently stay out of the wheel while still being
+    # part of the staged tree hashes.
     prune_dot_paths(dest_vendor)
 
     for entry_name, meta in manifest["npm_deps"]["top_level"].items():
@@ -293,9 +293,9 @@ def prepare_fat(
             "path": f"tackbox_engines/vendor/node_modules/{entry_name}",
         })
 
-    # Top-level npm entries cover their own dirs only; transitive deps are
-    # hoisted siblings. One tree entry makes the whole vendored payload
-    # verifiable and part of the cache key.
+    # Top-level npm entries cover only their own dirs; transitive deps are
+    # hoisted siblings. One tree entry keeps the whole vendored payload
+    # verifiable and in the cache key.
     entries.append({
         "id": "vendor-tree",
         "kind": "vendor",
@@ -364,8 +364,9 @@ def prepare_thin(
             "license_path": "tackbox/third_party/licenses/tackbox.LICENSE.txt",
         })
 
-    # javalint is a JVM engine: one platform-independent shaded jar, run via the
-    # system `java` toolchain. No exe suffix; doctor checksums it like any binary.
+    # javalint is a JVM engine: one platform-independent shaded jar run via
+    # the system `java` toolchain. No exe suffix; doctor checksums it like
+    # any binary.
     jar_src = build_javalint_jar()
     jar_dest = thin_root / "bin" / "javalint.jar"
     shutil.copyfile(jar_src, jar_dest)
@@ -428,7 +429,7 @@ def prepare_thin(
         # unpacked payload against store_sha256. No wheel-file sha pin: a
         # rebuild of a published engines version is not zip-reproducible and
         # PyPI keeps the first upload (skip-existing), so container bytes
-        # legitimately differ. platform lets the store refuse a wrong-arch
+        # legitimately differ. `platform` lets the store refuse a wrong-arch
         # wheel before downloading.
         "fat_wheel": {
             "platform": pl.key,

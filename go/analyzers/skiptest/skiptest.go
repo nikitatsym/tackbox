@@ -1,8 +1,8 @@
-// Package skiptest enforces ERC008: a skipped test must say why.
-// In *_test.go files a Skip/Skipf on testing.T/B/F needs a non-empty
-// reason argument, and a bare SkipNow needs a test-skip
-// marker in the comment block directly above. This is the only
-// analyzer whose subject is the tests themselves.
+// Package skiptest enforces ERC008: a skipped test must say why. In
+// *_test.go files a Skip/Skipf on testing.T/B/F needs a non-empty reason
+// argument, and a bare SkipNow needs a test-skip marker in the comment
+// block directly above. The only analyzer whose subject is the tests
+// themselves.
 package skiptest
 
 import (
@@ -37,9 +37,9 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			if !ok || !skipMethods[sel.Sel.Name] {
 				return true
 			}
-			// Origin, not name: the method must resolve to package
-			// testing (covers T, B, F and the TB interface; a local
-			// type's own Skip is not a test skip).
+			// Origin, not name: the method must resolve to package testing
+			// (T, B, F, and the TB interface); a local type's own Skip is
+			// not a test skip.
 			obj := pass.TypesInfo.ObjectOf(sel.Sel)
 			if obj == nil || obj.Pkg() == nil || obj.Pkg().Path() != "testing" {
 				return true

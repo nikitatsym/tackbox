@@ -143,7 +143,7 @@ def _no_decision(payload: str) -> subprocess.CompletedProcess:
     return r
 
 
-# -- protocol validation: no decision, never a traceback ------------------
+# -- protocol validation: no decision, never a traceback
 
 
 def test_unsupported_version_is_no_decision(tmp_path):
@@ -196,7 +196,7 @@ def test_broken_stdin_is_no_decision():
     assert "unreadable stdin" in r.stderr, r.stderr
 
 
-# -- the guard ------------------------------------------------------------
+# -- the guard
 
 
 def test_cwd_outside_git_allows_silently(tmp_path):
@@ -213,7 +213,7 @@ def test_git_without_devpy_allows(tmp_path):
     assert payload["decision"] == "allow", payload
 
 
-# -- Pre: the approval gates ---------------------------------------------
+# -- Pre: the approval gates
 
 
 def test_pre_write_manifest_entry_asks(tmp_path):
@@ -355,7 +355,7 @@ def test_pre_ask_text_matches_the_claude_host(tmp_path):
     assert protocol["reason"] == reason == CANON_SINGLE
 
 
-# -- Post: the consistency wall and the diff-scoped lint arm --------------
+# -- Post: the consistency wall and the diff-scoped lint arm
 
 
 @pytest.mark.parametrize("tool", ["bash", "eval"])
@@ -483,7 +483,7 @@ def test_post_wall_keeps_unknown_verification_failure(tmp_path):
     assert f"verification uncertainty: tackbox hook: {reason}" in payload["reason"], payload
 
 
-# -- unit: the event model and path handling -----------------------------
+# -- unit: the event model and path handling
 
 
 def test_parse_request_requires_post_success_flag():

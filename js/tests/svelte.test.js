@@ -94,10 +94,9 @@ test('svelte html-comment marker suppresses within the element', () => {
   })
 })
 
-// Adversarial: the marker sits above the first element only. Planting a swallow
-// in the following sibling proves coverage stops at the element boundary - the
-// second button still fires, and exactly once (the first stays suppressed, or
-// there would be two).
+// Adversarial: the marker sits above the first element only. A swallow in the
+// following sibling still fires, exactly once - coverage stops at the element
+// boundary (the first stays suppressed, else there would be two).
 test('svelte html-comment marker does not reach the following sibling', () => {
   ruleTester.run('no-swallow-catch', require('../rules/no-swallow-catch'), {
     valid: [],

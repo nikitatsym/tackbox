@@ -47,7 +47,7 @@ def check(root: Path) -> approvals.Report:
     return approvals.check(root, files, _MARKER_RE, IS_LINTABLE)
 
 
-# -- parse + escaping-aware split ------------------------------------------
+# -- parse + escaping-aware split
 
 def test_parse_file_and_chain_scope():
     entries = approvals.parse(
@@ -101,7 +101,7 @@ def test_load_approvals_absent_is_empty(tmp_path):
     assert approvals.load_approvals(tmp_path) == Counter()
 
 
-# -- the consistency predicate ---------------------------------------------
+# -- the consistency predicate
 
 def test_clean_tree_is_consistent(tmp_path):
     root = build(
@@ -226,7 +226,7 @@ def test_at_escape_adversarial_matching(tmp_path):
     assert report.orphans == []  # the `A\@2` entry matched its own marker, not spuriously
 
 
-# -- canonical texts + draft ------------------------------------------------
+# -- canonical texts + draft
 
 def test_render_blocks_canonical_texts(tmp_path):
     root = build(
@@ -255,7 +255,7 @@ def test_draft_roundtrips_into_consistency(tmp_path):
     assert check(root).ok()
 
 
-# -- CLI: standalone approvals + lint verdict ------------------------------
+# -- CLI: standalone approvals + lint verdict
 
 def _run(root: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(

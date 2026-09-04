@@ -1,14 +1,14 @@
 """Session-scoped e2e: build thin/fat wheels, install the thin wheel alone
-into a fresh venv, and drive tackbox against the shared fixture repo with the
+into a fresh venv, and drive tackbox against the fixture repo with the
 engine payload supplied via TACKBOX_ENGINES_DIR.
 
-F6: the thin wheel no longer depends on tackbox-engines; the engine binaries
-come from the machine store, fetched from PyPI at runtime. A CI/e2e run can't
-fetch an unpublished version, so it points TACKBOX_ENGINES_DIR at the unpacked
-fat wheel - the store's override path - which also keeps the runtime offline.
+F6: the engine binaries come from the machine store, fetched from PyPI at
+runtime. A CI/e2e run can't fetch an unpublished version, so
+TACKBOX_ENGINES_DIR points at the unpacked fat wheel - the store's override
+path - which also keeps the run offline.
 
-Fixture materialization lives in `scripts/materialize_fixture.py` so the same
-seeded violations drive both this pytest session and the wheels CI matrix.
+Fixture materialization lives in scripts/materialize_fixture.py so the same
+seeded violations drive both this session and the wheels CI matrix.
 """
 
 from __future__ import annotations
@@ -64,12 +64,12 @@ def wheels(tmp_path_factory) -> dict:
 def hermetic_venv(tmp_path_factory, wheels) -> Path:
     """A fresh venv with ONLY the thin wheel installed.
 
-    Installing thin alone (no fat) is itself the F6 contract check: if thin
-    still pinned tackbox-engines in its metadata, uv would fail to resolve.
+    Installing thin alone is itself the F6 contract check: if thin still pinned
+    tackbox-engines, uv would fail to resolve.
     """
     v = tmp_path_factory.mktemp("hermetic-venv")
-    # `uv venv` because `python -m venv` off a uv-managed interpreter leaves
-    # libpython unresolvable via dyld @rpath on macOS.
+    # uv venv, not python -m venv: off a uv-managed interpreter, libpython is
+    # unresolvable via dyld @rpath on macOS.
     env = {k: val for k, val in os.environ.items() if k != "VIRTUAL_ENV"}
     subprocess.run(
         ["uv", "venv", str(v)],
@@ -108,7 +108,6 @@ def fixture_repo(tmp_path_factory) -> Path:
 
 
 def _venv_bin(venv: Path, name: str) -> Path:
-    # POSIX venvs use bin/<name>; Windows venvs use Scripts/<name>.exe.
     if os.name == "nt":
         return venv / "Scripts" / f"{name}.exe"
     return venv / "bin" / name
@@ -119,10 +118,10 @@ def _tackbox(venv: Path) -> Path:
 
 
 def _hermetic_env(engines_payload: Path) -> dict:
-    """os.environ with every PATH dir carrying an `ast-grep` removed: the wheel
-    venv is driven by entrypoint path, unactivated, exactly as launchers and CI
-    drive it, and must be self-sufficient - an ast-grep reachable from the dev
-    venv or a global install would mask executable-resolution bugs."""
+    """os.environ with every PATH dir carrying an `ast-grep` removed: the venv
+    is driven by entrypoint path, unactivated, exactly as launchers and CI
+    drive it, and must be self-sufficient - an ast-grep from the dev venv or a
+    global install would mask executable-resolution bugs."""
     def _carries_ast_grep(d: str) -> bool:
         return (Path(d) / "ast-grep").is_file() or (Path(d) / "ast-grep.exe").is_file()
 
@@ -257,10 +256,8 @@ def test_hermetic_lint_finds_all_engine_violations(hermetic_venv, fixture_repo, 
 def test_doctor_fails_on_patched_vendored_transitive_dep(hermetic_venv, fixture_repo, engines_payload):
     """A byte flipped anywhere in the store payload must turn doctor red.
 
-    Targets a transitive dep specifically: those are covered only by the
-    vendor-tree entry and the whole-tree store_sha256 - exactly the holes these
-    two checks pin shut.
-    """
+    Targets a transitive dep specifically: only the vendor-tree entry and the
+    whole-tree store_sha256 cover those."""
     tackbox = _tackbox(hermetic_venv)
     env = _hermetic_env(engines_payload)
     engines_json = json.loads((_site_packages(hermetic_venv) / "tackbox" / "engines.json").read_text())

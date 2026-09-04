@@ -55,11 +55,7 @@ class SourceWarning:
 
 
 def parse_ls_files_stage(raw: bytes) -> list[IndexEntry]:
-    """Parse `git ls-files -s -z`.
-
-    Row format: `<mode> <sha> <stage>\\t<path>\\0`. Header must have
-    exactly three space-separated fields; anything else is malformed.
-    """
+    """Parse `git ls-files -s -z`: rows of `<mode> <sha> <stage>\\t<path>\\0`."""
     entries: list[IndexEntry] = []
     for row in raw.split(b"\0"):
         if not row:
@@ -90,10 +86,9 @@ def parse_check_attr(
     The `-z` stream is flat NUL-terminated `path\\0attr\\0value\\0` triples. A
     path is listed only when a queried attribute resolved to `set` or `true`;
     `false`, `unset`, `unspecified` leave it out. Set attributes keep the query
-    order (deterministic). A stream that is not a whole number of triples, or a
-    triple naming an attribute we did not query, is malformed - a git bug, raised
-    as ValueError (gitfiles turns it into the loud resolution-error type), never
-    hidden.
+    order (deterministic). A non-triple stream or an unqueried attribute is a
+    git bug, raised as ValueError (gitfiles turns it into the loud
+    resolution-error type), never hidden.
     """
     order = {attr: i for i, attr in enumerate(attributes)}
     fields = raw.split(b"\0")
@@ -147,9 +142,8 @@ def validate_path(path: str) -> None:
 def narrow_by_path(paths: Iterable[str], scope: str) -> list[str]:
     """Filter paths with directory-boundary semantics.
 
-    - `.` returns everything.
-    - Otherwise a path matches if it equals `scope` (with any trailing
-      slash stripped) or begins with `scope/`.
+    A path matches when it equals `scope` (with any trailing slash stripped) or
+    begins with `scope/`; `.` returns everything.
     """
     if scope == ".":
         return list(paths)

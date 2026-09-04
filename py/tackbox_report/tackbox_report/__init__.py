@@ -33,7 +33,7 @@ __all__ = [
 ]
 
 # ---------------------------------------------------------------------------
-# A FATAL level above CRITICAL for panic logs. addLevelName only adds a name
+# FATAL sits above CRITICAL for panic logs. addLevelName only adds a name
 # for 60; it does not rename CRITICAL.
 # ---------------------------------------------------------------------------
 _LEVEL_FATAL = logging.CRITICAL + 10  # 60
@@ -131,8 +131,8 @@ def init(
 
     Raises ``ReportError`` when ``verify`` is set and the healthcheck cannot be
     shipped. Extra ``**sentry_options`` are forwarded verbatim to
-    ``sentry_sdk.init`` (e.g. ``before_send``, ``transport``, ``sample_rate``)
-    -- the Pythonic escape hatch, also used by the tests.
+    ``sentry_sdk.init`` (e.g. ``before_send``, ``transport``, ``sample_rate``);
+    the tests use this too.
     """
     global _ready, _rate_window, _flush_timeout, _logger
 

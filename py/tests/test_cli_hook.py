@@ -153,7 +153,7 @@ def _dev_py(root: Path) -> None:
     (root / "dev.py").write_text("# stub dev.py so the hook guard fires\n")
 
 
-# -- PostToolUse ----------------------------------------------------------
+# -- PostToolUse
 
 
 def test_post_go_erc001_exit2_stderr(tmp_path):
@@ -384,7 +384,7 @@ def test_broken_stdin_exit1(tmp_path):
     assert "Traceback" not in r.stderr, r.stderr
 
 
-# -- PostToolUse diff-scope -----------------------------------------------
+# -- PostToolUse diff-scope
 
 
 def test_post_edit_clean_line_pre_existing_elsewhere_silent(tmp_path):
@@ -481,7 +481,7 @@ def test_finding_line_location_unknown():
     assert _finding_line(f) == "?: r: m"
 
 
-# -- PreToolUse: approval-manifest gate -----------------------------------
+# -- PreToolUse: approval-manifest gate
 
 
 def _ask(r: subprocess.CompletedProcess) -> dict:
@@ -613,7 +613,7 @@ def test_pre_manifest_nested_not_gated(tmp_path):
     assert r.returncode == 0 and r.stdout == "", f"nested manifest is not gated:\n{r.stdout}"
 
 
-# -- PreToolUse: reporters ask (unchanged arm) ----------------------------
+# -- PreToolUse: reporters ask (unchanged arm)
 
 
 def test_pre_reporters_add_line_ask(tmp_path):
@@ -636,7 +636,7 @@ def test_pre_reporters_remove_line_allow(tmp_path):
     assert r.returncode == 0 and r.stdout == "", f"removing a declaration is free:\n{r.stdout}"
 
 
-# -- PreToolUse: code markers no longer ask (the old _marker_gate is gone) -
+# -- PreToolUse: code markers no longer ask (the old _marker_gate is gone)
 
 
 def test_pre_code_marker_edit_no_ask(tmp_path):
@@ -682,7 +682,7 @@ def test_pre_plain_edit_allow(tmp_path):
     assert r.returncode == 0 and r.stdout == "", f"a plain edit is free:\n{r.stdout}"
 
 
-# -- PostToolUse: worktree-wide approvals consistency (Edit/Write + Bash) --
+# -- PostToolUse: worktree-wide approvals consistency (Edit/Write + Bash)
 
 
 def _bash(tmp_path: Path) -> subprocess.CompletedProcess:
@@ -949,7 +949,7 @@ def test_lintable_normalizes_backslash_paths():
     assert lintable("app\\svc.py", eng) is True
 
 
-# -- PreToolUse: .gitattributes exclusion-line arm ------------------------
+# -- PreToolUse: .gitattributes exclusion-line arm
 # The two canonical ask texts (plan, user-approved) - fixed verbatim.
 CANON_ATTR_SINGLE = ".gitattributes exclusion line added: gen/*.pb.go linguist-generated"
 CANON_ATTR_MULTI = (
@@ -1037,7 +1037,7 @@ def test_pre_gitattributes_true_form_ask(tmp_path):
     )
 
 
-# -- PreToolUse: excluded-target arm --------------------------------------
+# -- PreToolUse: excluded-target arm
 
 
 def _attr_repo(tmp_path: Path, attrs: str, files: dict[str, str]) -> None:
@@ -1113,7 +1113,7 @@ def test_pre_edit_plain_file_no_ask(tmp_path):
     assert r.returncode == 0 and r.stdout == "", f"a plain file must not ask:\n{r.stdout}"
 
 
-# -- PostToolUse: no block for a marker planted in an excluded file -------
+# -- PostToolUse: no block for a marker planted in an excluded file
 
 
 def test_post_marker_in_excluded_file_no_block(tmp_path):

@@ -159,8 +159,7 @@ def ensure_engines(fetcher: "Fetcher | None" = None) -> Path:
     if root.is_dir():
         return root
     with _engine_install_lock(root):
-        # Another process may have completed the install while this process
-        # waited. Recheck under the lock before touching the network.
+        # Recheck under the lock: another process may have finished the install.
         if root.is_dir():
             return root
         _fetch_and_install(data, root, fetcher or _download_fat_wheel)

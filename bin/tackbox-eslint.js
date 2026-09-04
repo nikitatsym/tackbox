@@ -5,8 +5,7 @@ const { ESLint } = require('eslint')
 
 const REPORTERS_FLAG = '--reporters='
 
-// Split argv into declared reporters (`--reporters=file#func,...`) and the
-// files to lint.
+// Split argv into `--reporters=file#func,...` declarations and the files to lint.
 function parseArgv(argv) {
   const decls = []
   const files = []
@@ -87,8 +86,7 @@ function hasBinding(ast, name) {
   return found
 }
 
-// Validate every declaration's symbol, independent of the lint scope: a dead
-// `file#function` fails the whole run even when that file is not being linted.
+// Validate every declared symbol regardless of lint scope: a dead `file#function` fails the whole run.
 function validateDeclarations(decls) {
   for (const d of decls) {
     const abs = path.resolve(process.cwd(), d.file)
@@ -110,14 +108,13 @@ function validateDeclarations(decls) {
   }
 }
 
-// Internal machine contract: one {file, line, rule} JSON object per error, for
-// the hook. Human (stylish) output is unchanged. A message with no line emits
-// line: null (location-unknown) - the caller over-reports, never drops it.
+// Machine contract for the hook: one {file, line, rule, message} JSON per error.
+// Human (stylish) output is unchanged. A message with no line emits line: null -
+// the caller over-reports, never drops it.
 function emitMachine(results) {
   for (const r of results) {
-    // The contract path is POSIX; path.relative yields `\` on Windows. Split on
-    // the platform separator, never a blanket replace: off Windows a `\` in a
-    // name is part of the name and rewriting it misfiles the finding.
+    // Contract paths are POSIX; path.relative yields `\` on Windows. Split on
+    // path.sep, never blanket-replace: off Windows `\` is part of a file name.
     const file = path.relative(process.cwd(), r.filePath).split(path.sep).join('/')
     for (const m of r.messages) {
       if (m.severity !== 2) continue

@@ -102,7 +102,7 @@ def _all_markers(cache_home: Path) -> list[Path]:
     return sorted(p for p in root.iterdir() if p.is_file())
 
 
-# -- Fixtures --------------------------------------------------------------
+# -- Fixtures
 
 
 @pytest.fixture
@@ -142,7 +142,7 @@ def dirty_js_repo(tmp_path) -> Path:
     return tmp_path
 
 
-# -- Warm/cold cache -------------------------------------------------------
+# -- Warm/cold cache
 
 
 def test_cold_run_writes_markers(go_repo, tmp_path):
@@ -152,7 +152,6 @@ def test_cold_run_writes_markers(go_repo, tmp_path):
         f"clean fixture returned {result.returncode}\n"
         f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
     )
-    # Two Go packages -> two erclint markers.
     assert _marker_count(cache_home, "erclint") == 3
     # opengrep runs per-file on .go
     assert _marker_count(cache_home, "erclint-opengrep") == 3
@@ -212,7 +211,7 @@ def test_unrelated_pkg_change_does_not_touch_a(go_repo, tmp_path):
     assert len(new_marks) == 1
 
 
-# -- Failures are not cached ----------------------------------------------
+# -- Failures are not cached
 
 
 def test_failure_not_cached(dirty_js_repo, tmp_path):
@@ -243,7 +242,7 @@ def test_partial_success_caches_the_clean_files(tmp_path):
     assert _marker_count(cache_home, "tackbox-eslint") == 0
 
 
-# -- Corrupt marker does not fail the run ---------------------------------
+# -- Corrupt marker does not fail the run
 
 
 def test_corrupt_marker_does_not_fail(clean_js_repo, tmp_path):
@@ -264,7 +263,7 @@ def test_corrupt_marker_does_not_fail(clean_js_repo, tmp_path):
     )
 
 
-# -- --no-cache flag -------------------------------------------------------
+# -- --no-cache flag
 
 
 def test_no_cache_flag_writes_no_markers(go_repo, tmp_path):
@@ -277,7 +276,6 @@ def test_no_cache_flag_writes_no_markers(go_repo, tmp_path):
 def test_no_cache_flag_ignores_existing_markers(go_repo, tmp_path):
     """A cached marker present but ignored: engine still runs and reports."""
     cache_home = tmp_path / "cache"
-    # Prime cache
     assert run_lint(go_repo, cache_home).returncode == 0
     # Break B's source but skip cache; engine must run and see the change.
     (go_repo / "pkg_b" / "b.go").write_text(GO_PKG_B_ADD3)
@@ -288,7 +286,7 @@ def test_no_cache_flag_ignores_existing_markers(go_repo, tmp_path):
     assert "== erclint ==" in r.stdout
 
 
-# -- Stale engines-hash dirs are GC'd on every run -----------------------
+# -- Stale engines-hash dirs are GC'd on every run
 
 
 def test_stale_engines_hash_dir_pruned_on_run(clean_js_repo, tmp_path):
@@ -301,7 +299,7 @@ def test_stale_engines_hash_dir_pruned_on_run(clean_js_repo, tmp_path):
     assert (cache_home / tackbox_cache.CACHE_VERSION / _dev_hash()).is_dir()
 
 
-# -- Units without a digest are linted, never cached ------------------------
+# -- Units without a digest are linted, never cached
 
 
 def test_missing_digest_still_lints_and_never_caches(monkeypatch, tmp_path):
@@ -331,7 +329,7 @@ def test_missing_digest_still_lints_and_never_caches(monkeypatch, tmp_path):
     assert [p.name for p in sorted((cache_root / "h").iterdir())] == ["d1.erclint"]
 
 
-# -- javalint: exit 0 always, so attribution must come from the findings ----
+# -- javalint: exit 0 always, so attribution must come from the findings
 
 
 def test_clean_args_javalint_excludes_files_with_findings():
@@ -353,7 +351,7 @@ def test_clean_args_javalint_all_clean_when_no_findings():
     assert cli._clean_args(r, info) == ["java/A.java", "java/B.java"]
 
 
-# -- A crashed engine run must never be attributed clean ---------------------
+# -- A crashed engine run must never be attributed clean
 #
 # erclint's -json mode and javalint both normally exit 0 with findings, so
 # _clean_args parses stdout to attribute cleanness per unit. But a crash (go
@@ -415,7 +413,7 @@ def test_javalint_crash_writes_no_marker_and_next_run_still_reports(tmp_path):
     assert cli._clean_args(probe, pending) == []
 
 
-# -- CLI-level repro: a crashed run must not mask a real finding later ------
+# -- CLI-level repro: a crashed run must not mask a real finding later
 
 
 JAVA_SWALLOW_WITH_REPORTER = """class Handler {
@@ -477,7 +475,7 @@ def test_reporters_typo_crash_does_not_hide_swallow_after_fix(java_swallow_repo,
     assert "Handler.java" in result.stdout
 
 
-# -- A1: cache-key soundness regressions ----------------------------------
+# -- A1: cache-key soundness regressions
 #
 # Each primes a clean warm cache, then changes an input the old (unit, engine)
 # key ignored - reporter policy, unit path, or a _test.go file - and asserts the
@@ -641,7 +639,7 @@ def test_test_go_change_invalidates_erclint_cache(tmp_path):
     assert "ERC008" in warm.stdout, warm.stdout
 
 
-# -- Test-file findings must not write a false-clean marker ------------------
+# -- Test-file findings must not write a false-clean marker
 #
 # erclint keys a _test.go finding under a `.test` package variant - `pkg
 # [pkg.test]` for an in-package test, `pkg_test [pkg.test]` for an external
@@ -741,7 +739,7 @@ def test_clean_go_package_still_caches_after_warm_run(tmp_path):
     )
 
 
-# -- _clean_args: test-variant attribution (unit, no go toolchain) -----------
+# -- _clean_args: test-variant attribution (unit, no go toolchain)
 
 
 def test_clean_args_erclint_test_variant_marks_package_dirty():

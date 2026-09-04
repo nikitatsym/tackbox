@@ -96,7 +96,7 @@ def _build(tmp_path: Path, files: dict[str, str], attrs: str = "") -> Path:
     return tmp_path
 
 
-# -- findings in a marked file disappear + summary line -------------------
+# -- findings in a marked file disappear + summary line
 
 
 def test_marked_file_findings_disappear_and_summary_prints(tmp_path):
@@ -144,7 +144,7 @@ def test_summary_reflects_only_current_scope(tmp_path):
     assert SUMMARY.format(n=2) in whole.stdout
 
 
-# -- scope semantics -------------------------------------------------------
+# -- scope semantics
 
 
 def test_scope_all_excluded_is_success_with_summary(tmp_path):
@@ -181,7 +181,7 @@ def test_scoped_run_still_excludes(tmp_path):
     assert SUMMARY.format(n=1) in r.stdout
 
 
-# -- one full-tree resolution (seam spy, in-process) ----------------------
+# -- one full-tree resolution (seam spy, in-process)
 
 
 def test_scoped_lint_performs_one_full_tree_resolution(tmp_path, monkeypatch):
@@ -197,7 +197,7 @@ def test_scoped_lint_performs_one_full_tree_resolution(tmp_path, monkeypatch):
     assert calls["n"] == 1, f"scoped lint + whole-tree approvals resolved {calls['n']} times"
 
 
-# -- doctor CLI boundary: resolution failure is loud, not a traceback -----
+# -- doctor CLI boundary: resolution failure is loud, not a traceback
 
 
 def test_doctor_dispatch_resolution_failure_is_loud_not_traceback(
@@ -248,7 +248,7 @@ def test_excluded_file_marker_orphans_manifest_entry(tmp_path, monkeypatch):
     assert [o.entry.address for o in after.orphans] == ["src/a.py#f"]
 
 
-# -- codequality carries no entries for excluded files --------------------
+# -- codequality carries no entries for excluded files
 
 
 def test_codequality_no_entries_for_excluded_files(tmp_path):
@@ -265,7 +265,7 @@ def test_codequality_no_entries_for_excluded_files(tmp_path):
     assert "src/b.py" in data  # the included swallow still reported
 
 
-# -- Go: warm-cache sequence + erclint post-filter + broken file ----------
+# -- Go: warm-cache sequence + erclint post-filter + broken file
 
 
 def test_warm_cache_go_removing_attribute_brings_findings_back(tmp_path):
@@ -321,7 +321,7 @@ def test_broken_excluded_file_in_mixed_package_fails_loudly(tmp_path):
     )
 
 
-# -- jscpd: a duplicate pair with one side marked draws no DUP ------------
+# -- jscpd: a duplicate pair with one side marked draws no DUP
 
 _DUP_BODY = "\n".join(f"    total = total + step_{i} * {i}" for i in range(20))
 _DUP_A = f"def compute():\n    total = 0\n{_DUP_BODY}\n    return total\n"

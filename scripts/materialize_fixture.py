@@ -1,10 +1,10 @@
 """Materialize the hermetic e2e fixture repo used by wheel tests and CI.
 
-Writes a tiny git repo with one planted violation per engine into the
-target directory (created if missing, must be empty). Inline constants
-mirror steps 3-4 style so tackbox self-lint never encounters real files
-on disk. Called by py/tests/test_wheels_e2e.py and by the wheels CI
-matrix; keep it dependency-free so any Python 3.11+ runner can invoke it.
+Writes a tiny git repo with one planted violation per engine into the target
+directory (created if missing, must be empty). Inline constants mirror
+steps 3-4 style so tackbox self-lint never encounters real files on disk.
+Called by py/tests/test_wheels_e2e.py and the wheels CI matrix; keep it
+dependency-free so any Python 3.11+ runner can invoke it.
 """
 
 from __future__ import annotations
@@ -67,8 +67,8 @@ JAVA_SWALLOW = """class Handler {
 """
 
 # Same JV001 shape, one directory deep - the wheels/CI matrix runs on Windows
-# too, where a nested repo-relative path is the only way to exercise the
-# engine's separator handling end to end (a root-level file never has one).
+# too, and a nested repo-relative path is the only way to exercise the
+# engine's separator handling (a root-level file never has one).
 JAVA_SWALLOW_NESTED = """class Deep {
     void run() {
         try {

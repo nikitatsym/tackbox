@@ -1,6 +1,6 @@
 // Package analyzers exposes the full erclint ruleset as a slice of
-// analysis.Analyzer values. Consumers wire it into multichecker or
-// any other analysis driver.
+// analysis.Analyzer values. Wire it into multichecker or any other
+// analysis driver.
 package analyzers
 
 import (
@@ -17,8 +17,8 @@ import (
 	"github.com/nikitatsym/tackbox/go/analyzers/terminal"
 )
 
-// All returns every native Go analyzer in the erclint ruleset. The order is
-// stable and matches rule codes ERC001..ERC009.
+// All returns every native Go analyzer in the ruleset, ordered to match
+// rule codes ERC001..ERC009.
 func All() []*analysis.Analyzer {
 	return []*analysis.Analyzer{
 		errcheck.Analyzer,

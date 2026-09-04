@@ -1,11 +1,11 @@
 """Supply-chain pins (finding B5): every workflow action is SHA-pinned and the
 ci.yml opengrep install is version-pinned + checksum-verified.
 
-A mutable action tag (`@v7`, `@release/v1`) lets an upstream tag move under the
-release runners, including the `id-token: write` publish job. A `releases/latest`
-executable fetched without a checksum is an unverified binary on PATH. Both are
-remote policy for every `@latest` consumer, so they are asserted here rather than
-only in a live run.
+A mutable action tag (`@v7`, `@release/v1`) lets an upstream tag move under
+the release runners, including the `id-token: write` publish job; a
+`releases/latest` binary fetched without a checksum is unverified on PATH.
+Both are remote policy for every `@latest` consumer, so they're asserted
+here rather than only in a live run.
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ import yaml
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOWS_DIR = REPO / ".github" / "workflows"
 
-# `uses:` value up to the first whitespace (a trailing `# vX.Y.Z` comment is
-# dropped by \S+). Matches both `- uses:` step form and job-level `uses:`.
+# `uses:` value up to first whitespace (a trailing `# vX.Y.Z` comment is
+# dropped by \S+). Matches both step-level and job-level `uses:`.
 _USES_RE = re.compile(r"^\s*(?:-\s*)?uses:\s*(\S+)", re.MULTILINE)
 _PINNED_RE = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
 

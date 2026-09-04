@@ -1,14 +1,15 @@
 // Package doublecapture implements ERC005, two arms of the same
 // two-sinks-on-one-path family:
-//   - double-capture: a single err-branch must not both capture (a go/report
-//     Error/Warn/Quiet call or a declared sink) and `return err` — the upstream
-//     handler would re-capture and inflate Sentry counts. Pick one: capture and
-//     swallow, or propagate without capture. Panic-capture is terminal and
-//     excluded.
-//   - double-lane (D006): a single execution path must not both capture and
-//     route the caught error to the user lane via a go/report.Notify —
-//     error/warn already reach the user, so the pair double-shows. Path-sensitive
-//     (see doublelane.go): exclusive if/switch legs do not pair.
+//   - double-capture: an err-branch must not both capture (a go/report
+//     Error/Warn/Quiet call or a declared sink) and `return err` - the
+//     upstream handler would re-capture and inflate Sentry counts. Pick
+//     one: capture and swallow, or propagate without capture. Panic-capture
+//     is terminal and excluded.
+//   - double-lane (D006): one execution path must not both capture and
+//     route the caught error to the user lane via go/report.Notify -
+//     error/warn already reach the user, so the pair double-shows.
+//     Path-sensitive (see doublelane.go): exclusive if/switch legs do not
+//     pair.
 package doublecapture
 
 import (

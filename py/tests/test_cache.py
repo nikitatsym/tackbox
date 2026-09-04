@@ -28,7 +28,7 @@ import pytest
 from tackbox import cache, reporters
 
 
-# -- Layout ----------------------------------------------------------------
+# -- Layout
 
 
 def test_cache_key_marker_layout(tmp_path):
@@ -69,7 +69,7 @@ def test_engines_hash_dev_ignores_orchestrator_sources(tmp_path):
     assert cache.engines_hash_dev(tmp_path) == before
 
 
-# -- is_cached / mark_clean ------------------------------------------------
+# -- is_cached / mark_clean
 
 
 def test_is_cached_missing_returns_false(tmp_path):
@@ -116,7 +116,7 @@ def test_mark_clean_swallows_when_parent_is_file(tmp_path):
     cache.mark_clean(key, tmp_path)  # must not raise
 
 
-# -- GC --------------------------------------------------------------------
+# -- GC
 
 
 def test_gc_stale_engines_removes_non_current_dirs(tmp_path):
@@ -195,7 +195,7 @@ def test_gc_soft_cap_survives_files_vanishing_mid_scan(monkeypatch, tmp_path):
     assert len([p for p in d.iterdir() if p.is_file()]) == 1
 
 
-# -- File digest -----------------------------------------------------------
+# -- File digest
 
 
 def test_sha256_file_matches_hashlib(tmp_path):
@@ -204,7 +204,7 @@ def test_sha256_file_matches_hashlib(tmp_path):
     assert cache.sha256_file(p) == hashlib.sha256(b"hello world").hexdigest()
 
 
-# -- erclint package digest (needs `go` toolchain) --------------------------
+# -- erclint package digest (needs `go` toolchain)
 
 _GO_MOD_DIGEST = """module cachefixture
 
@@ -315,7 +315,7 @@ def test_erclint_digest_changes_when_go_mod_changes(tmp_path):
     assert before != after
 
 
-# -- nested / multi-module repos -------------------------------------------
+# -- nested / multi-module repos
 
 _GOMOD_NESTED = """module cachenested
 
@@ -405,7 +405,7 @@ def test_erclint_digest_broken_go_mod_raises_clean_error(tmp_path):
     assert "gomod" in str(exc.value)
 
 
-# -- A1: policy digest + non-Go path/policy folding + _test.go inclusion ----
+# -- A1: policy digest + non-Go path/policy folding + _test.go inclusion
 
 _PKG_WITH_TEST_SRC = """package pkg_a
 

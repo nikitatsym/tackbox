@@ -18,7 +18,7 @@ from conftest import commit_all, git, init_repo, run_lint
 from tackbox.gitfiles import collect_link_targets
 
 
-# -- inventory composition (collect_link_targets over a real tree) ---------
+# -- inventory composition (collect_link_targets over a real tree)
 
 
 def test_inventory_excludes_gitignored_includes_untracked_not_ignored(tmp_path):
@@ -63,7 +63,7 @@ def test_inventory_marks_tracked_symlink_L_and_gitlink_G(tmp_path):
     assert inv.get("vendor/sub") == "G"
 
 
-# -- full pipeline: gitignored target is a finding -------------------------
+# -- full pipeline: gitignored target is a finding
 
 
 def test_lint_flags_link_to_gitignored_target(tmp_path):
@@ -79,7 +79,7 @@ def test_lint_flags_link_to_gitignored_target(tmp_path):
     assert "secret.md" in r.stdout
 
 
-# -- cache-regression: a warm cache never hides a broken target ------------
+# -- cache-regression: a warm cache never hides a broken target
 
 
 def test_warm_cache_still_catches_renamed_target_heading(tmp_path):
