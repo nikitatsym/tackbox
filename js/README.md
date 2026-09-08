@@ -146,6 +146,13 @@ siblings still report. Recognition reads the enclosing element's
 preceding `SvelteHTMLComment` sibling; `/* ... */` block comments
 are never markers.
 
+The wrapper's `--machine` output retains suppressed findings with the
+same rule text plus `suppressed`, `marker_kind`, and `marker_line`.
+Human ESLint output and its exit status ignore them. Only the shared
+approvals renderer presents them (D020 in
+[../rules/DECISIONS.md](../rules/DECISIONS.md)); a marker that excuses
+no violation produces no suppressed finding.
+
 ## Markdown
 
 The CLI also lints `.md` files through `tackbox-mdlint`, a thin markdownlint

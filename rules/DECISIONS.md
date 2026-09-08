@@ -323,21 +323,19 @@ folded into `tackbox lint`'s verdict (findings semantics, nonzero
 exit - CI and `dev.py check` inherit the wall), the standalone
 `tackbox approvals` subcommand (0 consistent / 2 inconsistent / 1
 infra; `--draft` emits entry lines for uncovered markers and gates
-nothing), and the hook's Post arms (an edit tool reports a hit as
-the lint arm does, block lines on stderr and exit 2; a Bash event
-returns the top-level block decision). The check always covers the
-whole tree regardless of lint scope - a scope-following check would
-be a bypass for any consumer whose CI lints scoped; its lint section
-is always headed `approvals (whole tree):`.
+nothing). These commands always cover the whole tree regardless of lint
+scope - a scope-following CI check would be a bypass; the lint section
+is always headed `approvals (whole tree):`. Agent hooks consume the same
+predicate for session debt only, as specified in D020.
 
 The approval act rides on the manifest itself: an edit adding a
 manifest line draws the PreToolUse ask, quoting the entry; removals
 are free; a multi-entry addition draws one all-or-nothing ask (the
 permission decision is per-edit and indivisible). Markers in code
 are free text: planting one - Edit, sed, merge, anything - never
-asks; it makes the tree inconsistent, which every subsequent hook
-event, `dev.py check`, and CI reports statelessly. A commit changes
-nothing: the wall survives `--no-verify` and session ends. Checkout
+asks; it makes the tree inconsistent. `dev.py check` and CI report
+that inconsistency statelessly, even after a commit made with
+`--no-verify`. Hooks enforce only the session delta (D020). Checkout
 or merge of a branch whose markers are covered by its own manifest
 is silent - approvals travel with the tree.
 
@@ -363,10 +361,11 @@ surface - the line still lands as a visible diff, review owns as A1;
 (A3) relocation of an approved marker within its scope (within the
 file, for file-scope markers) is undetected - identity is
 scope-grained, and a reason lying about its new context is review's
-signal; (A4) an unapproved marker still suppresses its finding until
-resolved - every hook event names the inconsistency, and check/CI
-hold the wall; (A5) the user's own terminal commits bypass agent
-hooks - CI owns them; (A6) editing an anonymous body renames its
+signal; (A4) an unapproved marker still suppresses its ordinary finding
+until resolved - the approvals renderer carries its rule text, session
+hooks constrain further edits (D020), and check/CI hold the tree gate;
+(A5) the user's own terminal commits bypass agent hooks - CI owns them;
+(A6) editing an anonymous body renames its
 hash segment and re-asks everything beneath - over-ask by design;
 (A7) engine-version drift can change resolved chains - the pin
 (D015) plus fixtures make it a visible, reviewed bump; (A8) the
@@ -395,8 +394,8 @@ unlintable by design.
 The predicate is evaluated against the current tree. Planting a
 marker in a dead file (fixture.py.txt) is free and stays dead; the
 move that brings it live (mv to fixture.py) puts it in the inventory
-uncovered, and the next hook event, `dev.py check`, or CI reports
-it. Laundering is caught at the transition, statelessly.
+uncovered. Session hooks report the transition under D020, while
+`dev.py check` and CI enforce the whole tree.
 
 Fixture space thus needs no entries: Go analyzer fixtures (dropped
 by the Go engines' path filter) and non-lintable fixture extensions
@@ -778,3 +777,46 @@ including an empty block's closing delimiter stays red; grammar drift can
 change which forms have reliable zones; the same-run report/zone handoff has a
 normal edit race; silent filtering has no operational inventory by product
 choice.
+
+## D020 - hooks enforce session debt, not existing tree debt (2026-09-06)
+
+Rules affected: none. Marker semantics and the whole-tree approvals
+consistency gates in `tackbox lint`, `tackbox approvals`, pre-commit, and CI
+are unchanged.
+
+Decision: a hook's session is the worktree difference from HEAD, including
+staged changes and untracked files. Every line of an untracked file is
+added; without HEAD, every source file is added. Session approvals debt is
+an uncovered marker on an added line, an orphan on an added manifest line,
+or an orphan whose matching marker was deleted from HEAD.
+For repeated identities, unchanged occurrences consume approval capacity
+before added lines; prepending a duplicate cannot shift new debt into HEAD.
+
+Pre-edit/write blocks the entire call if debt exists and any target is
+outside its fix set: the debt's marker files and `.tackbox/approvals`.
+Edits within that set still pass through the existing approval gates on
+the approvals manifest, reporters, git attributes, excluded files, and
+root `dev.py`. The green pre path inventories changed files only; engines
+run only for uncovered debt when a refusal needs its underlying rule text.
+
+Post-edit/write reports lint findings on added lines and session debt for
+the touched files. A post finding is a tool error after a mutation, never
+a claim that the mutation was blocked. Bash, eval, and opaque channels run
+no approvals checks, before or after the call. An unknown post target keeps
+its unverified-mutation warning, without an unrelated whole-tree check.
+
+Engines retain suppressed findings with the original rule text, a
+suppressed flag, marker kind, and marker line. These are not ordinary
+diagnostics and do not affect lint output, exit status, or codequality.
+Their sole presentation channel is the shared approvals renderer, matched
+by file, marker line, and kind: one actionable line per inconsistency.
+It names the rule being suppressed, or says the marker suppresses nothing
+when no finding is available, and never prints an approval entry to copy.
+Multiple rules suppressed by one marker share one line. Markdown code spans
+are examples, not HTML-comment markers; an unclosed backtick run is literal.
+
+Rationale: old inconsistencies belong to the tree gates. Attributing them
+to every tool result trains agents to ignore feedback and falsely claims
+to undo writes. The pre refusal stops unrelated edits while leaving a
+human-gated route to repair the current debt. Commits do not approve
+markers; they only change which debt belongs to the session.

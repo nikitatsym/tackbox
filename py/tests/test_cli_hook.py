@@ -682,7 +682,7 @@ def test_pre_plain_edit_allow(tmp_path):
     assert r.returncode == 0 and r.stdout == "", f"a plain edit is free:\n{r.stdout}"
 
 
-# -- PostToolUse: worktree-wide approvals consistency (Edit/Write + Bash)
+# -- PostToolUse: session debt on edits, no approvals checks on Bash
 
 
 def _bash(tmp_path: Path) -> subprocess.CompletedProcess:
@@ -713,19 +713,10 @@ def _post_edit(
     )
 
 
-def _block(r: subprocess.CompletedProcess) -> str:
-    # The Bash consistency arm: a hit rides the top-level block JSON, exit 0.
-    assert r.returncode == 0, f"block decision still exits 0:\n{r.stdout}\n{r.stderr}"
-    payload = json.loads(r.stdout)
-    assert payload["decision"] == "block", payload
-    # The payload is the canonical block texts alone - no lint-section header.
-    assert "approvals (whole tree):" not in payload["reason"], payload
-    return payload["reason"]
 
 
 def _block_edit(r: subprocess.CompletedProcess) -> str:
-    # The edit-tool consistency arm reports as the lint arm does: block lines on
-    # stderr, exit 2 - not the Bash arm's JSON decision.
+    # A landed violation is an error, not a rejected edit.
     assert r.returncode == 2, f"an edit-tool hit exits 2:\n{r.stdout}\n{r.stderr}"
     assert r.stdout == "", f"an edit-tool hit prints no JSON:\n{r.stdout}"
     assert "approvals (whole tree):" not in r.stderr, r.stderr
@@ -734,24 +725,21 @@ def _block_edit(r: subprocess.CompletedProcess) -> str:
 
 def test_post_edit_unapproved_marker_blocks(tmp_path):
     _dev_py(tmp_path)
-    (tmp_path / "svc.py").write_text("# no-report: unapproved planted marker\nx = 1\n")
     _init(tmp_path)
-    reason = _block_edit(_post_edit(tmp_path, "svc.py"))
-    assert "Unapproved suppression marker" in reason, reason
-    assert "svc.py: no-report: unapproved planted marker" in reason, reason
+    (tmp_path / "svc.py").write_text("# no-report: unapproved planted marker\nx = 1\n")
+    reason = _block_edit(_post_edit(tmp_path, "svc.py", old="", new="x = 1"))
+    assert "svc.py:1: unapproved no-report" in reason
+    assert "blocked" not in reason and "svc.py#" not in reason
 
 
-def test_post_edit_cross_file_inconsistency_blocks(tmp_path):
-    # ADVERSARIAL: an inconsistency planted in one file blocks the next edit of an
-    # unrelated, clean file - the check is worktree-wide, not scoped to the edited
-    # path. b.py has no finding of its own; a.py's uncovered marker is the block.
+def test_post_edit_ignores_legacy_cross_file_debt(tmp_path):
     _dev_py(tmp_path)
     (tmp_path / "a.py").write_text("# no-report: planted in a, never approved\nx = 1\n")
     (tmp_path / "b.py").write_text("y = 1\n")
     _init(tmp_path)
-    reason = _block_edit(_post_edit(tmp_path, "b.py", old="y = 1", new="y = 2"))
-    assert "Unapproved suppression marker" in reason, reason
-    assert "a.py: no-report: planted in a, never approved" in reason, reason
+    (tmp_path / "b.py").write_text("y = 2\n")
+    result = _post_edit(tmp_path, "b.py", old="y = 1", new="y = 2")
+    assert result.returncode == 0 and result.stdout == "" and result.stderr == ""
 
 
 def _shelled_repo(tmp_path: Path) -> None:
@@ -763,65 +751,26 @@ def _shelled_repo(tmp_path: Path) -> None:
     (tmp_path / "svc.py").write_text("# no-report: shelled in at module scope\nx = 1\n")
 
 
-def test_bash_shelled_marker_blocks(tmp_path):
+def test_bash_ignores_new_unapproved_marker(tmp_path):
     _shelled_repo(tmp_path)
-    reason = _block(_bash(tmp_path))
-    assert "Unapproved suppression marker" in reason, reason
-    assert "svc.py: no-report: shelled in at module scope" in reason, reason
-
-
-def test_bash_shelled_marker_repeats(tmp_path):
-    # Stateless: a second event repeats the same block (no snooze, no pairing).
-    _shelled_repo(tmp_path)
-    _block(_bash(tmp_path))
-    reason = _block(_bash(tmp_path))
-    assert "svc.py: no-report: shelled in at module scope" in reason, reason
-
-
-def test_bash_shelled_marker_silenced_by_manifest(tmp_path):
-    # A covering manifest line makes the tree consistent immediately - silent even
-    # uncommitted.
-    _shelled_repo(tmp_path)
-    _block(_bash(tmp_path))
-    (tmp_path / ".tackbox").mkdir()
-    (tmp_path / ".tackbox" / "approvals").write_text(
-        "svc.py: no-report: shelled in at module scope\n"
-    )
-    r = _bash(tmp_path)
-    assert r.returncode == 0 and r.stdout == "", f"a covering line silences it:\n{r.stdout}"
-
-
-def test_bash_shelled_marker_silenced_by_reversion(tmp_path):
-    _shelled_repo(tmp_path)
-    _block(_bash(tmp_path))
-    (tmp_path / "svc.py").write_text("x = 1\n")
-    r = _bash(tmp_path)
-    assert r.returncode == 0 and r.stdout == "", f"reverting the marker silences it:\n{r.stdout}"
+    result = _bash(tmp_path)
+    assert result.returncode == 0 and result.stdout == "" and result.stderr == ""
 
 
 def test_post_orphan_after_marker_removal_blocks(tmp_path):
     # A manifest entry outliving its marker is an orphan - red until the line goes.
     _dev_py(tmp_path)
-    (tmp_path / "svc.py").write_text("x = 1\n")
+    (tmp_path / "svc.py").write_text("# no-report: this marker was removed\nx = 1\n")
     (tmp_path / ".tackbox").mkdir()
     (tmp_path / ".tackbox" / "approvals").write_text(
         "svc.py: no-report: this marker was removed\n"
     )
     _init(tmp_path)
-    reason = _block_edit(_post_edit(tmp_path, "svc.py"))
-    assert "Orphaned approval" in reason, reason
-    assert "svc.py: no-report: this marker was removed" in reason, reason
+    (tmp_path / "svc.py").write_text("x = 1\n")
+    reason = _block_edit(_post_edit(tmp_path, "svc.py", new="x = 1"))
+    assert ".tackbox/approvals:1:" in reason and "no matching marker" in reason
 
 
-def test_committed_unapproved_marker_still_blocks(tmp_path):
-    # Tree-shaped: committing an unapproved marker does not approve it. It stays red
-    # on every later event (the wall survives commit / --no-verify).
-    _dev_py(tmp_path)
-    (tmp_path / "svc.py").write_text("# no-report: committed but never approved\nx = 1\n")
-    _init(tmp_path)
-    reason = _block(_bash(tmp_path))
-    assert "Unapproved suppression marker" in reason, reason
-    assert "svc.py: no-report: committed but never approved" in reason, reason
 
 
 def test_bash_covered_branch_silent(tmp_path):
@@ -843,15 +792,6 @@ def test_bash_covered_branch_silent(tmp_path):
     assert r.returncode == 0 and r.stdout == "", f"a covered branch is silent:\n{r.stdout}"
 
 
-def test_bash_unborn_head_marker_blocks(tmp_path):
-    # Worktree-based, not HEAD-based: an unborn HEAD (git init, no commit) with a
-    # shelled-in untracked marker still blocks - no `git show HEAD` needed.
-    _dev_py(tmp_path)
-    init_repo(tmp_path, commit=False)
-    (tmp_path / "svc.py").write_text("# no-report: marker in an unborn-head repo\nx = 1\n")
-    reason = _block(_bash(tmp_path))
-    assert "Unapproved suppression marker" in reason, reason
-    assert "svc.py: no-report: marker in an unborn-head repo" in reason, reason
 
 
 def test_bash_clean_tree_silent(tmp_path):
@@ -890,11 +830,7 @@ def test_pre_manifest_multiedit_one_ask(tmp_path):
     )
 
 
-def test_bash_unresolvable_file_blocks(tmp_path):
-    # A marker-bearing file that does not parse refuses resolution and blocks
-    # with the canonical unresolvable text - pinned verbatim (plan, user-approved).
-    # Java, not Python: the python grammar recovers from most damage without an
-    # ERROR node, while a missing brace is a guaranteed java ERROR.
+def test_bash_does_not_parse_marker_files(tmp_path):
     _dev_py(tmp_path)
     (tmp_path / "Bad.java").write_text(
         "class C {\n"
@@ -907,12 +843,8 @@ def test_bash_unresolvable_file_blocks(tmp_path):
         "}\n"
     )
     _init(tmp_path)
-    reason = _block(_bash(tmp_path))
-    assert (
-        "Unresolvable file (syntax does not parse; its markers and approvals are "
-        "unverified - fix the syntax first):" in reason
-    ), reason
-    assert "  Bad.java" in reason, reason
+    result = _bash(tmp_path)
+    assert result.returncode == 0 and result.stdout == "" and result.stderr == ""
 
 
 def test_bash_chars_marker_not_in_inventory(tmp_path):

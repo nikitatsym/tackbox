@@ -107,9 +107,7 @@ func parserCalleeFromAssign(assign *ast.AssignStmt) string {
 }
 
 func handleErrParserAssign(pass *analysis.Pass, idx *markers.Index, assign *ast.AssignStmt, callee string, rest []ast.Stmt) {
-	if handleMarker(idx, assign, callee, pass) {
-		return
-	}
+	pass = markerPass(idx, assign, callee, pass)
 	errName := errIdentFromLHS(assign)
 	if errName == "" {
 		pass.Reportf(assign.Pos(),
@@ -132,9 +130,7 @@ func handleErrParserAssign(pass *analysis.Pass, idx *markers.Index, assign *ast.
 }
 
 func handleErrParserShort(pass *analysis.Pass, idx *markers.Index, ifst *ast.IfStmt, assign *ast.AssignStmt, callee string) {
-	if handleMarker(idx, ifst, callee, pass) {
-		return
-	}
+	pass = markerPass(idx, ifst, callee, pass)
 	errName := errIdentFromLHS(assign)
 	if errName == "" {
 		pass.Reportf(ifst.Pos(),
@@ -170,9 +166,7 @@ func errBranchHandled(info *types.Info, body *ast.BlockStmt, errName string) boo
 }
 
 func handleParseIPAssign(pass *analysis.Pass, idx *markers.Index, assign *ast.AssignStmt, rest []ast.Stmt) {
-	if handleMarker(idx, assign, parseIP, pass) {
-		return
-	}
+	pass = markerPass(idx, assign, parseIP, pass)
 	valName := firstIdentLHS(assign)
 	if valName == "" {
 		pass.Reportf(assign.Pos(),
@@ -194,9 +188,7 @@ func handleParseIPAssign(pass *analysis.Pass, idx *markers.Index, assign *ast.As
 }
 
 func handleParseIPShort(pass *analysis.Pass, idx *markers.Index, ifst *ast.IfStmt, assign *ast.AssignStmt) {
-	if handleMarker(idx, ifst, parseIP, pass) {
-		return
-	}
+	pass = markerPass(idx, ifst, parseIP, pass)
 	valName := firstIdentLHS(assign)
 	if valName == "" {
 		pass.Reportf(ifst.Pos(),
@@ -289,17 +281,17 @@ func hasCaptureInBody(info *types.Info, body *ast.BlockStmt, name string) bool {
 	return false
 }
 
-func handleMarker(idx *markers.Index, node ast.Node, callee string, pass *analysis.Pass) bool {
+func markerPass(idx *markers.Index, node ast.Node, callee string, pass *analysis.Pass) *analysis.Pass {
 	m, ok := idx.Above(node)
 	if !ok || m.Kind != markers.ParseSkip {
-		return false
+		return pass
 	}
 	if reasonRequiresCapture(m.Reason) {
 		pass.Reportf(m.Pos,
 			"ERC002: %s with `parse-skip: %s` indicates a real error and must capture instead",
 			callee, m.Reason)
 	}
-	return true
+	return markers.Suppress(pass, m)
 }
 
 func reasonRequiresCapture(reason string) bool {

@@ -19,7 +19,7 @@ import sys
 import pytest
 from pathlib import Path
 
-from conftest import init_repo, tackbox_env
+from conftest import commit_all, git, init_repo, tackbox_env
 
 from tackbox import cli, hookproto
 
@@ -355,18 +355,16 @@ def test_pre_ask_text_matches_the_claude_host(tmp_path):
     assert protocol["reason"] == reason == CANON_SINGLE
 
 
-# -- Post: the consistency wall and the diff-scoped lint arm
+# -- Post: session debt and diff-scoped lint
 
 
+@pytest.mark.parametrize("phase", ["pre", "post"])
 @pytest.mark.parametrize("tool", ["bash", "eval"])
-def test_post_target_free_channel_runs_the_whole_tree_wall(tmp_path, tool):
-    # Target-free channels must still exercise the worktree wall.
+def test_target_free_channel_ignores_approvals(tmp_path, phase, tool):
     _repo(tmp_path)
     (tmp_path / "svc.py").write_text("# no-report: shelled in at module scope\nx = 1\n")
-    payload = _decide(_event("post", tmp_path, tool, []))
-    assert payload["decision"] == "block", payload
-    assert "Unapproved suppression marker" in payload["reason"], payload
-    assert "svc.py: no-report: shelled in at module scope" in payload["reason"], payload
+    payload = _decide(_event(phase, tmp_path, tool, []))
+    assert payload == {"protocol": 1, "decision": "allow", "reason": ""}
 
 
 def test_post_clean_tree_allows(tmp_path):
@@ -473,14 +471,14 @@ def test_post_unknown_payload_warns_without_blocking(tmp_path):
     )
 
 
-def test_post_wall_keeps_unknown_verification_failure(tmp_path):
+def test_post_unknown_mutation_does_not_attribute_unrelated_debt(tmp_path):
     _repo(tmp_path)
     (tmp_path / "svc.py").write_text("# no-report: unapproved marker\nx = 1\n")
     reason = "tackbox cannot classify this edit call"
     payload = _decide(_event("post", tmp_path, "edit", [], unknown=reason))
-    assert payload["decision"] == "block", payload
-    assert "Unapproved suppression marker" in payload["reason"], payload
-    assert f"verification uncertainty: tackbox hook: {reason}" in payload["reason"], payload
+    assert payload["decision"] == "warn", payload
+    assert reason in payload["reason"]
+    assert "svc.py" not in payload["reason"]
 
 
 # -- unit: the event model and path handling
@@ -852,3 +850,93 @@ def test_excluded_target_with_unavailable_attribute_child_is_unverified(tmp_path
     outcome = _active_outcome(tmp_path, event)
     assert outcome.kind is hookproto.OutcomeKind.UNVERIFIED
     assert "git check-attr unavailable" in outcome.reason
+
+
+def test_session_debt_blocks_only_outside_the_fix_set(tmp_path):
+    _repo(tmp_path)
+    (tmp_path / "debt.js").write_text("// no-report: old debt belongs to CI\ntry { f() } catch (e) {}\n")
+    (tmp_path / "other.js").write_text("const value = 1\n")
+    commit_all(tmp_path)
+    other = _edit_target(tmp_path, "other.js", ["const value = 2"])
+    assert _decide(_event("pre", tmp_path, "edit", [other]))["decision"] == "allow"
+    (tmp_path / "other.js").write_text("const value = 2\n")
+    assert _decide(_event("post", tmp_path, "edit", [other]))["decision"] == "allow"
+    (tmp_path / "new.js").write_text("// no-report: caller tolerates this failure\ntry { f() } catch (e) {}\n")
+    git(tmp_path, "add", "new.js")
+    blocked = _decide(_event("pre", tmp_path, "edit", [other]))
+    assert blocked["decision"] == "block"
+    assert len(blocked["reason"].splitlines()) == 1
+    assert "new.js:1:" in blocked["reason"] and "every catch path must throw" in blocked["reason"]
+    assert "#<h" not in blocked["reason"] and "old debt" not in blocked["reason"]
+    marker = _edit_target(tmp_path, "new.js", ["throw e"])
+    assert _decide(_event("pre", tmp_path, "edit", [marker]))["decision"] == "allow"
+    repair = _edit_target(tmp_path, ".tackbox/approvals", [], removed=["obsolete"])
+    assert _decide(_event("pre", tmp_path, "edit", [repair]))["decision"] == "allow"
+    assert _decide(_event("pre", tmp_path, "edit", [marker, other]))["decision"] == "block"
+    assert _decide(_event("post", tmp_path, "edit", [other]))["decision"] == "allow"
+    posted = _decide(_event("post", tmp_path, "write", [
+        _write_target(tmp_path, "new.js", (tmp_path / "new.js").read_text())
+    ]))
+    assert posted["decision"] == "block" and "every catch path must throw" in posted["reason"]
+    (tmp_path / ".tackbox").mkdir()
+    (tmp_path / ".tackbox/approvals").write_text("new.js: no-report: caller tolerates this failure\n")
+    assert _decide(_event("pre", tmp_path, "edit", [other]))["decision"] == "allow"
+
+
+@pytest.mark.parametrize("delete_file", [False, True])
+def test_deleted_marker_with_retained_approval_creates_session_debt(tmp_path, delete_file):
+    _repo(tmp_path)
+    marker = "# no-report: caller tolerates this failure\n"
+    (tmp_path / "marker.py").write_text(marker + "x = 1\n")
+    (tmp_path / ".tackbox").mkdir()
+    (tmp_path / ".tackbox/approvals").write_text("marker.py: no-report: caller tolerates this failure\n")
+    commit_all(tmp_path)
+    if delete_file:
+        (tmp_path / "marker.py").unlink()
+    else:
+        (tmp_path / "marker.py").write_text("x = 1\n")
+    target = _edit_target(tmp_path, "other.py", ["x = 1"])
+    blocked = _decide(_event("pre", tmp_path, "edit", [target]))
+    assert blocked["decision"] == "block"
+    assert blocked["reason"] == ".tackbox/approvals:1: approval has no matching marker: remove the line"
+    (tmp_path / ".tackbox/approvals").write_text("")
+    assert _decide(_event("pre", tmp_path, "edit", [target]))["decision"] == "allow"
+
+
+def test_added_orphan_and_unborn_tree_are_session_debt(tmp_path):
+    (tmp_path / "dev.py").write_text("# hook entry\n")
+    init_repo(tmp_path)
+    (tmp_path / "new.py").write_text("try:\n    work()\nexcept ValueError:\n    # no-report: caller tolerates this failure\n    pass\n")
+    other = _edit_target(tmp_path, "other.py", ["x = 1"])
+    blocked = _decide(_event("pre", tmp_path, "edit", [other]))
+    assert blocked["decision"] == "block" and "let the exception propagate" in blocked["reason"]
+    (tmp_path / "new.py").write_text("x = 1\n")
+    commit_all(tmp_path)
+    (tmp_path / ".tackbox").mkdir()
+    (tmp_path / ".tackbox/approvals").write_text("missing.py: no-report: nonexistent occurrence\n")
+    blocked = _decide(_event("pre", tmp_path, "edit", [other]))
+    assert blocked["decision"] == "block" and ".tackbox/approvals:1:" in blocked["reason"]
+
+
+@pytest.mark.parametrize("duplicate", ["marker", "approval"])
+def test_session_debt_assigns_duplicate_capacity_to_unchanged_lines_first(tmp_path, duplicate):
+    _repo(tmp_path)
+    marker = "# no-report: caller tolerates this failure\n"
+    entry = "marker.py: no-report: caller tolerates this failure\n"
+    original = "x = 1\n" + marker + "y = 2\n"
+    (tmp_path / "marker.py").write_text(original)
+    (tmp_path / ".tackbox").mkdir()
+    manifest = tmp_path / ".tackbox/approvals"
+    manifest.write_text("\n" + entry)
+    commit_all(tmp_path)
+    if duplicate == "marker":
+        (tmp_path / "marker.py").write_text(marker + original)
+        expected = "marker.py:1: unapproved no-report marker"
+    else:
+        manifest.write_text(entry + "\n" + entry)
+        expected = ".tackbox/approvals:1: approval has no matching marker"
+    other = _edit_target(tmp_path, "other.py", ["x = 1"])
+    blocked = _decide(_event("pre", tmp_path, "edit", [other]))
+    assert blocked["decision"] == "block"
+    assert blocked["reason"].startswith(expected)
+    assert len(blocked["reason"].splitlines()) == 1

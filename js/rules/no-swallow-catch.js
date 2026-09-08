@@ -1,5 +1,5 @@
 const {
-  hasMarkerAbove,
+  reportWithMarker,
   enclosingFn,
   fnReturnsResultLike,
   makeHandledAnalysis,
@@ -20,11 +20,10 @@ module.exports = {
         const body = node.body
         if (!body || body.type !== 'BlockStatement') return
         const tryStmt = node.parent
-        if (tryStmt && hasMarkerAbove(context, tryStmt, 'no-report')) return
         const errName = node.param && node.param.type === 'Identifier' ? node.param.name : null
         const allowBoundary = fnReturnsResultLike(enclosingFn(node))
         if (makeHandledAnalysis({ context, errName, allowBoundary }).handled(body)) return
-        context.report({ node, messageId: 'swallow' })
+        reportWithMarker(context, { node, messageId: 'swallow' }, tryStmt, 'no-report', module.exports.meta.messages)
       },
     }
   },

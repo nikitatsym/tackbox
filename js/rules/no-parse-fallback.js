@@ -1,5 +1,5 @@
 const {
-  hasMarkerAbove,
+  reportWithMarker,
   enclosingFn,
   fnReturnsResultLike,
   errObjectFlows,
@@ -139,11 +139,10 @@ module.exports = {
         if (!tryBlockParses(node.block)) return
         const handler = node.handler
         if (!handler || !handler.body || handler.body.type !== 'BlockStatement') return
-        if (hasMarkerAbove(context, node, 'parse-skip')) return
         const errName = handler.param && handler.param.type === 'Identifier' ? handler.param.name : null
         const allowBoundary = fnReturnsResultLike(enclosingFn(node))
         if (catchPropagates(handler.body, errName, allowBoundary)) return
-        context.report({ node: handler, messageId: 'fallback' })
+        reportWithMarker(context, { node: handler, messageId: 'fallback' }, node, 'parse-skip', module.exports.meta.messages)
       },
     }
   },

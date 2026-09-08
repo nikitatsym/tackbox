@@ -9,7 +9,7 @@ const HEADLESS_NOTE =
   'tackbox cannot ask here (no interactive session), so the call is blocked' +
   ' instead of approved. Re-issue it interactively, or drop the gated line.'
 const DENIED = 'tackbox: approval denied.'
-const BLOCKED = 'tackbox blocked this change:'
+const FINDINGS = 'tackbox found issues after this change:'
 
 module.exports = function tackbox(pi) {
   pi.setLabel('tackbox')
@@ -61,7 +61,7 @@ function applyPost(decision, event) {
   const kind = decision && decision.kind
   if (kind === hook.BLOCK) {
     return {
-      content: appended(event, `${BLOCKED}\n${decision.reason}`),
+      content: appended(event, `${FINDINGS}\n${decision.reason}`),
       isError: true,
     }
   }

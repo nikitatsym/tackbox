@@ -134,6 +134,13 @@ func mustSingleFinding(t *testing.T, dir string, raw []byte, zones callableZones
 	t.Helper()
 	out, n := emitZonesTo(t, dir, raw, zones, true)
 	findings := parseNDJSON(t, out)
+	visible := findings[:0]
+	for _, finding := range findings {
+		if !finding.Suppressed {
+			visible = append(visible, finding)
+		}
+	}
+	findings = visible
 	if n != 1 || len(findings) != 1 || findings[0].Rule != rule {
 		t.Fatalf("want one %s, got n=%d findings=%+v", rule, n, findings)
 	}
@@ -175,8 +182,9 @@ func TestDupOkOneEndpointSuppressed(t *testing.T) {
 		t.Fatalf("expected 1 surviving endpoint, got %d\n%s", n, out)
 	}
 	fs := parseNDJSON(t, out)
-	if len(fs) != 1 || fs[0].File != "b.go" || fs[0].Line != 8 {
-		t.Fatalf("expected only b.go:8, got %v", fs)
+	if len(fs) != 2 || fs[0].File != "a.go" || !fs[0].Suppressed || fs[0].MarkerLine != 4 ||
+		fs[0].MarkerKind != "dup-ok" || fs[1].File != "b.go" || fs[1].Line != 8 || fs[1].Suppressed {
+		t.Fatalf("expected suppressed a.go and visible b.go, got %v", fs)
 	}
 }
 
@@ -204,8 +212,13 @@ func TestDupOkBothEndpointsSuppressedClean(t *testing.T) {
 		if n != 0 {
 			t.Fatalf("machine=%t: expected clean (0 survivors), got %d\n%s", machine, n, out)
 		}
-		if strings.TrimSpace(out) != "" {
-			t.Fatalf("machine=%t: expected no output, got %q", machine, out)
+		if machine {
+			findings := parseNDJSON(t, out)
+			if len(findings) != 2 || !findings[0].Suppressed || !findings[1].Suppressed {
+				t.Fatalf("expected both suppressed endpoints, got %+v", findings)
+			}
+		} else if strings.TrimSpace(out) != "" {
+			t.Fatalf("expected no human output, got %q", out)
 		}
 	}
 }

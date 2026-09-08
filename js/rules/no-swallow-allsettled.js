@@ -1,4 +1,4 @@
-const { hasMarkerAbove, enclosingFn, someNode } = require('./_shared')
+const { reportWithMarker, enclosingFn, someNode } = require('./_shared')
 
 // isAllSettledCall: syntactic `Promise.allSettled(...)`. Matched by shape, not
 // resolution - Promise is a global and allSettled is unambiguous.
@@ -43,9 +43,8 @@ module.exports = {
     return {
       CallExpression(node) {
         if (!isAllSettledCall(node)) return
-        if (hasMarkerAbove(context, node, 'no-report')) return
         if (refsReason(enclosingFn(node) || sc.ast)) return
-        context.report({ node, messageId: 'swallow' })
+        reportWithMarker(context, { node, messageId: 'swallow' }, node, 'no-report', module.exports.meta.messages)
       },
     }
   },

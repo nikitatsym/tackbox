@@ -392,12 +392,18 @@ function blockHasReport(context, block, errName) {
   return found
 }
 
-// markerText reports whether a comment's raw text is `<prefix>: <reason>` with
-// reason at least MIN_REASON chars (D009) - the shared marker shape.
-function markerText(raw, prefix) {
+// Multiline HTML comments locate approval identity at the keyword, not the delimiter.
+function markerLine(comment, prefix) {
+  const raw = comment.value
   const text = raw.trim()
-  if (!text.startsWith(prefix + ':')) return false
-  return text.slice(prefix.length + 1).trim().length >= MIN_REASON
+  const marker = prefix + ':'
+  if (!text.startsWith(marker) || text.slice(marker.length).trim().length < MIN_REASON) return null
+  let line = comment.loc.start.line
+  const offset = raw.indexOf(marker)
+  for (let i = 0; i < offset; i++) {
+    if (raw[i] === '\n') line++
+  }
+  return line
 }
 
 // precedingSvelteSibling returns the template node immediately before `el` among
@@ -416,30 +422,51 @@ function precedingSvelteSibling(el) {
   return null
 }
 
-// hasMarkerAbove returns true when a suppression marker `<prefix>: <reason>`
-// (reason at least MIN_REASON chars, D009) sits above node. Two forms: a `//`
-// comment block directly above node - any of its contiguous lines, so a long
-// reason can be followed by human context, a blank line breaking the block - and,
-// in a Svelte template, an HTML comment `<!-- ... -->` immediately above an
-// enclosing element, which covers the whole element (residual A8: an inline
-// handler can span lines). getAllComments omits SvelteHTMLComment nodes, so the
-// template form is read off the element's preceding sibling.
-function hasMarkerAbove(context, node, prefix) {
-  if (!node || !node.loc) return false
+// Svelte HTML comments cover the following element, not just its first line.
+function markerAbove(context, node, prefix) {
+  if (!node || !node.loc) return null
   const sourceCode = context.sourceCode || context.getSourceCode()
   const byEndLine = new Map()
   for (const c of sourceCode.getAllComments()) {
     if (c.type === 'Line') byEndLine.set(c.loc.end.line, c)
   }
   for (let line = node.loc.start.line - 1; byEndLine.has(line); line--) {
-    if (markerText(byEndLine.get(line).value, prefix)) return true
+    const comment = byEndLine.get(line)
+    const marker = markerLine(comment, prefix)
+    if (marker !== null) return marker
   }
   for (let cur = node.parent; cur; cur = cur.parent) {
     if (cur.type !== 'SvelteElement') continue
     const sib = precedingSvelteSibling(cur)
-    if (sib && sib.type === 'SvelteHTMLComment' && markerText(sib.value, prefix)) return true
+    if (sib && sib.type === 'SvelteHTMLComment') {
+      const marker = markerLine(sib, prefix)
+      if (marker !== null) return marker
+    }
   }
-  return false
+  return null
+}
+
+let suppressedReporter = null
+
+function setSuppressedReporter(reporter) {
+  suppressedReporter = reporter
+}
+
+function reportWithMarker(context, descriptor, anchor, kind, messages) {
+  const line = markerAbove(context, anchor, kind)
+  if (line === null) {
+    context.report(descriptor)
+  } else if (suppressedReporter) {
+    suppressedReporter({
+      file: context.filename || context.getFilename(),
+      line: descriptor.node.loc.start.line,
+      rule: context.id,
+      message: messages[descriptor.messageId],
+      suppressed: true,
+      marker_kind: kind,
+      marker_line: line,
+    })
+  }
 }
 
 // --- F2b: path-sensitive no-swallow analysis -----------------------------
@@ -835,7 +862,8 @@ module.exports = {
   walk,
   blockHasThrow,
   blockHasReport,
-  hasMarkerAbove,
+  reportWithMarker,
+  setSuppressedReporter,
   enclosingFn,
   fnReturnsResultLike,
   someNode,

@@ -309,10 +309,9 @@ test('a post violation appends findings and makes the tool result an error', asy
     content: [{ type: 'text', text: 'original result' }],
   })
   assert.equal(result.isError, true)
-  assert.deepEqual(result.content, [
-    { type: 'text', text: 'original result' },
-    { type: 'text', text: 'tackbox blocked this change:\na.js:1: TBX001: fix it' },
-  ])
+  assert.deepEqual(result.content[0], { type: 'text', text: 'original result' })
+  assert.match(result.content[1].text, /a.js:1: TBX001: fix it/)
+  assert.doesNotMatch(result.content[1].text, /blocked/i)
 })
 
 test('a post infrastructure failure preserves successful result state and forbids repetition', async () => {
@@ -393,7 +392,7 @@ test('a thrown aggregate result still scopes successful per-file details', async
     content: 'const landed = true\n',
   }])
 })
-test('pathless noop details invoke the target-free post wall', async () => {
+test('pathless noop details reach the target-free post channel', async () => {
   const record = path.join(DIR, `noop-${stubs}.json`)
   const command = commandFor(`let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => { input += chunk }); process.stdin.on('end', () => { require('node:fs').writeFileSync(${JSON.stringify(record)}, input); process.stdout.write(${JSON.stringify(JSON.stringify({ protocol: 1, decision: 'allow', reason: '' }))}) })`)
   const result = await toolResult(command, {

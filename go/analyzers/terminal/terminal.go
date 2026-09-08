@@ -42,12 +42,10 @@ func run(pass *analysis.Pass) (interface{}, error) {
 				if class == callNone {
 					continue
 				}
-				if m, ok := idx.Above(st); ok && m.Kind == markers.NoReport {
-					continue
-				}
+				reporter := markers.AbovePass(pass, idx, st, markers.NoReport)
 				if class == callUsage {
 					if len(branchErr[call]) > 0 {
-						pass.Reportf(call.Pos(),
+						reporter.Reportf(call.Pos(),
 							"ERC003: usage sink `%s` on a failure path - capture and exit, or log.Fatal(err)",
 							astutil.QualifiedName(call.Fun))
 					}
@@ -59,7 +57,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 				if carriesErr(call, branchErr[call]) {
 					continue
 				}
-				pass.Reportf(call.Pos(),
+				reporter.Reportf(call.Pos(),
 					"ERC003: terminal exit `%s` must be preceded by a capture or carry the error into its arguments",
 					astutil.QualifiedName(call.Fun))
 			}

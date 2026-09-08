@@ -47,10 +47,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			if hasReason(call, sel.Sel.Name) {
 				return true
 			}
-			if m, ok := idx.Above(call); ok && m.Kind == markers.TestSkip {
-				return true
-			}
-			pass.Reportf(call.Pos(),
+			markers.AbovePass(pass, idx, call, markers.TestSkip).Reportf(call.Pos(),
 				"ERC008: skipped test must state a reason: pass it to %s",
 				sel.Sel.Name)
 			return true

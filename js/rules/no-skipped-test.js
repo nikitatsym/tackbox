@@ -1,4 +1,4 @@
-const { hasMarkerAbove, matchesTestModifier, isStaticString, staticStringValue, TEST_ROOTS } = require('./_shared')
+const { reportWithMarker, matchesTestModifier, isStaticString, staticStringValue, TEST_ROOTS } = require('./_shared')
 
 const SKIP_PROPS = new Set(['skip', 'todo', 'skipIf', 'fixme'])
 const BARE = new Set(['xit', 'xdescribe', 'xtest'])
@@ -80,14 +80,12 @@ module.exports = {
       CallExpression(node) {
         if (matchesTestModifier(node.callee, BARE, n => SKIP_PROPS.has(n))) {
           if (hasInCallReason(node)) return
-          if (hasMarkerAbove(context, outermostCall(node), 'test-skip')) return
-          context.report({ node, messageId: 'skipped' })
+          reportWithMarker(context, { node, messageId: 'skipped' }, outermostCall(node), 'test-skip', module.exports.meta.messages)
           return
         }
         if (node.callee.type === 'Identifier' && TEST_ROOTS.has(node.callee.name)) {
           if (optionsSkipVerdict(node) !== 'flag') return
-          if (hasMarkerAbove(context, outermostCall(node), 'test-skip')) return
-          context.report({ node, messageId: 'skipped' })
+          reportWithMarker(context, { node, messageId: 'skipped' }, outermostCall(node), 'test-skip', module.exports.meta.messages)
         }
       },
     }

@@ -46,7 +46,7 @@ class MarkerIndex:
         prefix: str = NO_REPORT,
     ):
         self._prefix = prefix
-        self._suppress_bottoms: set[int] = set()
+        self._suppress_bottoms: dict[int, int] = {}
         if file_tokens:
             self._build(file_tokens)
 
@@ -57,19 +57,20 @@ class MarkerIndex:
             if tok.type == tokenize.COMMENT and _is_standalone(tok)
         )
         block_rows: list[int] = []
-        block_marked = False
+        block_marked = 0
         for row, text in comments:
             if block_rows and row != block_rows[-1] + 1:
                 self._flush(block_rows, block_marked)
-                block_rows, block_marked = [], False
+                block_rows, block_marked = [], 0
             block_rows.append(row)
-            block_marked = block_marked or _marker_reason_ok(text, self._prefix)
+            if _marker_reason_ok(text, self._prefix):
+                block_marked = row
         self._flush(block_rows, block_marked)
 
-    def _flush(self, rows: list[int], marked: bool) -> None:
+    def _flush(self, rows: list[int], marked: int) -> None:
         if rows and marked:
-            self._suppress_bottoms.add(rows[-1])
+            self._suppress_bottoms[rows[-1]] = marked
 
-    def suppresses(self, node_line: int) -> bool:
-        """True iff a marker block ends directly above `node_line`."""
-        return (node_line - 1) in self._suppress_bottoms
+    def above(self, node_line: int) -> int | None:
+        """Return the marker's line when its block ends above `node_line`."""
+        return self._suppress_bottoms.get(node_line - 1)

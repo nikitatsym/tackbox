@@ -1,4 +1,4 @@
-const { hasMarkerAbove, makeHandledAnalysis } = require('./_shared')
+const { reportWithMarker, makeHandledAnalysis } = require('./_shared')
 
 // rejectionHandler returns the rejection-handler argument of a promise
 // method: `.catch(onErr)` -> arg 0, `.then(onOk, onErr)` -> arg 1. A single-arg
@@ -28,10 +28,9 @@ module.exports = {
         const handler = rejectionHandler(node)
         if (!handler) return
         if (handler.type !== 'ArrowFunctionExpression' && handler.type !== 'FunctionExpression') return
-        if (hasMarkerAbove(context, node, 'no-report')) return
         const errName = handler.params[0] && handler.params[0].type === 'Identifier' ? handler.params[0].name : null
         if (makeHandledAnalysis({ context, errName, allowBoundary: false, returnIdentity: true }).handled(handler.body)) return
-        context.report({ node, messageId: 'swallow' })
+        reportWithMarker(context, { node, messageId: 'swallow' }, node, 'no-report', module.exports.meta.messages)
       },
     }
   },

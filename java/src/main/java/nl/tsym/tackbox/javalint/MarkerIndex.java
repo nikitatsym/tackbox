@@ -53,7 +53,7 @@ public final class MarkerIndex {
             int line = lc.getRange().get().begin.line;
             if (!standalone) {
                 dead.add(new Dead(line, kind, Cause.TRAILING));
-            } else if (Marker.parse(lc.getContent()) == null) {
+            } else if (Marker.parse(lc.getContent(), line) == null) {
                 dead.add(new Dead(line, kind, Cause.SHORT_REASON));
             }
         }
@@ -70,7 +70,7 @@ public final class MarkerIndex {
                 flush(groupLast, groupMarker);
                 groupMarker = null;
             }
-            Marker m = Marker.parse(c.getContent());
+            Marker m = Marker.parse(c.getContent(), begin);
             if (m != null) {
                 groupMarker = m; // later comment wins: nearest the node
             }

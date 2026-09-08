@@ -5,6 +5,7 @@ import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.stmt.CatchClause;
 import java.util.List;
 import nl.tsym.tackbox.javalint.Finding;
+import nl.tsym.tackbox.javalint.Marker;
 import nl.tsym.tackbox.javalint.MarkerIndex;
 import nl.tsym.tackbox.javalint.Recognition;
 
@@ -29,27 +30,22 @@ public final class SwallowRule extends CatchRule {
 
     @Override
     void check(String file, CompilationUnit cu, MarkerIndex markers, CatchClause cc, List<Finding> out) {
-        int silent = silentEnd(cu, cc, markers);
-        if (silent < 0) {
-            return;
+        String caught = cc.getParameter().getNameAsString();
+        Flow.SilentPaths paths = Flow.silentPaths(cc.getBody(),
+                call -> rec.capturesOrPrints(cu, call, caught) || rec.notifies(cu, call, caught),
+                markers, Markers.noReportAbove(markers, cc));
+        if (paths.line() >= 0) {
+            out.add(finding(file, cc, markers, paths.line(), null));
         }
-        Position p = cc.getBegin().orElseThrow();
-        out.add(new Finding(ID, file, p.line, p.column, p.line, p.column,
-                MESSAGE + " (a silent path ends at line " + silent + ")"
-                        + Markers.deadNoReportHint(markers, cc)));
+        for (var suppressed : paths.suppressed().entrySet()) {
+            out.add(finding(file, cc, markers, suppressed.getValue(), suppressed.getKey()));
+        }
     }
 
-    /** The line the first silent path ends on, or -1 for a clean catch. */
-    private int silentEnd(CompilationUnit cu, CatchClause cc, MarkerIndex markers) {
-        if (Markers.noReportAbove(markers, cc)) {
-            return -1;
-        }
-        String caught = cc.getParameter().getNameAsString();
-        // A notify carrying the caught routes it to the user lane, terminating
-        // that path (D006), so a notified path is not silent. NotifyGateRule
-        // (JV009) decides whether the catch type is narrow enough.
-        return Flow.silentPathEnd(cc.getBody(),
-                call -> rec.capturesOrPrints(cu, call, caught) || rec.notifies(cu, call, caught),
-                markers);
+    private Finding finding(String file, CatchClause cc, MarkerIndex markers, int silent, Marker marker) {
+        Position p = cc.getBegin().orElseThrow();
+        return new Finding(ID, file, p.line, p.column, p.line, p.column,
+                MESSAGE + " (a silent path ends at line " + silent + ")"
+                        + Markers.deadNoReportHint(markers, cc), marker);
     }
 }

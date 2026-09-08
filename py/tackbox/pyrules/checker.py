@@ -10,8 +10,11 @@ stays id-for-id. TBX008 (python-test-skip) is py-native from the start.
 from __future__ import annotations
 
 import ast
+import io
+import json
 import re
 import sys
+import tokenize
 
 from tackbox import __version__ as _version
 
@@ -501,11 +504,13 @@ class _Visitor(ast.NodeVisitor):
         self.owner = owner
         self.unittest_skip = unittest_skip
         self.in_test_file = in_test_file
-        self.findings: list[tuple[int, int, str, str]] = []
+        self.findings: list[tuple[int, int, str, str, str | None, int | None]] = []
         self._func_depth = 0
 
-    def _add(self, node: ast.AST, code: str, detail: str = "") -> None:
-        self.findings.append((node.lineno, node.col_offset, code, detail))
+    def _add(self, node: ast.AST, code: str, detail: str = "",
+             marker_line: int | None = None, marker_kind: str = "no-report") -> None:
+        self.findings.append((node.lineno, node.col_offset, code, detail,
+                              marker_kind if marker_line else None, marker_line))
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._check_skip_decorators(node)
@@ -520,14 +525,12 @@ class _Visitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def _check_skip_decorators(self, node: ast.AST) -> None:
-        # Marker anchors to the flagged decorator's own line: `suppresses` is
-        # line-above, and the flagged decorator (not the first) is the natural
-        # anchor - the marker sits next to the construct it excuses.
+        # The flagged decorator, not the first decorator, owns its marker.
         for dec in node.decorator_list:
             if not _skip_decorator_flag(dec, self.unittest_skip):
                 continue
-            if not self.skip_markers.suppresses(dec.lineno):
-                self._add(dec, "TBX008")
+            self._add(dec, "TBX008", marker_line=self.skip_markers.above(dec.lineno),
+                      marker_kind="test-skip")
 
     def visit_Import(self, node: ast.Import) -> None:
         if self._func_depth > 0:
@@ -543,8 +546,8 @@ class _Visitor(ast.NodeVisitor):
         if _is_suppress_call(node) and not _suppress_allowlisted(node):
             self._add(node, "TBX002")
         if _is_pytest_skip_call(node) and not _reason_present(node, positional=True, kw=True):
-            if not self.skip_markers.suppresses(node.lineno):
-                self._add(node, "TBX008")
+            self._add(node, "TBX008", marker_line=self.skip_markers.above(node.lineno),
+                      marker_kind="test-skip")
         if not self.in_test_file and not self.owner:
             self._check_reporter_args(node)  # TBX011 skips tests (D008 amend) + owner (D010)
         self.generic_visit(node)
@@ -594,7 +597,7 @@ class _Visitor(ast.NodeVisitor):
             self._check_notify(handler)  # TBX010 skips tests (D008 amend) + owner (D010)
 
         if self._swallows(try_node, handler):
-            self._add(try_node, "TBX001")
+            self._add(try_node, "TBX001", marker_line=self.markers.above(handler.body[0].lineno))
 
     def _check_notify(self, handler: ast.ExceptHandler) -> None:
         """TBX010: a notify carrying the caught error must be narrowed. For a
@@ -604,15 +607,12 @@ class _Visitor(ast.NodeVisitor):
         if not _notifies(handler, self.resolve):
             return
         if _is_broad_except(handler):
-            if not self.markers.suppresses(handler.body[0].lineno):
-                self._add(handler, "TBX010")
+            self._add(handler, "TBX010", marker_line=self.markers.above(handler.body[0].lineno))
         elif _lane_conflict(handler.body, self.resolve, self.reporter_names, handler.name):
             self._add(handler, "TBX010", _DOUBLE_LANE_MSG)
 
     def _swallows(self, try_node: ast.Try, handler: ast.ExceptHandler) -> bool:
         if _is_shutdown_carveout(handler):
-            return False
-        if self.markers.suppresses(handler.body[0].lineno):
             return False
         return _silent_path(handler.body, self.resolve, self.reporter_names, handler.name)
 
@@ -631,7 +631,7 @@ class Plugin:
         self.filename = filename
         self.file_tokens = file_tokens
 
-    def run(self):
+    def analyze(self):
         owner = _is_owner_file(self.filename)
         visitor = _Visitor(
             MarkerIndex(self.file_tokens),
@@ -643,7 +643,12 @@ class Plugin:
             _is_test_file(self.filename),
         )
         visitor.visit(self.tree)
-        for line, col, code, detail in visitor.findings:
+        return visitor.findings
+
+    def run(self):
+        for line, col, code, detail, _kind, marker_line in self.analyze():
+            if marker_line is not None:
+                continue
             msg = detail or MESSAGES[code]
             text = f"{code} {CODE_TO_ID[code]}: {msg}"
             yield line, col, text, type(self)
@@ -686,6 +691,26 @@ def _parse_reporter_specs(raw: str) -> list[tuple[str, str]]:
     return specs
 
 
+def _machine(files: list[str], options) -> int:
+    Plugin.parse_options(options)
+    failed = False
+    for filename in files:
+        with tokenize.open(filename) as source:
+            content = source.read()
+        tree = ast.parse(content, filename=filename)
+        tokens = list(tokenize.generate_tokens(io.StringIO(content).readline))
+        plugin = Plugin(tree, filename, tokens)
+        for line, _col, code, detail, kind, marker_line in plugin.analyze():
+            suppressed = marker_line is not None
+            print(json.dumps({
+                "file": filename, "line": line, "rule": CODE_TO_ID[code],
+                "message": detail or MESSAGES[code], "suppressed": suppressed,
+                "marker_kind": kind, "marker_line": marker_line,
+            }))
+            failed |= not suppressed
+    return int(failed)
+
+
 if __name__ == "__main__":
     # Run form: python -m tackbox.pyrules.checker --files-from <list> <flake8 flags>
     # The file list rides --files-from (thousands of paths on argv overflow
@@ -698,7 +723,11 @@ if __name__ == "__main__":
 
     _parser = argparse.ArgumentParser(add_help=False)
     _parser.add_argument("--files-from", required=True)
+    _parser.add_argument("--machine", action="store_true")
+    _parser.add_argument("--reporters", default="")
     _ns, _passthrough = _parser.parse_known_args()
     with open(_ns.files_from, encoding="utf-8") as _fh:
         _files = [line for line in _fh.read().splitlines() if line]
-    sys.exit(_flake8_cli.main([*_passthrough, *_files]))
+    if _ns.machine:
+        sys.exit(_machine(_files, _ns))
+    sys.exit(_flake8_cli.main([*_passthrough, f"--reporters={_ns.reporters}", *_files]))

@@ -17,6 +17,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Predicate;
 import nl.tsym.tackbox.javalint.MarkerIndex;
+import nl.tsym.tackbox.javalint.Marker;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
 
 /** Path walk of a catch body: the spec's same-branch doctrine judges execution
  *  paths, not the flat statement bag, so a terminal guard (`if (...) throw ...;`)
@@ -65,20 +70,16 @@ final class Flow {
         return scan.found;
     }
 
-    /** JV001: some execution path terminates (return, break, continue, or the
-     *  body's end) without a report on the way and without marker cover; the
-     *  result is the line that path ends on, or -1 when every path is covered.
-     *  A throw is never a silent termination. Marker cover is per-statement: a
-     *  no-report block above a statement covers every path executing it,
-     *  which subsumes the whole-catch placement above the first statement. */
-    static int silentPathEnd(BlockStmt body, Predicate<MethodCallExpr> reports,
-            MarkerIndex markers) {
+    record SilentPaths(int line, Map<Marker, Integer> suppressed) {}
+
+    static SilentPaths silentPaths(BlockStmt body, Predicate<MethodCallExpr> reports,
+            MarkerIndex markers, Marker cover) {
         SilentScan scan = new SilentScan(reports, markers);
-        SilentScan.St out = scan.block(body, SilentScan.BARE);
-        if (scan.hitLine >= 0) {
-            return scan.hitLine;
-        }
-        return out.bare() ? body.getEnd().orElseThrow().line : -1;
+        SilentScan.St initial = cover == null ? SilentScan.BARE
+                : new SilentScan.St(false, false, Set.of(cover));
+        SilentScan.St out = scan.block(body, initial);
+        scan.terminate(out, body.getEnd().orElseThrow().line);
+        return new SilentPaths(scan.hitLine, scan.suppressed);
     }
 
     /** JV006 walk. State: does a clean path reach here, does a captured one
@@ -199,24 +200,29 @@ final class Flow {
      *  inside covers the paths passing through them. */
     private static final class SilentScan {
 
-        /** (bare path alive, safe path alive). */
-        record St(boolean bare, boolean safe) {
+        record St(boolean bare, boolean safe, Set<Marker> markers) {
             boolean dead() {
-                return !bare && !safe;
+                return !bare && !safe && markers.isEmpty();
             }
 
             St or(St o) {
-                return new St(bare || o.bare, safe || o.safe);
+                Set<Marker> merged = markers;
+                if (!markers.containsAll(o.markers)) {
+                    merged = new LinkedHashSet<>(markers);
+                    merged.addAll(o.markers);
+                }
+                return new St(bare || o.bare, safe || o.safe, merged);
             }
         }
 
-        static final St BARE = new St(true, false);
-        private static final St DEAD = new St(false, false);
-        private static final St SAFE = new St(false, true);
+        static final St BARE = new St(true, false, Set.of());
+        private static final St DEAD = new St(false, false, Set.of());
+        private static final St SAFE = new St(false, true, Set.of());
 
         private final Predicate<MethodCallExpr> reports;
         private final MarkerIndex markers;
         int hitLine = -1;
+        final Map<Marker, Integer> suppressed = new LinkedHashMap<>();
 
         SilentScan(Predicate<MethodCallExpr> reports, MarkerIndex markers) {
             this.reports = reports;
@@ -226,8 +232,11 @@ final class Flow {
         St block(BlockStmt b, St in) {
             St s = in;
             for (Statement st : b.getStatements()) {
-                if (s.bare() && Markers.noReportAbove(markers, st)) {
-                    s = new St(false, true);
+                Marker marker = s.bare() ? Markers.noReportAbove(markers, st) : null;
+                if (marker != null) {
+                    Set<Marker> covered = new LinkedHashSet<>(s.markers());
+                    covered.add(marker);
+                    s = new St(false, s.safe(), covered);
                 }
                 s = step(st, s);
             }
@@ -236,7 +245,7 @@ final class Flow {
 
         private St step(Statement st, St in) {
             // dup-ok: parallel state walkers kept separate on purpose; generic merge couples them
-            if (hitLine >= 0 || in.dead()) {
+            if (in.dead()) {
                 return in;
             }
             if (st instanceof BlockStmt b) {
@@ -253,11 +262,11 @@ final class Flow {
             }
             if (st instanceof ReturnStmt r) {
                 St c = r.getExpression().map(e -> mark(e, in)).orElse(in);
-                terminate(c, st);
+                terminate(c, st.getBegin().orElseThrow().line);
                 return DEAD;
             }
             if (st instanceof BreakStmt || st instanceof ContinueStmt) {
-                terminate(in, st);
+                terminate(in, st.getBegin().orElseThrow().line);
                 // dup-ok: parallel state walkers kept separate on purpose; generic merge couples them
                 // (SilentScan leg; the DoubleScan twin sits above)
                 return DEAD;
@@ -271,9 +280,12 @@ final class Flow {
             return opaque(st, in);
         }
 
-        private void terminate(St s, Statement at) {
+        private void terminate(St s, int line) {
             if (s.bare() && hitLine < 0) {
-                hitLine = at.getBegin().orElseThrow().line;
+                hitLine = line;
+            }
+            for (Marker marker : s.markers()) {
+                suppressed.putIfAbsent(marker, line);
             }
         }
 

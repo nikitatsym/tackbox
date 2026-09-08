@@ -21,7 +21,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import scopes
+from . import proc, scopes
+from .gitfiles import collect_snapshot
 
 FILENAME = ".tackbox/approvals"
 
@@ -102,9 +103,7 @@ def parse(text: str) -> list[tuple[Entry, int]]:
 
 
 def load_approvals(root: Path) -> Counter[Entry]:
-    """The provider seam: every approvals read goes through here. The file
-    backend is this plan's only implementation; the line format makes
-    export/import to any other store trivial."""
+    """Load approved occurrence counts from the committed manifest format."""
     path = root / FILENAME
     if not path.is_file():
         return Counter()
@@ -141,29 +140,40 @@ class Report:
         return [u.entry.line_text() for u in self.uncovered]
 
 
-# Canonical block texts (plan, user-approved) - fixed verbatim; only the
-# indented value lines substitute, one per entry/path in deterministic order.
-_UNAPPROVED = "Unapproved suppression marker (add the manifest line to request approval, or revert):"
-_ORPHANED = "Orphaned approval (no matching marker; remove the line or restore the marker):"
-_UNRESOLVABLE = ("Unresolvable file (syntax does not parse; its markers and approvals are "
-                 "unverified - fix the syntax first):")
+_UNRESOLVABLE = "syntax does not parse; fix the syntax before verifying markers and approvals"
 HEADER = "approvals (whole tree):"
 
 
-def render_blocks(report: Report) -> list[str]:
-    """The canonical lint-section lines (header + blocks), or [] when clean."""
-    if report.ok():
-        return []
-    lines = [HEADER]
-    if report.uncovered:
-        lines.append(_UNAPPROVED)
-        lines += [f"  {u.entry.line_text()}" for u in report.uncovered]
-    if report.orphans:
-        lines.append(_ORPHANED)
-        lines += [f"  {o.entry.line_text()}" for o in report.orphans]
-    if report.unresolvable:
-        lines.append(_UNRESOLVABLE)
-        lines += [f"  {p}" for p in report.unresolvable]
+def render_blocks(report: Report, findings=()) -> list[str]:
+    """Render one actionable line per inconsistency, without approval entries."""
+    suppressed: dict[tuple[str, int, str], set[str]] = {}
+    for finding in findings:
+        if not finding.suppressed or not finding.message:
+            continue
+        text = " ".join(finding.message.split())
+        if not re.match(r"^(?:ERC|JV|TBX)\d+: ", text):
+            text = f"{finding.rule}: {text}"
+        key = (finding.file, finding.marker_line, finding.marker_kind)
+        suppressed.setdefault(key, set()).add(text)
+    lines = []
+    for uncovered in report.uncovered:
+        kind = uncovered.entry.marker.split(":", 1)[0]
+        messages = suppressed.get((uncovered.file, uncovered.line, kind))
+        location = f"{uncovered.file}:{uncovered.line}: "
+        if messages:
+            lines.append(
+                location + "; ".join(sorted(messages))
+                + f"; suppressed by an unapproved {kind} marker: fix the code, "
+                + f"or the owner approves the marker in {FILENAME}"
+            )
+        else:
+            lines.append(
+                location + f"unapproved {kind} marker suppresses nothing here: remove it, "
+                + f"or the owner approves it in {FILENAME}"
+            )
+    lines.extend(f"{FILENAME}:{orphan.line}: approval has no matching marker: remove the line"
+                 for orphan in report.orphans)
+    lines.extend(f"{path}: {_UNRESOLVABLE}" for path in report.unresolvable)
     return lines
 
 
@@ -172,12 +182,16 @@ def _sort_key_entry(entry: Entry) -> tuple[str, str, str]:
     return path, chain, entry.marker
 
 
-def check(root: Path, files: list[str], marker_re: re.Pattern[str],
-          is_lintable) -> Report:
-    """Uncovered markers, orphaned entries, and unresolvable files, in
-    deterministic (path, chain, text) order. `files` is the whole-tree source
-    set; the approvals check always covers it regardless of any lint scope."""
+def check(
+    root: Path, files: list[str], marker_re: re.Pattern[str], is_lintable,
+    only_paths: set[str] | None = None,
+    added_lines: dict[str, set[int] | None] | None = None,
+) -> Report:
+    """Check tree consistency, or prioritize unchanged lines in a hook subset."""
     parsed = parse((root / FILENAME).read_text(encoding="utf-8")) if (root / FILENAME).is_file() else []
+    if only_paths is not None:
+        parsed = [(entry, line) for entry, line in parsed
+                  if split_address(entry.address)[0] in only_paths]
 
     manifest_paths = {split_address(e.address)[0] for e, _ln in parsed}
     candidates = {
@@ -201,12 +215,16 @@ def check(root: Path, files: list[str], marker_re: re.Pattern[str],
     for e, lineno in parsed:
         ent_by_entry.setdefault(e, []).append(lineno)
 
+    def line_key(path: str, line: int) -> tuple[bool, int]:
+        lines = added_lines.get(path, ()) if added_lines is not None else ()
+        return lines is None or line in lines, line
+
     report = Report(unresolvable=sorted(unresolvable))
     for entry in set(occ_by_entry) | set(ent_by_entry):
         if split_address(entry.address)[0] in unresolvable:
             continue  # reported as unresolvable, not as orphan/uncovered
-        occ = sorted(occ_by_entry.get(entry, []), key=lambda u: u.line)
-        ent = sorted(ent_by_entry.get(entry, []))
+        occ = sorted(occ_by_entry.get(entry, []), key=lambda u: line_key(u.file, u.line))
+        ent = sorted(ent_by_entry.get(entry, []), key=lambda line: line_key(FILENAME, line))
         covered = min(len(occ), len(ent))
         report.uncovered.extend(occ[covered:])
         report.orphans.extend(Orphan(entry, ln) for ln in ent[covered:])
@@ -214,3 +232,82 @@ def check(root: Path, files: list[str], marker_re: re.Pattern[str],
     report.uncovered.sort(key=lambda u: (*_sort_key_entry(u.entry), u.line))
     report.orphans.sort(key=lambda o: (*_sort_key_entry(o.entry), o.line))
     return report
+
+
+_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+def _git(root: Path, *args: str) -> bytes:
+    return proc.run_bytes(["git", *args], cwd=root, capture_output=True, check=True).stdout
+
+
+def session_report(root: Path, marker_re: re.Pattern[str], is_lintable) -> Report:
+    """Return approvals debt introduced by the worktree's difference from HEAD."""
+    head = proc.run_bytes(
+        ["git", "rev-parse", "--verify", "--quiet", "HEAD"],
+        cwd=root, capture_output=True,
+    )
+    if head.returncode not in (0, 1):
+        head.check_returncode()
+    if head.returncode == 1:
+        snapshot = collect_snapshot(root)
+        return check(root, snapshot.included, marker_re, is_lintable)
+    changed = set(_git(root, "diff", "--name-only", "--no-renames", "-z", "HEAD", "--")
+                  .decode("utf-8").split("\0")) - {""}
+    untracked = set(_git(root, "ls-files", "--others", "--exclude-standard", "-z")
+                    .decode("utf-8").split("\0")) - {""}
+    changed |= untracked
+    if not changed:
+        return Report()
+    added: dict[str, set[int] | None] = {path: None for path in untracked}
+    removed: dict[str, set[int]] = {}
+    for path in sorted(changed - untracked):
+        patch = _git(root, "diff", "--no-ext-diff", "--no-textconv", "--no-renames",
+                     "--unified=0", "HEAD", "--", f":(literal){path}").decode("utf-8", errors="replace")
+        added[path] = set()
+        old_lines: set[int] = set()
+        for line in patch.splitlines():
+            match = _HUNK_RE.match(line)
+            if match:
+                old_start, old_count, new_start, new_count = match.groups()
+                old_lines.update(range(int(old_start), int(old_start) + int(old_count or 1)))
+                added[path].update(range(int(new_start), int(new_start) + int(new_count or 1)))
+        if old_lines and any(marker_re.search(line[1:]) for line in patch.splitlines()
+                             if line.startswith("-") and not line.startswith("---")):
+            removed[path] = old_lines
+
+    manifest = root / FILENAME
+    parsed = parse(manifest.read_text(encoding="utf-8")) if manifest.is_file() else []
+    manifest_added = added.get(FILENAME, set())
+    new_entries = [(entry, line) for entry, line in parsed
+                   if manifest_added is None or line in manifest_added]
+    paths = changed | {split_address(entry.address)[0] for entry, _ in new_entries}
+    snapshot = collect_snapshot(root, changed_scope=paths)
+    current = check(
+        root, snapshot.included, marker_re, is_lintable,
+        only_paths=paths, added_lines=added,
+    )
+    debt = Report(
+        uncovered=[u for u in current.uncovered
+                   if u.file in added and (added[u.file] is None or u.line in added[u.file])],
+        unresolvable=current.unresolvable,
+    )
+    deleted: Counter[Entry] = Counter()
+    orphan_paths = {split_address(orphan.entry.address)[0] for orphan in current.orphans}
+    for path in sorted(orphan_paths & removed.keys()):
+        if not is_lintable(path):
+            continue
+        baseline = scopes.resolve_content(path, _git(root, "show", f"HEAD:{path}"), marker_re)
+        if baseline.unresolvable:
+            debt.unresolvable.append(path)
+            continue
+        deleted.update(Entry(marker.address, marker.marker) for marker in baseline.markers
+                       if marker.line in removed[path])
+    for orphan in current.orphans:
+        if manifest_added is None or orphan.line in manifest_added:
+            debt.orphans.append(orphan)
+        elif deleted[orphan.entry]:
+            debt.orphans.append(orphan)
+            deleted[orphan.entry] -= 1
+    debt.unresolvable = sorted(set(debt.unresolvable))
+    return debt

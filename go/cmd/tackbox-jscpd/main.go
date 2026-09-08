@@ -368,21 +368,28 @@ func emit(rep *jscpdReport, zones callableZones, fl *fileLines, cwd string, mach
 		aRel := relTo(cwd, c.FirstFile.Name)
 		bRel := relTo(cwd, c.SecondFile.Name)
 		if machine {
-			if !aSup {
+			for _, pair := range []struct {
+				endpoint   endpoint
+				other      endpoint
+				rel        string
+				otherRel   string
+				suppressed bool
+				marker     markerKey
+			}{
+				{c.FirstFile, c.SecondFile, aRel, bRel, aSup, aMarker},
+				{c.SecondFile, c.FirstFile, bRel, aRel, bSup, bMarker},
+			} {
 				msg := fmt.Sprintf("duplicated block, clone of %s:%d-%d (%d tokens); extract the shared code",
-					bRel, c.SecondFile.Start, c.SecondFile.End, c.Tokens)
-				if err := enc.Encode(wrapcli.Finding{File: aRel, Line: c.FirstFile.lineNo(), Rule: ruleID, Message: msg}); err != nil {
+					pair.otherRel, pair.other.Start, pair.other.End, c.Tokens)
+				finding := wrapcli.Finding{File: pair.rel, Line: pair.endpoint.lineNo(), Rule: ruleID, Message: msg}
+				if pair.suppressed {
+					finding.Suppressed, finding.MarkerKind, finding.MarkerLine = true, "dup-ok", pair.marker.Line
+				} else {
+					surviving++
+				}
+				if err := enc.Encode(finding); err != nil {
 					return 0, err
 				}
-				surviving++
-			}
-			if !bSup {
-				msg := fmt.Sprintf("duplicated block, clone of %s:%d-%d (%d tokens); extract the shared code",
-					aRel, c.FirstFile.Start, c.FirstFile.End, c.Tokens)
-				if err := enc.Encode(wrapcli.Finding{File: bRel, Line: c.SecondFile.lineNo(), Rule: ruleID, Message: msg}); err != nil {
-					return 0, err
-				}
-				surviving++
 			}
 			continue
 		}

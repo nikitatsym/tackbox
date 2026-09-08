@@ -31,12 +31,12 @@ public final class ThrowableRule {
                 continue;
             }
             Frame f = Frame.scan(cc.getBody());
-            if (f.hasThrow || Markers.noReportAbove(markers, cc)) {
+            if (f.hasThrow) {
                 continue;
             }
             Position p = cc.getBegin().orElseThrow();
             out.add(new Finding(ID, file, p.line, p.column, p.line, p.column,
-                    MESSAGE + Markers.deadNoReportHint(markers, cc)));
+                    MESSAGE + Markers.deadNoReportHint(markers, cc), Markers.noReportAbove(markers, cc)));
         }
         return out;
     }

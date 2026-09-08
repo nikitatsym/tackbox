@@ -23,3 +23,23 @@ func Runner(visit func(idx *Index, pass *analysis.Pass, n ast.Node) bool) func(*
 		return nil, nil
 	}
 }
+
+// Suppressed receives machine-only findings without creating analysis diagnostics.
+var Suppressed func(*analysis.Pass, analysis.Diagnostic, Marker)
+
+func Suppress(pass *analysis.Pass, marker Marker) *analysis.Pass {
+	copy := *pass
+	copy.Report = func(d analysis.Diagnostic) {
+		if Suppressed != nil {
+			Suppressed(pass, d, marker)
+		}
+	}
+	return &copy
+}
+
+func AbovePass(pass *analysis.Pass, idx *Index, node ast.Node, kind Kind) *analysis.Pass {
+	if marker, ok := idx.Above(node); ok && marker.Kind == kind {
+		return Suppress(pass, marker)
+	}
+	return pass
+}

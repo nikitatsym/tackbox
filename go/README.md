@@ -105,6 +105,13 @@ return nil
 t.SkipNow()
 ```
 
+In `-json` mode, erclint emits suppressed findings separately from normal
+analysis diagnostics, with the same rule text plus `suppressed`,
+`marker_kind`, and `marker_line`. The duplication wrapper uses the same
+fields in its `--machine` output. Suppressed findings do not fail lint or
+appear in ordinary lint output or codequality; only the approvals renderer
+presents them (D020 in [../rules/DECISIONS.md](../rules/DECISIONS.md)).
+
 ## Capture and propagation
 
 A call counts as a capture by origin, never by name. erclint uses type

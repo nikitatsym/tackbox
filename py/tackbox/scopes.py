@@ -259,10 +259,42 @@ def _markers_in(node_text: str, node_start_byte: int, node_start_line: int,
     return out
 
 
-# Markdown markers live inside HTML comments only (block-level html_block or an
-# inline `<!-- -->` in a paragraph's opaque `inline` node); a marker keyword in
-# plain prose is not a comment and must not be inventoried.
+# Markdown's block grammar leaves code spans opaque inside inline nodes.
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+_BACKTICKS_RE = re.compile(r"`+")
+_MD_INLINE_TOKEN_RE = re.compile(
+    r"\\[!-/:-@\[-`{-~]"
+    r"|<!--.*?-->|<\?.*?\?>|<!\[CDATA\[.*?\]\]>|<![A-Z]+[ \t\n\r\f]+[^>]*>"
+    r"|</[A-Za-z][A-Za-z0-9-]*[ \t\n\r\f]*>"
+    r"|<[A-Za-z][A-Za-z0-9-]*(?:[ \t\n\r\f]+[A-Za-z_:][A-Za-z0-9_.:-]*"
+    r"""(?:[ \t\n\r\f]*=[ \t\n\r\f]*(?:[^ \t\n\r\f"'=<>`]+|'[^']*'|"[^"]*"))?)*"""
+    r"[ \t\n\r\f]*/?>|`+",
+    re.DOTALL,
+)
+
+
+def _mask_code_spans(text: str) -> str:
+    # Escapes can shorten an opener; closing runs stay raw even inside HTML.
+    closing: dict[int, list[int]] = {}
+    for run in reversed(list(_BACKTICKS_RE.finditer(text))):
+        length = run.end() - run.start()
+        if length not in closing:
+            closing[length] = []
+        closing[length].append(run.end())
+    parts = []
+    end = position = 0
+    while token := _MD_INLINE_TOKEN_RE.search(text, position):
+        position = token.end()
+        if not token.group().startswith("`"):
+            continue
+        ends = closing.get(token.end() - token.start())
+        while ends and ends[-1] <= position:
+            ends.pop()
+        if ends:
+            close = ends[-1]
+            parts.extend((text[end:token.start()], " " * (close - token.start())))
+            end = position = close
+    return "".join((*parts, text[end:])) if parts else text
 
 
 # -- per-language rule sets (strictly separate; a kind unknown to a grammar
@@ -442,11 +474,11 @@ def _md_title(text: str) -> str:
 
 
 def _resolve_markdown(content: str, marker_re: re.Pattern[str]) -> _Sub:
-    # html_block = block-level `<!-- -->`; inline = a paragraph's opaque inline
-    # content, which may embed an inline `<!-- -->`. Both are comment-gated below.
+    # Inline nodes need code-span masking; raw HTML blocks do not.
     ruleset = "\n---\n".join([
         _rule("headings", "markdown", "rule:\n  any:\n    - kind: atx_heading\n    - kind: setext_heading"),
-        _rule("comment", "markdown", "rule:\n  any:\n    - kind: html_block\n    - kind: inline"),
+        _rule("comment", "markdown", "rule:\n  kind: html_block"),
+        _rule("inline", "markdown", "rule:\n  kind: inline"),
     ])
     matches = _ast_scan(content, ruleset)
     headings, comments = [], []
@@ -485,7 +517,8 @@ def _resolve_markdown(content: str, marker_re: re.Pattern[str]) -> _Sub:
         node_text = c["text"]
         cstart = _bspan(c)[0]
         cline = c["range"]["start"]["line"] + 1
-        ranges = [(m.start(), m.end()) for m in _HTML_COMMENT_RE.finditer(node_text)]
+        visible = _mask_code_spans(node_text) if c["ruleId"] == "inline" else node_text
+        ranges = [(m.start(), m.end()) for m in _HTML_COMMENT_RE.finditer(visible)]
         for text, byte, line in _markers_in(node_text, cstart, cline, marker_re, only_ranges=ranges):
             sub.markers.append((chain_at(byte), text, line, byte))  # outline chain at the marker
     return sub
@@ -595,13 +628,17 @@ def resolve_file(root: Path, rel: str, marker_re: re.Pattern[str]) -> FileResult
     ERROR nodes, so a manifest entry naming a broken file reports the file
     as unresolvable, not itself as an orphan. Callers keep tree scans cheap
     with the has_marker_text prefilter."""
-    lang = language_for(rel)
-    if lang is None:
-        return FileResult()
     path = root / rel
     if not path.is_file():
         return FileResult()
-    raw = path.read_bytes()
+    return resolve_content(rel, path.read_bytes(), marker_re)
+
+
+def resolve_content(rel: str, raw: bytes, marker_re: re.Pattern[str]) -> FileResult:
+    """Resolve a worktree or revision's bytes with the same scope identity."""
+    lang = language_for(rel)
+    if lang is None:
+        return FileResult()
     if b"\x00" in raw:
         return FileResult()  # binary: no marker text to resolve
     content = raw.decode("utf-8", errors="replace")

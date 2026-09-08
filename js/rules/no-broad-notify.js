@@ -1,4 +1,4 @@
-const { hasMarkerAbove, walk, isTier1Notify, argFlows, isTestFile } = require('./_shared')
+const { reportWithMarker, walk, isTier1Notify, argFlows, isTestFile } = require('./_shared')
 
 // guarded: `call` sits under an additional condition strictly inside the catch
 // body - an if-branch (consequent/alternate) or a switch case. A notify
@@ -35,11 +35,12 @@ module.exports = {
         if (errName == null) return
         const body = node.body
         if (!body || body.type !== 'BlockStatement') return
-        if (hasMarkerAbove(context, node.parent, 'no-report')) return
         walk(body, call => {
           if (call.type !== 'CallExpression') return
           if (!isTier1Notify(context, call) || !argFlows(call, errName)) return
-          if (!guarded(call, body)) context.report({ node: call, messageId: 'broad' })
+          if (!guarded(call, body)) {
+            reportWithMarker(context, { node: call, messageId: 'broad' }, node.parent, 'no-report', module.exports.meta.messages)
+          }
         })
       },
     }

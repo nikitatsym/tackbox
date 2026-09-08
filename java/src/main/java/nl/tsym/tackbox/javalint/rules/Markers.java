@@ -58,20 +58,20 @@ final class Markers {
         return "";
     }
 
-    static boolean noReportAbove(MarkerIndex idx, CatchClause cc) {
+    static Marker noReportAbove(MarkerIndex idx, CatchClause cc) {
         BlockStmt body = cc.getBody();
         int line = body.getStatements().isEmpty()
                 ? cc.getBegin().orElseThrow().line
                 : body.getStatement(0).getBegin().orElseThrow().line;
-        return isNoReport(idx, line);
+        return noReport(idx, line);
     }
 
-    static boolean noReportAbove(MarkerIndex idx, Statement stmt) {
-        return isNoReport(idx, stmt.getBegin().orElseThrow().line);
+    static Marker noReportAbove(MarkerIndex idx, Statement stmt) {
+        return noReport(idx, stmt.getBegin().orElseThrow().line);
     }
 
-    private static boolean isNoReport(MarkerIndex idx, int line) {
+    private static Marker noReport(MarkerIndex idx, int line) {
         Marker m = idx.above(line);
-        return m != null && m.kind() == Marker.Kind.NO_REPORT;
+        return m != null && m.kind() == Marker.Kind.NO_REPORT ? m : null;
     }
 }

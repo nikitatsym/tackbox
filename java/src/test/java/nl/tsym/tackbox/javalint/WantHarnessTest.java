@@ -55,7 +55,8 @@ class WantHarnessTest {
 
     private static void checkFixture(String name, String text, Path dir) throws Exception {
         Map<Integer, String> wants = parseWants(text);
-        List<Finding> findings = Javalint.analyze(name, text, parseReporters(text, dir));
+        List<Finding> findings = Javalint.analyze(name, text, parseReporters(text, dir)).stream()
+                .filter(f -> !f.suppressed()).toList();
 
         for (Finding f : findings) {
             String want = wants.get(f.line());

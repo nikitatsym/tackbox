@@ -43,13 +43,10 @@ func handleIf(pass *analysis.Pass, idx *markers.Index, ifst *ast.IfStmt) {
 	if !ok || astutil.ErrIdentFromIfCond(ifst.Cond) != name {
 		return
 	}
-	if markerAbove(idx, ifst) {
-		return
-	}
 	if reported(pass.TypesInfo, astutil.BlockCalls(ifst.Body), name) {
 		return
 	}
-	pass.Reportf(call.Pos(), msg)
+	markers.AbovePass(pass, idx, ifst, markers.NoReport).Reportf(call.Pos(), msg)
 }
 
 // handleBlock covers a bare `recover()` (value discarded) and the assignment
@@ -59,18 +56,18 @@ func handleBlock(pass *analysis.Pass, idx *markers.Index, block *ast.BlockStmt) 
 	for i, st := range block.List {
 		switch s := st.(type) {
 		case *ast.ExprStmt:
-			if call, ok := recoverCall(pass.TypesInfo, s.X); ok && !markerAbove(idx, s) {
-				pass.Reportf(call.Pos(), msg)
+			if call, ok := recoverCall(pass.TypesInfo, s.X); ok {
+				markers.AbovePass(pass, idx, s, markers.NoReport).Reportf(call.Pos(), msg)
 			}
 		case *ast.AssignStmt:
 			name, call, ok := recoverAssign(pass.TypesInfo, s)
-			if !ok || markerAbove(idx, s) {
+			if !ok {
 				continue
 			}
 			if name != "_" && reported(pass.TypesInfo, callsIn(block.List[i+1:]), name) {
 				continue
 			}
-			pass.Reportf(call.Pos(), msg)
+			markers.AbovePass(pass, idx, s, markers.NoReport).Reportf(call.Pos(), msg)
 		}
 	}
 }
@@ -134,9 +131,4 @@ func callsIn(stmts []ast.Stmt) []*ast.CallExpr {
 		})
 	}
 	return out
-}
-
-func markerAbove(idx *markers.Index, node ast.Node) bool {
-	m, ok := idx.Above(node)
-	return ok && m.Kind == markers.NoReport
 }

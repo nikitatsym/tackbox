@@ -68,3 +68,26 @@ test('--files-from list is linted like positional paths', () => lintViaList('bad
 
 // A list-file written on Windows carries CRLF; a trailing \r on a path is ENOENT.
 test('--files-from strips CRLF line endings', () => lintViaList('bad.js\r\n'))
+
+test('machine output preserves suppressed findings without failing human lint', () => {
+  inTmpDir(dir => {
+    fs.writeFileSync(path.join(dir, 'bad.js'),
+      '// no-report: caller tolerates this failure\ntry { work() } catch (error) {}\n')
+    const human = runWrapper(dir, [])
+    assert.equal(human.status, 0, human.stderr)
+    assert.equal(human.stdout, '')
+    const machine = runWrapper(dir, ['--machine'])
+    assert.equal(machine.status, 0, machine.stderr)
+    const finding = JSON.parse(machine.stdout)
+    assert.equal(finding.suppressed, true)
+    assert.equal(finding.marker_kind, 'no-report')
+    assert.equal(finding.marker_line, 1)
+    assert.equal(finding.line, 2)
+    assert.equal(finding.message, 'every catch path must throw, call a reporter, or convert to a Result boundary')
+    fs.writeFileSync(path.join(dir, 'bad.js'),
+      '// no-report: caller tolerates this failure\ntry { work() } catch (error) { throw error }\n')
+    const remaining = JSON.parse(runWrapper(dir, ['--machine']).stdout)
+    assert.equal(remaining.rule, 'tackbox/ts-useless-catch')
+    assert.equal(remaining.suppressed, undefined)
+  })
+})

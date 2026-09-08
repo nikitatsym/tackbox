@@ -406,6 +406,8 @@ def _run_lint(
     exit_code = 0
     if results:
         for r in results:
+            if r.engine_id in _JSON_FINDING_ENGINES:
+                r = _filter_erclint_result(r, repo_root, frozenset(), drop_suppressed=True)
             sys.stdout.write(f"== {r.engine_id} ==\n")
             if r.stdout:
                 sys.stdout.write(r.stdout)
@@ -436,7 +438,12 @@ def _run_lint(
     # scope - a scope-following check would be a bypass for scoped CI. Its
     # inconsistencies count as findings (nonzero exit), same wall as the engines.
     report = _approvals_report(repo_root, snapshot=snapshot)
-    for line in approvals.render_blocks(report):
+    details = _approval_details(
+        repo_root, report, snapshot, set(narrow_files(snapshot.included, scope, changed_scope))
+    )
+    if not report.ok():
+        sys.stdout.write(approvals.HEADER + "\n")
+    for line in approvals.render_blocks(report, details):
         sys.stdout.write(line + "\n")
     sys.stdout.flush()
     if not report.ok():
@@ -453,7 +460,7 @@ def _run_lint(
             if results
             else []
         )
-        appr_findings, fingerprints = _approvals_findings(report)
+        appr_findings, fingerprints = _approvals_findings(report, details)
         codequality.write_report(
             Path(codequality_path), findings + appr_findings, fingerprints.get
         )
@@ -473,6 +480,20 @@ def _approvals_report(repo_root: Path, snapshot: Snapshot | None = None) -> appr
     )
 
 
+def _approval_details(
+    root: Path, report: approvals.Report, snapshot: Snapshot, scope_files: set[str]
+) -> list:
+    files = {uncovered.file for uncovered in report.uncovered}
+    files &= scope_files
+    if not files:
+        return []
+    results, _warnings, _orphans = _lint_results(
+        root, _tackbox_root(), ".", no_cache=True, changed_scope=files,
+        snapshot=snapshot, machine=True,
+    )
+    return _located(results or [], root)
+
+
 def _excluded_in_scope(
     snapshot: Snapshot, scope: str, changed_scope: set[str] | None
 ) -> list[str]:
@@ -483,22 +504,23 @@ def _excluded_in_scope(
     return sorted(set(scope_candidates) & snapshot.excluded_files)
 
 
-def _approvals_findings(report: approvals.Report):
+def _approvals_findings(report: approvals.Report, details=()):
     """(findings, fingerprint map) for the codequality report. check_name is
     tackbox-approvals; location is the marker for uncovered / the manifest for
     orphans; fingerprint (via the override map) is the serialized entry address."""
     findings: list = []
     fingerprints: dict = {}
+    rendered = iter(approvals.render_blocks(report, details))
     for u in report.uncovered:
-        f = Finding("tackbox-approvals", u.file, u.line, u.entry.line_text())
+        f = Finding("tackbox-approvals", u.file, u.line, next(rendered))
         findings.append(f)
         fingerprints[f] = u.entry.address
     for o in report.orphans:
-        f = Finding("tackbox-approvals", approvals.FILENAME, o.line, o.entry.line_text())
+        f = Finding("tackbox-approvals", approvals.FILENAME, o.line, next(rendered))
         findings.append(f)
         fingerprints[f] = o.entry.address
     for path in report.unresolvable:
-        f = Finding("tackbox-approvals", path, 1, "unresolvable file (syntax does not parse)")
+        f = Finding("tackbox-approvals", path, 1, next(rendered))
         findings.append(f)
         fingerprints[f] = path
     return findings, fingerprints
@@ -539,7 +561,7 @@ def _codequality_findings(
     )
     if not results:
         return []
-    return _located(results, repo_root)
+    return [finding for finding in _located(results, repo_root) if not finding.suppressed]
 
 
 def _drop_go_orphans(
@@ -664,7 +686,10 @@ def _clean_args(r: EngineResult, info: dict) -> list[str]:
         # (`pkg [pkg.test]`, `pkg_test [pkg.test]`), while arg_ip holds bare
         # import paths - so normalize every finding key to its base package or a
         # test-file finding would never match and the package would cache clean.
-        dirty_ips = {erclint_base_import_path(f.get("pkg", "")) for f in findings}
+        dirty_ips = {
+            erclint_base_import_path(f.get("pkg", ""))
+            for f in findings if not f.get("suppressed", False)
+        }
         ip_map = info.get("arg_ip", {})
         # Unknown import path -> cannot attribute findings -> never clean.
         return [
@@ -682,7 +707,7 @@ def _clean_args(r: EngineResult, info: dict) -> list[str]:
         except ValueError:
             # no-report: unparseable javalint json -> attribute nothing, never a false clean
             return []
-        dirty_files = {f.get("pkg") for f in findings}
+        dirty_files = {f.get("pkg") for f in findings if not f.get("suppressed", False)}
         return [a for a in args if a not in dirty_files]
     if r.exit_code == 0:
         return args
@@ -710,12 +735,11 @@ def _filter_excluded_findings(
 
 
 def _filter_erclint_result(
-    r: EngineResult, repo_root: Path, excluded: frozenset[str]
+    r: EngineResult, repo_root: Path, excluded: frozenset[str], drop_suppressed: bool = False
 ) -> EngineResult:
-    """erclint's -json tree with excluded-file findings removed. Byte-identical
-    when nothing is dropped (the common no-exclusion path never reparses)."""
+    """Remove excluded or suppressed findings from an engine's JSON tree."""
     # JSON escapes Windows separators; inspect both serialized spellings.
-    if not any(
+    if not drop_suppressed and not any(
         ef in r.stdout or ef.replace("/", "\\\\") in r.stdout for ef in excluded
     ):
         return r
@@ -730,7 +754,9 @@ def _filter_erclint_result(
                     kept_analyzers[analyzer] = payload  # {"error": ...} stays loud
                     continue
                 kept = [
-                    it for it in payload if not _posn_excluded(it, repo_root, excluded)
+                    it for it in payload
+                    if not _posn_excluded(it, repo_root, excluded)
+                    and not (drop_suppressed and it.get("suppressed", False))
                 ]
                 if len(kept) != len(payload):
                     changed = True
@@ -784,7 +810,7 @@ def _aggregate_exit(results: list[EngineResult]) -> int:
 
 def _erclint_has_findings(stdout: str) -> bool:
     try:
-        return bool(parse_erclint_findings(stdout))
+        return any(not finding.get("suppressed", False) for finding in parse_erclint_findings(stdout))
     except ValueError:
         # no-report: unparseable erclint output -> failing aggregate, never a false clean
         return True
@@ -1036,6 +1062,8 @@ def _hook_event_outcome_inner(
             )
         return hookproto.Outcome(hookproto.OutcomeKind.INACTIVE)
     assert repository.root is not None
+    if event.tool in {"bash", "eval"} or event.targetless == "opaque":
+        return hookproto.Outcome(hookproto.OutcomeKind.ALLOW)
     if event.phase == hookproto.PRE:
         return _hook_pre_decision(repository.root, event)
     return _hook_post_decision(repository.root, event)
@@ -1175,9 +1203,6 @@ def _hook_post(event: dict) -> int:
         return _hook_unverified(outcome)
     if outcome.kind is not hookproto.OutcomeKind.VIOLATION:
         return 0
-    if not normalized.targets:
-        print(json.dumps({"decision": "block", "reason": outcome.reason}))
-        return 0
     for line in outcome.reason.splitlines():
         sys.stderr.write(line + "\n")
     return 2
@@ -1225,6 +1250,21 @@ def _hook_pre_decision(
     if event.unknown:
         return hookproto.Outcome(hookproto.OutcomeKind.UNVERIFIED, event.unknown)
     reasons = _pre_gate_reasons(root, event)
+    if event.targets and not all(_same_path(target.path, root / approvals.FILENAME)
+                                 for target in event.targets):
+        debt = _hook_session_report(root)
+        fix_files = {u.file for u in debt.uncovered} | set(debt.unresolvable)
+        fix_files.update(approvals.split_address(o.entry.address)[0] for o in debt.orphans)
+        fix_files.add(approvals.FILENAME)
+        if not debt.ok() and any(_hook_rel_strict(target.path, root) not in fix_files
+                                 for target in event.targets):
+            results, _warnings, _orphans = _hook_lint_results(
+                root, None, {u.file: None for u in debt.uncovered}, no_cache=True,
+            ) if debt.uncovered else ([], [], [])
+            return hookproto.Outcome(
+                hookproto.OutcomeKind.VIOLATION,
+                "\n".join(approvals.render_blocks(debt, _located(results or [], root))),
+            )
     if reasons:
         return hookproto.Outcome(
             hookproto.OutcomeKind.APPROVAL_REQUIRED,
@@ -1410,65 +1450,62 @@ def _is_exclusion_line(line: str) -> bool:
     return False
 
 
-# -- Post phase: the consistency wall + the diff-scoped lint arm ----------
+# -- Post phase: session debt and diff-scoped lint -------------------------
 
 
 def _hook_post_decision(
     root: Path, event: hookproto.Event
 ) -> hookproto.Outcome:
-    """Check the landed tree while keeping violations distinct from uncertainty."""
-    snapshot, blocks = _hook_snapshot_and_blocks(root)
-    if blocks:
-        if event.unknown:
-            blocks.append(f"verification uncertainty: tackbox hook: {event.unknown}")
-        return hookproto.Outcome(hookproto.OutcomeKind.VIOLATION, "\n".join(blocks))
+    """Check landed file edits without attributing existing tree debt to them."""
     if event.unknown:
         return hookproto.Outcome(
             hookproto.OutcomeKind.UNVERIFIED,
             f"tackbox hook: {event.unknown}",
         )
-    if not event.succeeded and not event.targets:
+    if not event.targets:
         return hookproto.Outcome(hookproto.OutcomeKind.ALLOW)
-    scope = _post_scope(root, event)
-    if not scope.files:
-        return _with_scope_failures(
-            hookproto.Outcome(hookproto.OutcomeKind.ALLOW),
-            scope,
+    debt = _hook_session_report(root)
+    touched = {_hook_rel_strict(target.path, root) for target in event.targets}
+    if approvals.FILENAME not in touched:
+        debt = approvals.Report(
+            uncovered=[u for u in debt.uncovered if u.file in touched],
+            orphans=[o for o in debt.orphans if approvals.split_address(o.entry.address)[0] in touched],
+            unresolvable=[path for path in debt.unresolvable if path in touched],
         )
+    scope = _post_scope(root, event)
     try:
-        results, _warnings, _orphans = _hook_lint_results(root, snapshot, scope.files)
+        results, _warnings, _orphans = _hook_lint_results(
+            root, None, scope.files, no_cache=bool(debt.uncovered),
+        ) if scope.files else ([], [], [])
     except HookInfrastructureError as e:
         raise _scoped_hook_error(e, scope) from e
-    if results is None:
-        return _with_scope_failures(
-            hookproto.Outcome(hookproto.OutcomeKind.ALLOW),
-            scope,
-        )
+    results = results or []
     try:
         break_lines = _hook_compile_break(results)
-    except ValueError as e:
-        raise _scoped_hook_error(
-            HookInfrastructureError(f"cannot parse linter output: {e}"),
-            scope,
-        ) from e
-    if break_lines:
-        return _with_scope_failures(
-            hookproto.Outcome(
-                hookproto.OutcomeKind.VIOLATION,
-                "\n".join(break_lines),
-            ),
-            scope,
-        )
-    try:
+        if break_lines:
+            return _with_scope_failures(
+                hookproto.Outcome(
+                    hookproto.OutcomeKind.VIOLATION,
+                    "\n".join([*approvals.render_blocks(debt), *break_lines]),
+                ), scope,
+            )
         findings = _located(results, root)
+        blocks = approvals.render_blocks(debt, findings)
     except ValueError as e:
         raise _scoped_hook_error(
-            HookInfrastructureError(f"cannot parse linter output: {e}"),
-            scope,
+            HookInfrastructureError(f"cannot parse linter output: {e}"), scope,
         ) from e
-    if findings:
-        return _with_scope_failures(_hook_findings_outcome(findings, scope.files), scope)
-    return _with_scope_failures(_hook_infra_or_clean(results), scope)
+    visible = [finding for finding in findings if not finding.suppressed]
+    lint = _hook_findings_outcome(visible, scope.files)
+    if lint.kind is hookproto.OutcomeKind.VIOLATION:
+        blocks.append(lint.reason)
+    if blocks:
+        return _with_scope_failures(
+            hookproto.Outcome(hookproto.OutcomeKind.VIOLATION, "\n".join(blocks)), scope,
+        )
+    return _with_scope_failures(
+        lint if visible else _hook_infra_or_clean(results), scope,
+    )
 
 
 def _scoped_hook_error(
@@ -1482,13 +1519,11 @@ def _scoped_hook_error(
     )
 
 
-def _hook_snapshot_and_blocks(root: Path) -> tuple[Snapshot, list[str]]:
-    """Build the one shared snapshot used by the wall and the scoped lint arm."""
+def _hook_session_report(root: Path) -> approvals.Report:
+    """Read only the changed files' marker inventory on the pre green path."""
     try:
-        snapshot = collect_snapshot(root)
-        blocks = approvals.render_blocks(
-            _approvals_report(root, snapshot=snapshot)
-        )[1:]
+        engines = active_engines()
+        return approvals.session_report(root, _MARKER_RE, lambda rel: lintable(rel, engines))
     except (
         PathspecMagicError,
         cache.GoListError,
@@ -1503,11 +1538,10 @@ def _hook_snapshot_and_blocks(root: Path) -> tuple[Snapshot, list[str]]:
         proc.ChildStreamError,
     ) as e:
         raise HookInfrastructureError(f"cannot inspect the worktree: {e}") from e
-    return snapshot, blocks
 
 
 def _hook_lint_results(
-    root: Path, snapshot: Snapshot, scope: dict[str, set[int] | None]
+    root: Path, snapshot: Snapshot | None, scope: dict[str, set[int] | None], no_cache: bool = False
 ):
     """Run hook-scoped engines and translate known runtime dependencies."""
     try:
@@ -1515,7 +1549,7 @@ def _hook_lint_results(
             root,
             _tackbox_root(),
             ".",
-            no_cache=False,
+            no_cache=no_cache,
             changed_scope=set(scope),
             snapshot=snapshot,
             machine=True,

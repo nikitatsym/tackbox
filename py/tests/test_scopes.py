@@ -272,6 +272,33 @@ def test_markdown_prose_mention_is_not_a_marker(tmp_path):
     assert resolve(tmp_path, "d.md", src).markers == []
 
 
+@pytest.mark.parametrize("code", [
+    "`<!-- no-report: example marker -->`",
+    "``<!-- no-report: example ` marker -->``",
+    "`<!-- no-report: example\nmarker -->`",
+    "\\``<!-- no-report: example marker -->`",
+])
+def test_markdown_code_span_masks_only_example(tmp_path, code):
+    src = "# H\n\nExample " + code + " and <!-- no-report: real inline marker -->\n"
+    result = resolve(tmp_path, "d.md", src)
+    assert [(m.marker, m.line) for m in result.markers] == [
+        ("no-report: real inline marker -->", src.count("\n"))
+    ]
+
+
+def test_markdown_unclosed_backticks_are_literal(tmp_path):
+    result = resolve(tmp_path, "d.md", "Example `` <!-- no-report: real inline marker --> `\n")
+    assert [m.marker for m in result.markers] == ["no-report: real inline marker --> `"]
+
+
+def test_markdown_raw_html_backtick_does_not_hide_a_marker(tmp_path):
+    source = 'Example <span title="`">label</span> <!-- no-report: real inline marker --> `\n'
+    result = resolve(tmp_path, "d.md", source)
+    assert [(marker.marker, marker.line) for marker in result.markers] == [
+        ("no-report: real inline marker --> `", 1)
+    ]
+
+
 def test_markdown_at_escape_adversarial(tmp_path):
     # A heading literally titled `A@2` must be distinct from the second sibling
     # `A` (which takes the @2 ordinal) - both ways.

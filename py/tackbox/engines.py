@@ -765,6 +765,9 @@ class Finding:
     file: str | None
     line: int | None
     message: str | None = None
+    suppressed: bool = False
+    marker_kind: str | None = None
+    marker_line: int | None = None
 
 
 def parse_machine_findings(stdout: str) -> list[Finding]:
@@ -783,6 +786,9 @@ def parse_machine_findings(stdout: str) -> list[Finding]:
                 file=obj.get("file"),
                 line=obj.get("line"),
                 message=obj.get("message") or None,
+                suppressed=obj.get("suppressed", False),
+                marker_kind=obj.get("marker_kind"),
+                marker_line=obj.get("marker_line"),
             )
         )
     return out
@@ -821,7 +827,11 @@ def erclint_located_findings(stdout: str, repo_root: Path) -> list[Finding]:
             if path is not None
             else None
         )
-        out.append(Finding(rule=rule, file=rel, line=line, message=message))
+        out.append(Finding(
+            rule=rule, file=rel, line=line, message=message,
+            suppressed=f.get("suppressed", False), marker_kind=f.get("marker_kind"),
+            marker_line=f.get("marker_line"),
+        ))
     return out
 
 
@@ -837,6 +847,8 @@ def javalint_located_findings(stdout: str, _repo_root: Path) -> list[Finding]:
             Finding(
                 rule=f.get("analyzer", ""), file=f.get("pkg"), line=line,
                 message=f.get("message") or None,
+                suppressed=f.get("suppressed", False), marker_kind=f.get("marker_kind"),
+                marker_line=f.get("marker_line"),
             )
         )
     return out
@@ -853,6 +865,9 @@ def pyrules_located_findings(stdout: str, _repo_root: Path) -> list[Finding]:
     the message so downstream `rule: message` lines do not repeat the id."""
     out: list[Finding] = []
     for line in stdout.splitlines():
+        if line.lstrip().startswith("{"):
+            out.extend(parse_machine_findings(line))
+            continue
         m = _FLAKE8_LINE.match(line)
         if m is None:
             continue
@@ -1420,6 +1435,7 @@ DEV_ENGINES: list[EngineSpec] = [
         id="pyrules",
         extensions=_PY_EXTS,
         build_argv=_pyrules_argv,
+        machine_flag=True,
     ),
 ]
 
@@ -1547,6 +1563,7 @@ HERMETIC_ENGINES: list[EngineSpec] = [
         id="pyrules",
         extensions=_PY_EXTS,
         build_argv=_pyrules_argv,
+        machine_flag=True,
     ),
 ]
 

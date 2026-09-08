@@ -45,8 +45,13 @@ final class JsonWriter {
                     firstF = false;
                     sb.append("\n      {\"posn\": ").append(quote(normalizeSeparators(f.posn())))
                       .append(", \"end\": ").append(quote(normalizeSeparators(f.end())))
-                      .append(", \"message\": ").append(quote(f.message()))
-                      .append("}");
+                      .append(", \"message\": ").append(quote(f.message()));
+                    if (f.suppressed()) {
+                        sb.append(", \"suppressed\": true, \"marker_kind\": ")
+                          .append(quote(f.marker().kind().prefix.replace(":", "")))
+                          .append(", \"marker_line\": ").append(f.marker().line());
+                    }
+                    sb.append("}");
                 }
                 sb.append("\n    ]");
             }

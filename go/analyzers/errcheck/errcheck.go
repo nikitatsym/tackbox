@@ -32,9 +32,7 @@ func inspect(idx *markers.Index, pass *analysis.Pass, n ast.Node) bool {
 		return true
 	}
 	errName := errIdent.Name
-	if m, ok := idx.Above(ifst); ok && m.Kind == markers.NoReport {
-		return true
-	}
+	pass = markers.AbovePass(pass, idx, ifst, markers.NoReport)
 	// errors.As aliases hold the same error object: a handle through an
 	// alias handles the guarded error.
 	aliases := astutil.ErrAliases(ifst.Body, errName)

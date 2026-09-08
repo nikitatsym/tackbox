@@ -9,6 +9,7 @@ import com.github.javaparser.ast.stmt.CatchClause;
 import com.github.javaparser.ast.stmt.ExpressionStmt;
 import java.util.List;
 import nl.tsym.tackbox.javalint.Finding;
+import nl.tsym.tackbox.javalint.Marker;
 import nl.tsym.tackbox.javalint.MarkerIndex;
 import nl.tsym.tackbox.javalint.Recognition;
 
@@ -34,15 +35,15 @@ public final class ExitRule extends CatchRule {
         Frame f = Frame.scan(cc.getBody());
         for (int i = 0; i < f.calls.size(); i++) {
             MethodCallExpr call = f.calls.get(i);
-            if (!isSystemExit(call) || markerAboveExit(markers, call)
-                    || coveredBefore(cu, f.calls, i, caught)) {
+            if (!isSystemExit(call) || coveredBefore(cu, f.calls, i, caught)) {
                 continue;
             }
             Position p = call.getBegin().orElseThrow();
             String hint = call.findAncestor(ExpressionStmt.class)
                     .map(st -> Markers.deadNoReportHint(markers, st))
                     .orElse("");
-            out.add(new Finding(ID, file, p.line, p.column, p.line, p.column, MESSAGE + hint));
+            out.add(new Finding(ID, file, p.line, p.column, p.line, p.column, MESSAGE + hint,
+                    markerAboveExit(markers, call)));
         }
     }
 
@@ -61,9 +62,9 @@ public final class ExitRule extends CatchRule {
                 && scope instanceof NameExpr ne && ne.getNameAsString().equals("System");
     }
 
-    private static boolean markerAboveExit(MarkerIndex markers, MethodCallExpr call) {
+    private static Marker markerAboveExit(MarkerIndex markers, MethodCallExpr call) {
         return call.findAncestor(ExpressionStmt.class)
                 .map(st -> Markers.noReportAbove(markers, st))
-                .orElse(false);
+                .orElse(null);
     }
 }

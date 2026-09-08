@@ -35,6 +35,31 @@ class JsonOutputTest {
         assertTrue(json.contains("\"message\": \"JV001: a catch path swallows"), json);
     }
 
+    @Test
+    void suppressedPathKeepsItsRuleAndMarkerWithoutHidingAnotherPath() {
+        String source = String.join("\n",
+                "class S { void run() {",
+                "try { work(); } catch (Exception e) {",
+                "if (ready) {",
+                "// no-report: caller tolerates this branch",
+                "return;",
+                "} else { return; }",
+                "}",
+                "} }");
+        List<Finding> findings = Javalint.analyze("S.java", source).stream()
+                .filter(f -> f.rule().equals("JV001")).toList();
+        assertEquals(2, findings.size());
+        Finding suppressed = findings.stream().filter(Finding::suppressed).findFirst().orElseThrow();
+        assertEquals(4, suppressed.marker().line());
+        assertTrue(suppressed.message().contains("a silent path ends at line 5"));
+        assertTrue(findings.stream().anyMatch(f -> !f.suppressed()
+                && f.message().contains("a silent path ends at line 6")));
+        String json = JsonWriter.write(findings);
+        assertTrue(json.contains("\"suppressed\": true, \"marker_kind\": \"no-report\", \"marker_line\": 4"));
+        String handled = source.replace("return;", "throw e;");
+        assertTrue(Javalint.analyze("S.java", handled).stream().noneMatch(f -> f.rule().equals("JV001")));
+    }
+
     /** A `\` is the separator on Windows and an ordinary file name character
      *  everywhere else, so the same Finding must normalize on Windows and stay
      *  verbatim off it. A real windows Path.toString() would use backslashes; a

@@ -61,13 +61,18 @@ func checkBody(pass *analysis.Pass, idx *markers.Index, body *ast.BlockStmt) {
 		if !isReturnNil(ret) {
 			return true
 		}
-		if m, ok := idx.Above(ret); ok && m.Kind == markers.NilReturn {
-			return true
+		reporter := markers.AbovePass(pass, idx, ret, markers.NilReturn)
+		if reporter == pass {
+			for _, guard := range guards {
+				if ret.Pos() >= guard.Body.Pos() && ret.End() <= guard.Body.End() {
+					reporter = markers.AbovePass(pass, idx, guard, markers.NoReport)
+					if reporter != pass {
+						break
+					}
+				}
+			}
 		}
-		if coveredByGuardMarker(idx, guards, ret) {
-			return true
-		}
-		pass.Reportf(ret.Pos(),
+		reporter.Reportf(ret.Pos(),
 			"ERC004: bare `return nil` hides absence; widen the signature to `(val, ok)` / `(val, err)`")
 		return true
 	})
@@ -88,22 +93,6 @@ func errBranchGuards(pass *analysis.Pass, body *ast.BlockStmt) []*ast.IfStmt {
 		return true
 	})
 	return guards
-}
-
-// coveredByGuardMarker reports whether ret sits inside an err-branch guard's
-// Body (position containment stands in for ancestry) that itself carries a
-// valid no-report marker directly above the if - the site marker that
-// already silences ERC001 on the branch also covers the return inside it.
-func coveredByGuardMarker(idx *markers.Index, guards []*ast.IfStmt, ret *ast.ReturnStmt) bool {
-	for _, g := range guards {
-		if ret.Pos() < g.Body.Pos() || ret.End() > g.Body.End() {
-			continue
-		}
-		if m, ok := idx.Above(g); ok && m.Kind == markers.NoReport {
-			return true
-		}
-	}
-	return false
 }
 
 func candidateSignature(ft *ast.FuncType) bool {

@@ -163,12 +163,12 @@ past (argparse misuse, and the per-command cases below).
   `--draft` is a generator, not a gate: `0` when every uncovered
   marker was drafted (an orphan-only tree included), `2` only when
   unresolvable files leave the draft incomplete.
-- **hook** - `0` a no-op, a clean event, or a JSON decision (a
-  PreToolUse approval prompt or a PostToolUse Bash block); `1` a
+- **hook** - `0` a no-op, a clean event, or a JSON pre decision (an
+  approval prompt or a refusal before an unrelated edit); `1` a
   non-blocking infra error (unreadable stdin, a git failure); `2` a
-  PostToolUse finding on the edited lines, a non-compiling Go
-  package, or an approvals inconsistency anywhere in the worktree,
-  which blocks the edit in-loop.
+  PostToolUse finding on edited lines, a non-compiling Go package, or
+  session approvals debt in a touched file. A post error reports a
+  mutation that already landed; it does not block or undo the write.
 - **hook-protocol** - `0` whenever a decision was reached, whatever the
   decision says (it rides the JSON on stdout, never the exit code); `1`
   plus one stderr line when none was: unreadable stdin, or a request
@@ -473,8 +473,8 @@ scopes (lambdas, arrows, IIFEs) appear as 8-hex content hashes; Java
 overloads carry a parameter-type signature; same-name siblings take
 an `@k` ordinal. Repeat the line for each identical occurrence.
 
-The check is bidirectional and always covers the whole tree: a
-marker without a covering entry and an entry without a live marker
+For `tackbox lint` and `tackbox approvals`, the bidirectional check covers the whole tree:
+a marker without a covering entry and an entry without a live marker
 (an orphan) are both findings, reported by `tackbox lint` under the
 `approvals (whole tree):` header whatever the lint scope.
 `tackbox approvals` runs the same check standalone;
@@ -488,11 +488,19 @@ Approving is adding the line. In an agent session the edit that adds
 a manifest line draws the PreToolUse ask quoting the entry (several
 lines in one edit draw one all-or-nothing ask), so the only route to
 a green check passes through a visible diff and a human decision.
-Writing a marker itself never asks - by any channel, Edit or shell -
-it merely leaves the tree inconsistent, which every later hook
-event, `dev.py check`, and CI reports until the entry lands or the
-marker is reverted. Removing a manifest line is free; a marker whose
-text, scope, or count changes needs its entry updated the same way.
+Writing a marker itself never asks - by any channel, Edit or shell.
+New session debt blocks the next edit outside the affected marker files
+and `.tackbox/approvals`; post-edit feedback reports debt only in touched
+files. Bash and eval run no approvals checks. `dev.py check` and CI still
+report all tree inconsistencies. Removing a manifest line is free; a
+marker whose text, scope, or count changes needs its entry updated.
+
+Approvals messages carry the suppressed rule's text, or say the marker
+suppresses nothing when no finding is available, such as in the standalone
+`approvals` command. Each inconsistency takes one line; no message supplies
+an approval entry to copy. Suppressed findings stay out of ordinary lint
+output, its exit status, and codequality. See D020 in
+[rules/DECISIONS.md](rules/DECISIONS.md) for the session boundary.
 
 ## Generated and vendored code
 
@@ -575,15 +583,18 @@ specified in [docs/report-contracts.md](docs/report-contracts.md).
 
 ## Agent hook
 
-The rules wire into a coding agent's edit loop through one shared core: the
-approval gates, the diff-scoped lint, and the whole-tree consistency check
-are the same whichever host drives them. In host-neutral terms:
+The rules wire into a coding agent's edit loop through one shared core:
+approval gates, diff-scoped lint, and session approvals debt have the same
+semantics whichever host drives them. Session means the worktree difference
+from HEAD, including staged changes and untracked files; without a commit,
+the whole tree is added. Existing debt is left to `dev.py check` and CI.
 
-- **Post-edit** re-lints the touched files (Go: their package). A finding on
-  the lines the edit added blocks with the finding text. Every post event -
-  including an opaque channel - also runs the whole-tree approvals consistency
-  check: an unapproved marker, an orphaned entry, or an unresolvable file blocks
-  with the named fix. A verified violation is always a tool error. A post event
+- **Post-edit** re-lints touched files (Go: their package). A finding on
+  added lines or session approvals debt in a touched file becomes a tool
+  error carrying the findings. The mutation has already landed; this is
+  not a block or rollback. Debt includes a new uncovered marker, a new
+  orphaned approval, and an approval whose marker was deleted.
+  A verified violation is always a tool error. A post event
   that cannot be verified reports three facts: the mutation may already have
   landed, why verification did not complete, and that the mutation must not be
   repeated before `dev.py check`. OMP appends that warning to the model-facing
@@ -596,6 +607,10 @@ are the same whichever host drives them. In host-neutral terms:
   A known target whose content is ambiguous asks when it reaches a bypass
   surface. An unclassifiable file mutation or a failed policy dependency blocks
   before it can run; it is never weakened into an approval prompt.
+  Session approvals debt also blocks an edit if any target is outside the
+  repair set: files of the debt's markers and `.tackbox/approvals`.
+  A multi-file edit with one unrelated target is refused as a whole.
+  The existing approval gates still apply to every permitted repair.
 
 Only markers in files an engine would lint participate in the check
 (D012): a marker in a Go `testdata/` path or a non-lintable fixture
@@ -658,17 +673,17 @@ the current file.
   three-fact warning, omits an `isError` override so OMP preserves the host
   state, and tells the model not to repeat the mutation before `dev.py check`.
 - an opaque write channel (`xd://` tool devices, archive members, SQLite rows),
-  every `bash` call, and every `eval` call name no file, so they run the
-  whole-tree approvals wall alone.
+  every `bash` call, and every `eval` call name no file, so they run
+  neither approvals checks nor targeted lint.
 - MCP tool names are not enumerated by this extension. Their file mutations are
-  an explicit residual outside its pre gate and post wall; review their diff and
-  run `dev.py check`.
+  an explicit residual outside its pre gate and targeted post checks;
+  review their diff and run `dev.py check`.
 - the post adapter consumes each result-detail record independently. It falls
   back to a snapshot only for that record when the record is pruned; failed
   records do not widen the scope of successful landed records. OMP 18.x does
   not identify a landed subset for a single aggregate error without per-file
-  details, so Tackbox runs its whole-tree wall, preserves the host error, and
-  cannot safely perform targeted lint for that residual.
+  details, so Tackbox preserves the host error and cannot safely perform
+  targeted lint for that residual. It does not run a whole-tree approvals check.
 
 The extension runs `uvx tackbox@<npm package version> hook-protocol`. A tagged
 wheel is built and protocol-canary tested, published to PyPI, then a successful
@@ -711,16 +726,16 @@ one JSON decision on stdout:
   landed). Pre requests omit `succeeded`; post requests require the boolean
   `succeeded`, so a failed tool is not misreported as a missing landed file.
 - `tool` is one of `edit`, `apply_patch`, `write`, `bash`, or `eval`. `bash` and
-  `eval` are target-free wall-only channels.
+  `eval` are target-free channels and run no approvals or targeted lint.
 - a **target** is one file mutation with an absolute `path`, `op`, and
   `expectedPresent`. `edit` and `write` expect the path to exist, `delete`
   expects it absent, and a move reports an absent source plus a present
   destination. `content` is a full replacement; otherwise `added` and
   `removed` are text fragments. `content` and fragments are mutually exclusive.
   `ambiguous: true` means a known target needs whole-file treatment.
-- **zero targets** is the opaque channel: the whole-tree wall runs, nothing
-  file-scoped does. `unknown` is a non-empty reason only when no concrete
-  target can be named; it blocks pre and warns post.
+- **zero targets** is the opaque channel: no approvals or targeted lint runs.
+  `unknown` is a non-empty reason only when no concrete target can be named;
+  it blocks pre and warns post.
 - the wire decisions are `allow`, `ask`, `block`, and `warn`. The semantic
   outcomes are inactive, allow, approval-required, violation, and unverified:
   unverified maps to `block` pre and `warn` post. Hosts must make a post warning

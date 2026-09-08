@@ -313,3 +313,18 @@ def test_build_report_fingerprint_ignores_message():
         [Finding(rule="errcheck", file="a.go", line=3, message="reworded diagnostic")]
     )
     assert bare["fingerprint"] == worded["fingerprint"]
+
+
+def test_approved_suppression_is_invisible_to_lint_and_codequality(tmp_path):
+    (tmp_path / "dev.py").write_text("# hook entry\n")
+    (tmp_path / "app.js").write_text(
+        "// no-report: caller tolerates this failure\ntry { work() } catch (e) {}\n"
+    )
+    (tmp_path / ".tackbox").mkdir()
+    (tmp_path / ".tackbox/approvals").write_text("app.js: no-report: caller tolerates this failure\n")
+    init_repo(tmp_path, commit=True)
+    report = tmp_path / "quality.json"
+    result = _run(tmp_path, report)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "every catch path" not in result.stdout
+    assert json.loads(report.read_text()) == []

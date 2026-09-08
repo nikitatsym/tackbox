@@ -41,7 +41,7 @@ public final class NotifyGateRule extends CatchRule {
 
     @Override
     void check(String file, CompilationUnit cu, MarkerIndex markers, CatchClause cc, List<Finding> out) {
-        if (Sources.isTestFile(file) || !broadCatch(cc) || Markers.noReportAbove(markers, cc)) {
+        if (Sources.isTestFile(file) || !broadCatch(cc)) {
             return;
         }
         String caught = cc.getParameter().getNameAsString();
@@ -53,7 +53,8 @@ public final class NotifyGateRule extends CatchRule {
             return;
         }
         Position p = notify.getBegin().orElseThrow();
-        out.add(new Finding(ID, file, p.line, p.column, p.line, p.column, MESSAGE));
+        out.add(new Finding(ID, file, p.line, p.column, p.line, p.column, MESSAGE,
+                Markers.noReportAbove(markers, cc)));
     }
 
     private static boolean broadCatch(CatchClause cc) {

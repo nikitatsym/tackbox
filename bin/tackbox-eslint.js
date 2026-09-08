@@ -2,6 +2,7 @@
 const path = require('path')
 const fs = require('fs')
 const { ESLint } = require('eslint')
+const { setSuppressedReporter } = require('../js/rules/_shared')
 
 const REPORTERS_FLAG = '--reporters='
 
@@ -128,6 +129,12 @@ async function main() {
   if (files.length === 0) {
     process.stderr.write('tackbox-eslint: no files supplied\n')
     process.exit(2)
+  }
+  if (machine) {
+    setSuppressedReporter(finding => {
+      const file = path.relative(process.cwd(), finding.file).split(path.sep).join('/')
+      process.stdout.write(JSON.stringify({ ...finding, file }) + '\n')
+    })
   }
   validateDeclarations(decls)
   const eslint = new ESLint({

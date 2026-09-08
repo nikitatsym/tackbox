@@ -34,9 +34,6 @@ public final class ChainRule {
     public List<Finding> check(String file, CompilationUnit cu, MarkerIndex markers) {
         List<Finding> out = new ArrayList<>();
         for (CatchClause cc : cu.findAll(CatchClause.class)) {
-            if (Markers.noReportAbove(markers, cc)) {
-                continue;
-            }
             String caught = cc.getParameter().getNameAsString();
             Frame f = Frame.scan(cc.getBody());
             for (ThrowStmt ts : f.throwsStmts) {
@@ -45,7 +42,7 @@ public final class ChainRule {
                 }
                 Position p = ts.getBegin().orElseThrow();
                 out.add(new Finding(ID, file, p.line, p.column, p.line, p.column,
-                        MESSAGE + Markers.deadNoReportHint(markers, cc)));
+                        MESSAGE + Markers.deadNoReportHint(markers, cc), Markers.noReportAbove(markers, cc)));
             }
         }
         return out;

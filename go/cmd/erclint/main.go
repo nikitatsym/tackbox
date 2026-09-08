@@ -2,14 +2,19 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 
+	"sync"
+
+	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/multichecker"
 
 	"github.com/nikitatsym/tackbox/go/analyzers"
 	"github.com/nikitatsym/tackbox/go/internal/astutil"
+	"github.com/nikitatsym/tackbox/go/internal/markers"
 	"github.com/nikitatsym/tackbox/go/internal/reporters"
 	"github.com/nikitatsym/tackbox/go/internal/wrapcli"
 	"github.com/nikitatsym/tackbox/go/report"
@@ -71,6 +76,34 @@ func main() {
 		}
 		astutil.SetDeclaredReporters(decls)
 	}
+	for _, arg := range rest {
+		switch arg {
+		case "-json", "--json", "-json=true", "--json=true":
+			markers.Suppressed = emitSuppressed
+		case "-json=false", "--json=false":
+			markers.Suppressed = nil
+		}
+	}
 	os.Args = append([]string{os.Args[0]}, rest...)
 	multichecker.Main(analyzers.All()...)
+}
+
+var outputMu sync.Mutex
+
+func emitSuppressed(pass *analysis.Pass, diagnostic analysis.Diagnostic, marker markers.Marker) {
+	finding := map[string]interface{}{
+		"posn":        pass.Fset.Position(diagnostic.Pos).String(),
+		"message":     diagnostic.Message,
+		"suppressed":  true,
+		"marker_kind": marker.Kind.String(),
+		"marker_line": pass.Fset.Position(marker.Pos).Line,
+	}
+	outputMu.Lock()
+	defer outputMu.Unlock()
+	if err := json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
+		pass.Pkg.Path(): map[string]interface{}{pass.Analyzer.Name: []interface{}{finding}},
+	}); err != nil {
+		report.Error(context.Background(), "write suppressed finding", err, nil, "erclint.output")
+		os.Exit(2)
+	}
 }

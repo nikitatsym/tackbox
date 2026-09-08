@@ -33,9 +33,7 @@ func inspect(idx *markers.Index, pass *analysis.Pass, n ast.Node) bool {
 	if !ok {
 		return true
 	}
-	if m, ok := idx.Above(ifst); ok && m.Kind == markers.NoReport {
-		return true
-	}
+	pass = markers.AbovePass(pass, idx, ifst, markers.NoReport)
 	names := astutil.ErrAliases(ifst.Body, errIdent.Name)
 	parent := parentMap(ifst.Body)
 	ast.Inspect(ifst.Body, func(x ast.Node) bool {

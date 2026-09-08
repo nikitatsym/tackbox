@@ -19,14 +19,10 @@ from conftest import init_repo, tackbox_env
 from tackbox import approvals, scopes
 from tackbox.approvals import Entry
 from tackbox.cli import _MARKER_RE
+from tackbox.engines import Finding
 
 IS_LINTABLE = lambda rel: scopes.language_for(rel) is not None  # noqa: E731
 
-# The five canonical texts (plan, user-approved) - the spec, pinned here.
-UNAPPROVED = "Unapproved suppression marker (add the manifest line to request approval, or revert):"
-ORPHANED = "Orphaned approval (no matching marker; remove the line or restore the marker):"
-UNRESOLVABLE = ("Unresolvable file (syntax does not parse; its markers and approvals are "
-                "unverified - fix the syntax first):")
 HEADER = "approvals (whole tree):"
 
 
@@ -228,17 +224,6 @@ def test_at_escape_adversarial_matching(tmp_path):
 
 # -- canonical texts + draft
 
-def test_render_blocks_canonical_texts(tmp_path):
-    root = build(
-        tmp_path,
-        {"a.py": "def f():\n    x() # no-report: uncovered\n"},
-        manifest="a.py#gone: no-report: orphan\n",
-    )
-    lines = approvals.render_blocks(check(root))
-    assert lines[0] == HEADER
-    assert UNAPPROVED in lines and ORPHANED in lines
-    assert "  a.py#f: no-report: uncovered" in lines
-    assert "  a.py#gone: no-report: orphan" in lines
 
 
 def test_draft_lines_are_entries_for_uncovered(tmp_path):
@@ -275,8 +260,8 @@ def repo(tmp_path) -> Path:
 def test_cli_approvals_inconsistent_exits_2(repo):
     r = _run(repo, "approvals")
     assert r.returncode == 2, r.stderr
-    assert UNAPPROVED in r.stdout
-    assert "a.py#f: no-report: unapproved marker" in r.stdout
+    assert "a.py:2:" in r.stdout
+    assert "a.py#f:" not in r.stdout
 
 
 def test_cli_approvals_draft_exits_0_and_bootstraps(repo):
@@ -301,7 +286,7 @@ def test_cli_approvals_draft_incomplete_on_unresolvable_exits_2(tmp_path):
 def test_cli_lint_prints_whole_tree_header_and_fails(repo):
     r = _run(repo, "lint", ".")
     assert HEADER in r.stdout
-    assert UNAPPROVED in r.stdout
+    assert "a.py:2:" in r.stdout
     assert r.returncode == 1  # approvals inconsistency counts as a finding
 
 
@@ -315,8 +300,26 @@ def test_cli_lint_approvals_is_whole_tree_even_when_scope_is_clean(tmp_path):
     init_repo(tmp_path, commit=True)
     r = _run(tmp_path, "lint", "clean")
     assert HEADER in r.stdout, r.stdout + r.stderr
-    assert "dirty.py#f: no-report: outside scope" in r.stdout
+    assert "dirty.py:2:" in r.stdout
     assert r.returncode == 1
+
+
+def test_render_matches_suppressed_findings_to_the_exact_marker(tmp_path):
+    root = build(tmp_path, {"a.py": "# no-report: unused marker\n# parse-skip: another marker\n"},
+                 manifest="missing.py: no-report: orphan marker\n")
+    report = check(root)
+    findings = [
+        Finding("rule-one", "a.py", 20, "fix the real violation", True, "no-report", 1),
+        Finding("other-file", "b.py", 20, "wrong file", True, "no-report", 1),
+        Finding("other-line", "a.py", 20, "wrong marker", True, "no-report", 2),
+        Finding("visible", "a.py", 20, "not suppressed"),
+    ]
+    lines = approvals.render_blocks(report, findings)
+    assert len(lines) == 3
+    assert any("a.py:1: rule-one: fix the real violation" in line for line in lines)
+    assert any("a.py:2: unapproved parse-skip marker suppresses nothing here" in line for line in lines)
+    assert any(".tackbox/approvals:1: approval has no matching marker" in line for line in lines)
+    assert not any(text in "\n".join(lines) for text in ("wrong file", "wrong marker", "not suppressed", "unused marker"))
 
 
 if __name__ == "__main__":

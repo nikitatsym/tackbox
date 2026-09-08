@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from tackbox import approvals
+from tackbox.cli import _MARKER_RE
 from tackbox.engines import (
     Finding,
     active_engines,
@@ -225,3 +227,52 @@ def test_jscpd_machine_location(machine_findings):
         hits = _hit(machine_findings, "DUP001", side)
         assert hits and hits[0].line == 1, machine_findings
         assert hits[0].message and "clone of" in hits[0].message, hits
+
+
+@pytest.mark.parametrize("engine_id,filename,source,rule,marker_line", [
+    ("erclint", "marked.go",
+     'package p\nimport "errors"\nfunc f() error {\nerr := errors.New("x")\n'
+     '// no-report: caller tolerates this failure\nif err != nil { return nil }; return nil\n}\n',
+     "errcheck", 5),
+    ("pyrules", "marked.py",
+     "try:\n    work()\nexcept ValueError:\n    # no-report: caller tolerates this failure\n    pass\n",
+     "python-swallowed-exception", 4),
+    ("javalint", "Marked.java",
+     "class Marked { void f() {\ntry { work(); } catch (Exception e) {\n"
+     "// no-report: caller tolerates this failure\nint x = 1;\n}\n} }\n",
+     "JV001", 3),
+    ("tackbox-eslint", "marked.js",
+     "// no-report: caller tolerates this failure\ntry { work() } catch (e) {}\n",
+     "tackbox/no-swallow-catch", 1),
+    ("tackbox-eslint", "Marked.svelte",
+     '<!-- no-report: caller tolerates this failure -->\n'
+     '<button onclick={() => { try { work() } catch (e) {} }}>go</button>\n',
+     "tackbox/no-swallow-catch", 1),
+    ("tackbox-eslint", "Multiline.svelte",
+     '<!--\n  no-report: caller tolerates this failure\n-->\n'
+     '<button onclick={() => { try { work() } catch (e) {} }}>go</button>\n',
+     "tackbox/no-swallow-catch", 2),
+])
+def test_machine_suppression_preserves_the_underlying_violation(
+    tmp_path, engine_id, filename, source, rule, marker_line,
+):
+    (tmp_path / "go.mod").write_text(GO_MOD)
+    target = tmp_path / filename
+    target.write_text(source)
+    plan = dispatch([filename], [engine for engine in active_engines() if engine.id == engine_id])
+    [marked] = run_engines(plan, tmp_path, TACKBOX_ROOT, machine=True)
+    [finding] = [f for f in located_findings(engine_id, marked.stdout, tmp_path) if f.rule == rule]
+    assert finding.suppressed and finding.marker_kind == "no-report"
+    assert finding.marker_line == marker_line
+    assert marked.exit_code == 0
+    report = approvals.check(tmp_path, [filename], _MARKER_RE, lambda rel: rel == filename)
+    [message] = approvals.render_blocks(report, [finding])
+    assert finding.message in message
+    assert "suppressed by an unapproved no-report marker" in message
+    lines = source.splitlines()
+    lines[marker_line - 1] = ""
+    target.write_text("\n".join(lines) + "\n")
+    [plain] = run_engines(plan, tmp_path, TACKBOX_ROOT, machine=True)
+    [visible] = [f for f in located_findings(engine_id, plain.stdout, tmp_path) if f.rule == rule]
+    assert not visible.suppressed
+    assert (visible.file, visible.line, visible.message) == (finding.file, finding.line, finding.message)
