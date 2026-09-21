@@ -182,6 +182,21 @@ function unverified(reason) {
   }
 }
 
+function unverifiedPostMessage(reason) {
+  const text = typeof reason === 'string' ? reason : String(reason)
+  if (
+    text.includes('The mutation may already have landed.') &&
+    text.includes('Do not repeat the mutation; dev.py check remains required.')
+  ) {
+    return text
+  }
+  return [
+    'The mutation may already have landed.',
+    `Tackbox verification did not complete: ${text}`,
+    'Do not repeat the mutation; dev.py check remains required.',
+  ].join('\n')
+}
+
 function firstLine(text) {
   for (const line of String(text || '').split('\n')) {
     if (line.trim() !== '') return line.trim()
@@ -209,5 +224,7 @@ module.exports = {
   request,
   resolveArgv,
   asDecision,
+  parseJson,
   unverified,
+  unverifiedPostMessage,
 }

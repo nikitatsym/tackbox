@@ -4,6 +4,7 @@ const path = require('node:path')
 
 const TAGGED = /^\[(.+)#[0-9A-Fa-f]{4}\]\s*$/
 const ENVELOPE = /^\*\*\* (?:Begin|End) Patch\s*$/
+const EOF_SENTINEL = /^\*\*\* End of File\s*$/
 const FILE_SENTINEL = /^\*\*\* (Update|Add|Delete) File:\s*(.+?)\s*$/
 const MOVE_SENTINEL = /^\*\*\* Move to:\s*(.+?)\s*$/
 const MV_OP = /^MV\s+(.+?)\s*$/
@@ -256,7 +257,7 @@ function parsePatchText(tool, text, cwd) {
       continue
     }
     flush()
-    if (line.trim() === '' || ENVELOPE.test(line) || HUNK.test(line)) continue
+    if (line.trim() === '' || ENVELOPE.test(line) || EOF_SENTINEL.test(line) || HUNK.test(line)) continue
     const tagged = TAGGED.exec(line)
     if (tagged !== null) {
       open(tagged[1])

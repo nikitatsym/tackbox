@@ -9,6 +9,7 @@
     "./report": "./js/report.js"
   },
   "bin": {
+    "tackbox-codex-hook": "./bin/tackbox-codex-hook.js",
     "tackbox-eslint": "./bin/tackbox-eslint.js",
     "tackbox-mdlint": "./bin/tackbox-mdlint.js"
   },
@@ -22,6 +23,7 @@
     "js/report.js",
     "js/rules/",
     "js/markdownlint-rules/",
+    "js/codex/",
     "js/omp/index.mjs",
     "js/omp/index.js",
     "js/omp/hook.js",

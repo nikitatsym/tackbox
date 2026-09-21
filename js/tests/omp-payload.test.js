@@ -91,6 +91,24 @@ test('apply_patch update, add, delete, and move sentinels keep their operations'
   ])
 })
 
+test('apply_patch End of File sentinel does not make a target ambiguous', () => {
+  const result = normalize('apply_patch', {
+    input: [
+      '*** Begin Patch',
+      '*** Update File: a.js',
+      '@@',
+      '+new',
+      '*** End of File',
+      '*** End Patch',
+      '',
+    ].join('\n'),
+  }, CWD)
+  assert.deepEqual(only(result), target('a.js', 'edit', true, {
+    added: ['new'],
+    removed: [],
+  }))
+})
+
 test('pinned paragraph-sign headers and derived public paths map conservatively', () => {
   const result = normalize('edit', {
     input: '\u00b6one.js#ABCD\nunparsed one\n\u00b6\u00b6two.js#BCDE\nunparsed two\n',

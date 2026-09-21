@@ -67,31 +67,16 @@ function applyPost(decision, event) {
   }
   if (kind === hook.UNVERIFIED) {
     return {
-      content: appended(event, unverifiedPostMessage(decision.reason)),
+      content: appended(event, hook.unverifiedPostMessage(decision.reason)),
     }
   }
   if (kind === hook.ALLOW) return undefined
   return {
     content: appended(
       event,
-      unverifiedPostMessage(`tackbox returned an unrecognized post decision ${String(kind)}`),
+      hook.unverifiedPostMessage(`tackbox returned an unrecognized post decision ${String(kind)}`),
     ),
   }
-}
-
-function unverifiedPostMessage(reason) {
-  const text = typeof reason === 'string' ? reason : String(reason)
-  if (
-    text.includes('The mutation may already have landed.') &&
-    text.includes('Do not repeat the mutation; dev.py check remains required.')
-  ) {
-    return text
-  }
-  return [
-    'The mutation may already have landed.',
-    `Tackbox verification did not complete: ${text}`,
-    'Do not repeat the mutation; dev.py check remains required.',
-  ].join('\n')
 }
 
 function appended(event, text) {

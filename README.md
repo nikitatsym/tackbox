@@ -646,6 +646,44 @@ failure is unverified, not a no-op.
 `uvx tackbox hook` runs the cached tackbox (no `@latest`): the hook is
 fast in-loop feedback, not the authoritative gate.
 
+### Codex
+
+Codex exposes its canonical file mutation as `apply_patch`. Wire the npm
+adapter once, globally, in `~/.codex/hooks.json`:
+
+Install the adapter once so hook execution does not depend on registry access:
+
+```bash
+npm install --global tackbox@latest
+```
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "apply_patch",
+       "hooks": [{"type": "command",
+                  "command": "tackbox-codex-hook"}]}
+    ],
+    "PostToolUse": [
+      {"matcher": "apply_patch",
+       "hooks": [{"type": "command",
+                  "command": "tackbox-codex-hook",
+                  "timeout": 120}]}
+    ]
+  }
+}
+```
+
+The adapter converts Codex's patch payload to `tackbox hook-protocol` and pins
+the Python wheel to the resolved npm package version. Codex does not support an
+`ask` decision from `PreToolUse`; an approval-gated edit therefore blocks with
+the reason instead of approving itself. Make that change in an interactive host
+that supports the prompt.
+Before a patch, any non-allow decision blocks. After a patch, verified findings
+replace the tool result; an unverified decision adds model-visible context that
+the mutation may already have landed and must not be repeated.
+
 ### Oh My Pi
 
 ```bash
