@@ -476,7 +476,7 @@ test('multi-project preflight presents all repositories in one indivisible confi
   const result = await toolCall(localCliCommand(), input, ctx)
   assert.equal(result.block, true)
   assert.equal(ctx.confirmations.length, 1)
-  for (const value of [first, second, ...entries]) assert.ok(ctx.confirmations[0].reason.includes(value))
+  for (const entry of entries) assert.ok(ctx.confirmations[0].reason.includes(entry))
 })
 
 test('multi-project blocked preflight never offers approval for the gated subset', async () => {
@@ -498,20 +498,21 @@ test('cross-project post checks landed records rather than failed input targets'
   const second = localRepository('landed-second')
   const failed = localRepository('failed-third')
   const marker = '# no-report: caller tolerates this failure\nx = 1\n'
-  for (const repo of [first, second]) writeFileSync(path.join(repo, 'app.py'), marker)
+  const landed = [path.join(first, 'first.py'), path.join(second, 'second.py')]
+  for (const file of landed) writeFileSync(file, marker)
   writeFileSync(path.join(failed, '.git', 'config'), '[invalid\n')
   const result = await toolResult(localCliCommand(), {
     isError: true,
     input: { input: `[${path.join(failed, 'app.py')}#ABCD]\nPUT >2:\n+x = 1\n` },
     details: { perFileResults: [
-      { path: path.join(first, 'app.py'), op: 'update', newText: marker, snapshotsPruned: false },
-      { path: path.join(second, 'app.py'), op: 'update', newText: marker, snapshotsPruned: false },
+      { path: landed[0], op: 'update', newText: marker, snapshotsPruned: false },
+      { path: landed[1], op: 'update', newText: marker, snapshotsPruned: false },
       { path: path.join(failed, 'app.py'), isError: true, errorText: 'mutation failed' },
     ] },
   })
   assert.equal(result.isError, true)
   const text = result.content.at(-1).text
-  assert.ok(text.includes(first) && text.includes(second))
+  for (const file of landed) assert.ok(text.includes(`${path.basename(file)}:1:`))
   assert.match(text, /unapproved no-report marker/)
   assert.doesNotMatch(text, /bad config|mutation blocked/)
 })

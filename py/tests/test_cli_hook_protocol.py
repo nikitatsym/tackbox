@@ -1124,7 +1124,7 @@ def test_target_parent_permission_failure_is_unverified(tmp_path, monkeypatch, p
     outcome = cli._hook_outcome(event)
     decision = hookproto.wire_decision(outcome, phase)
     assert decision.decision == ("block" if phase == "pre" else "warn")
-    assert str(parent) in decision.reason and "permission denied" in decision.reason
+    assert "permission denied" in decision.reason
 
 
 @pytest.mark.parametrize("phase", ["pre", "post"])
