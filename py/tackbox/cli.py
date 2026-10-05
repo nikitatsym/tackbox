@@ -11,7 +11,7 @@ import stat
 import subprocess
 import sys
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 
@@ -931,7 +931,7 @@ def _run_hook_protocol() -> int:
         # no-report: malformed protocol has no safe phase to classify
         print(f"tackbox hook: {e}", file=sys.stderr)
         return 1
-    outcome = _hook_event_outcome(_hook_repository(event.cwd), event)
+    outcome = _hook_outcome(event)
     print(hookproto.render_decision(outcome, event.phase))
     return 0
 
@@ -949,13 +949,25 @@ def _hook_stdin_payload() -> dict | None:
     return payload
 
 
-def _hook_repository(cwd: str | None) -> HookRepository:
-    """Discover inactive, active, and broken hook roots without conflating them."""
-    try:
-        return _discover_hook_repository(cwd)
-    except HookInfrastructureError as e:
-        # no-report: repository discovery returns its explicit three-state result
-        return HookRepository(HookRepositoryState.INFRASTRUCTURE_FAILURE, reason=str(e))
+def _hook_repository(location: str | None, *, target: bool = False) -> HookRepository:
+    """Discover policy from a directory or a file's nearest existing parent."""
+    directory: Path | None = None
+    while True:
+        try:
+            if target:
+                if directory is None:
+                    directory = Path(location).resolve().parent
+                if not stat.S_ISDIR(directory.stat().st_mode):
+                    raise HookFileError(f"hook target parent is not a directory: {directory}")
+                return _discover_hook_repository(str(directory))
+            return _discover_hook_repository(location)
+        except (HookInfrastructureError, OSError, ValueError, RuntimeError) as e:
+            # no-report: repository discovery returns its explicit three-state result
+            if (isinstance(e, FileNotFoundError) and directory is not None
+                    and e.filename == str(directory) and directory.parent != directory):
+                directory = directory.parent
+                continue
+            return HookRepository(HookRepositoryState.INFRASTRUCTURE_FAILURE, reason=str(e))
 
 
 def _discover_hook_repository(cwd: str | None) -> HookRepository:
@@ -1002,8 +1014,10 @@ def _discover_hook_repository(cwd: str | None) -> HookRepository:
             f"cannot parse hook repository root: relative root {root_text!r}"
         )
     try:
-        root_exists = root.is_dir()
-        root_has_dev_py = (root / "dev.py").is_file()
+        root = root.resolve()
+        root_exists = stat.S_ISDIR(root.stat().st_mode)
+        with os.scandir(root) as entries:
+            root_has_dev_py = any(entry.name == "dev.py" and entry.is_file() for entry in entries)
     except (OSError, ValueError) as e:
         raise HookInfrastructureError(f"cannot inspect hook repository: {e}") from e
     if not root_exists:
@@ -1011,6 +1025,40 @@ def _discover_hook_repository(cwd: str | None) -> HookRepository:
     if not root_has_dev_py:
         return HookRepository(HookRepositoryState.INACTIVE, root=root)
     return HookRepository(HookRepositoryState.ACTIVE, root=root)
+
+
+def _hook_outcome(event: hookproto.Event) -> hookproto.Outcome:
+    """Evaluate each target worktree before making one indivisible host decision."""
+    if event.unknown:
+        reason = event.unknown if event.phase == hookproto.PRE else f"tackbox hook: {event.unknown}"
+        return _post_unverified_outcome(
+            event, hookproto.Outcome(hookproto.OutcomeKind.UNVERIFIED, reason),
+        )
+    if not event.targets:
+        return hookproto.Outcome(hookproto.OutcomeKind.ALLOW)
+    groups: dict[HookRepository, list[hookproto.Target]] = {}
+    for target in event.targets:
+        repository = _hook_repository(str(target.path), target=True)
+        groups.setdefault(repository, []).append(target)
+    outcomes: list[tuple[str, hookproto.Outcome]] = []
+    for repository, targets in groups.items():
+        label = str(repository.root) if repository.root is not None else ", ".join(str(t.path) for t in targets)
+        outcome = _hook_event_outcome(repository, replace(event, targets=tuple(targets)))
+        outcomes.append((label, outcome))
+    kinds = {outcome.kind for _label, outcome in outcomes}
+    if hookproto.OutcomeKind.VIOLATION in kinds:
+        kind = hookproto.OutcomeKind.VIOLATION
+    elif hookproto.OutcomeKind.UNVERIFIED in kinds:
+        kind = hookproto.OutcomeKind.UNVERIFIED
+    elif hookproto.OutcomeKind.APPROVAL_REQUIRED in kinds:
+        kind = hookproto.OutcomeKind.APPROVAL_REQUIRED
+    else:
+        return hookproto.Outcome(hookproto.OutcomeKind.ALLOW)
+    reasons = [
+        f"{label}:\n{outcome.reason}" if len(groups) > 1 else outcome.reason
+        for label, outcome in outcomes if outcome.reason
+    ]
+    return hookproto.Outcome(kind, "\n".join(reasons))
 
 
 def _hook_event_outcome(
@@ -1062,8 +1110,6 @@ def _hook_event_outcome_inner(
             )
         return hookproto.Outcome(hookproto.OutcomeKind.INACTIVE)
     assert repository.root is not None
-    if event.tool in {"bash", "eval"} or event.targetless == "opaque":
-        return hookproto.Outcome(hookproto.OutcomeKind.ALLOW)
     if event.phase == hookproto.PRE:
         return _hook_pre_decision(repository.root, event)
     return _hook_post_decision(repository.root, event)
@@ -1118,6 +1164,10 @@ def _claude_target(
     path: Path, tool: str, tool_input: dict, cwd: object
 ) -> hookproto.Target:
     """Validate Claude fields through the same strict protocol as OMP."""
+    if not path.is_absolute():
+        if not isinstance(cwd, str) or not Path(cwd).is_absolute():
+            raise hookproto.HookProtocolError("relative Claude file path requires an absolute cwd")
+        path = Path(cwd) / path
     if tool == "Write":
         target = {
             "path": str(path),
@@ -1178,10 +1228,7 @@ def _claude_string(values: dict, key: str, label: str) -> str:
 
 def _hook_pre(event: dict) -> int:
     """Render the shared Pre outcome through Claude Code's permission surface."""
-    outcome = _hook_event_outcome(
-        _hook_repository(event.get("cwd")),
-        _claude_event(hookproto.PRE, event),
-    )
+    outcome = _hook_outcome(_claude_event(hookproto.PRE, event))
     if outcome.kind is hookproto.OutcomeKind.APPROVAL_REQUIRED:
         return _hook_ask_reason(outcome.reason)
     if outcome.kind in {
@@ -1195,10 +1242,7 @@ def _hook_pre(event: dict) -> int:
 def _hook_post(event: dict) -> int:
     """Render a landed Claude mutation without hiding policy violations."""
     normalized = _claude_event(hookproto.POST, event)
-    outcome = _hook_event_outcome(
-        _hook_repository(event.get("cwd")),
-        normalized,
-    )
+    outcome = _hook_outcome(normalized)
     if outcome.kind is hookproto.OutcomeKind.UNVERIFIED:
         return _hook_unverified(outcome)
     if outcome.kind is not hookproto.OutcomeKind.VIOLATION:
@@ -1247,8 +1291,6 @@ def _hook_pre_decision(
     root: Path, event: hookproto.Event
 ) -> hookproto.Outcome:
     """Classify a Pre mutation; typed policy failures reach the shared boundary."""
-    if event.unknown:
-        return hookproto.Outcome(hookproto.OutcomeKind.UNVERIFIED, event.unknown)
     reasons = _pre_gate_reasons(root, event)
     if event.targets and not all(_same_path(target.path, root / approvals.FILENAME)
                                  for target in event.targets):
@@ -1263,7 +1305,7 @@ def _hook_pre_decision(
             ) if debt.uncovered else ([], [], [])
             return hookproto.Outcome(
                 hookproto.OutcomeKind.VIOLATION,
-                "\n".join(approvals.render_blocks(debt, _located(results or [], root))),
+                "\n".join([*approvals.render_blocks(debt, _located(results or [], root)), *reasons]),
             )
     if reasons:
         return hookproto.Outcome(
@@ -1289,8 +1331,7 @@ def _pre_gate_reasons(root: Path, event: hookproto.Event) -> list[str]:
                 reasons.append(reason)
             continue
         rel = _hook_rel_strict(target.path, root)
-        if rel is not None:
-            ordinary.append(rel)
+        ordinary.append(rel)
     if not ordinary:
         return reasons
     try:
@@ -1331,11 +1372,12 @@ def _gated_file(root: Path, path: Path) -> str | None:
     subtree, so a `.gitattributes` in any directory gates; root-only would be a
     hole. The two `.tackbox/` files are root-only: a same-named file elsewhere
     does not participate."""
-    if _same_path(path, root / approvals.FILENAME):
+    rel = _hook_rel_strict(path, root)
+    if rel == approvals.FILENAME:
         return approvals.FILENAME
-    if _same_path(path, root / reporters.FILENAME):
+    if rel == reporters.FILENAME:
         return reporters.FILENAME
-    if path.name == ".gitattributes":
+    if Path(rel).name == ".gitattributes":
         return ".gitattributes"
     return None
 
@@ -1346,7 +1388,7 @@ def _named_gate_ask(
     """The ask for one named gate, or None when the change is free - a removal, or
     a line that sets no honored attribute."""
     if target.ambiguous:
-        return _UNCLASSIFIED.format(rel=_hook_rel(target.path, root))
+        return _UNCLASSIFIED.format(rel=_hook_rel_strict(target.path, root))
     added = _pre_added(target)
     if gate == approvals.FILENAME:
         return _manifest_ask(added)
@@ -1457,13 +1499,6 @@ def _hook_post_decision(
     root: Path, event: hookproto.Event
 ) -> hookproto.Outcome:
     """Check landed file edits without attributing existing tree debt to them."""
-    if event.unknown:
-        return hookproto.Outcome(
-            hookproto.OutcomeKind.UNVERIFIED,
-            f"tackbox hook: {event.unknown}",
-        )
-    if not event.targets:
-        return hookproto.Outcome(hookproto.OutcomeKind.ALLOW)
     debt = _hook_session_report(root)
     touched = {_hook_rel_strict(target.path, root) for target in event.targets}
     if approvals.FILENAME not in touched:
@@ -1580,8 +1615,6 @@ def _post_scope(root: Path, event: hookproto.Event) -> HookPostScope:
             continue
         try:
             rel = _hook_rel_strict(target.path, root)
-            if rel is None:
-                continue
             affected, failure = _affected_for(target, rel)
         except HookFileError as e:
             # no-report: retain other targets while recording partial verification failure
@@ -1731,12 +1764,11 @@ def _hook_infra_or_clean(results: list) -> hookproto.Outcome:
     )
 
 
-_GO_COMPILE_ERR = re.compile(r"^[^/\s].*\.go:\d+:\d+: .")
+_GO_COMPILE_ERR = re.compile(r"^\S.*\.go:\d+:\d+: .")
 
 
 def _first_go_compile_error(stderr: str) -> str:
-    """The first repo-relative `file:line:col: msg` go compiler error, skipping
-    `-: # pkg` headers and the absolute-path duplicates erclint also prints."""
+    """The first located Go compiler error, excluding package headers."""
     for line in stderr.splitlines():
         line = line.rstrip()
         if _GO_COMPILE_ERR.match(line):
@@ -1761,34 +1793,23 @@ def _hook_compile_break(results: list) -> list[str]:
 # -- shared path helpers --------------------------------------------------
 
 
-def _hook_rel_strict(target: Path, root: Path) -> str | None:
-    """Return a repo-relative POSIX path, or None only for a real outside path."""
+def _hook_rel_strict(target: Path, root: Path) -> str:
+    """Return a scoped POSIX path, refusing any unresolved repository mismatch."""
     try:
         resolved_target = target.resolve()
         resolved_root = root.resolve()
-    except OSError as e:
+    except (OSError, ValueError, RuntimeError) as e:
         raise HookFileError(f"cannot resolve hook target {target}: {e}") from e
     if not resolved_target.is_relative_to(resolved_root):
-        return None
+        raise HookFileError(f"hook target {target} is outside repository {root}")
     return resolved_target.relative_to(resolved_root).as_posix()
 
 
 def _same_path(a: Path, b: Path) -> bool:
     try:
         return a.resolve() == b.resolve()
-    except OSError as e:
+    except (OSError, ValueError, RuntimeError) as e:
         raise HookFileError(f"cannot resolve hook path {a}: {e}") from e
-
-
-def _hook_rel(target: Path, root: Path) -> str:
-    try:
-        resolved_target = target.resolve()
-        resolved_root = root.resolve()
-    except OSError as e:
-        raise HookFileError(f"cannot resolve hook target {target}: {e}") from e
-    if not resolved_target.is_relative_to(resolved_root):
-        return str(target)
-    return resolved_target.relative_to(resolved_root).as_posix()
 
 
 if __name__ == "__main__":

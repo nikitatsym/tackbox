@@ -444,6 +444,98 @@ test('post write and pruned move details round trip through the local Python CLI
   assert.equal(moveResult, undefined)
 })
 
+test('cross-project approval uses the real core for headless, denial, and confirmation', async () => {
+  const repo = localRepository('cross-project-approval')
+  const entry = 'app.py: no-report: owner must approve this exception'
+  const input = { input: `[${path.join(repo, '.tackbox', 'approvals')}#ABCD]\nPUT >2:\n+${entry}\n` }
+  const command = localCliCommand()
+  const headlessContext = context({ hasUI: false })
+  const headless = await toolCall(command, input, headlessContext)
+  assert.equal(headless.block, true)
+  assert.match(headless.reason, /no interactive session/)
+  assert.ok(headless.reason.includes(entry))
+  assert.deepEqual(headlessContext.confirmations, [])
+  const deniedContext = context({ confirm: false })
+  const denied = await toolCall(command, input, deniedContext)
+  assert.equal(denied.block, true)
+  assert.match(denied.reason, /approval denied/)
+  assert.ok(deniedContext.confirmations[0].reason.includes(entry))
+  const approvedContext = context({ confirm: true })
+  assert.equal(await toolCall(command, input, approvedContext), undefined)
+  assert.equal(approvedContext.confirmations.length, 1)
+  assert.ok(approvedContext.confirmations[0].reason.includes(entry))
+  assert.equal(existsSync(path.join(repo, '.tackbox', 'approvals')), false)
+})
+
+test('multi-project preflight presents all repositories in one indivisible confirmation', async () => {
+  const first = localRepository('multi-project-first')
+  const second = localRepository('multi-project-second')
+  const entries = ['first.py: no-report: first exception requires consent', 'second.py: no-report: second exception requires consent']
+  const input = { input: [first, second].map((repo, index) => `[${path.join(repo, '.tackbox', 'approvals')}#ABCD]\nPUT >2:\n+${entries[index]}\n`).join('') }
+  const ctx = context({ cwd: first, confirm: false })
+  const result = await toolCall(localCliCommand(), input, ctx)
+  assert.equal(result.block, true)
+  assert.equal(ctx.confirmations.length, 1)
+  for (const value of [first, second, ...entries]) assert.ok(ctx.confirmations[0].reason.includes(value))
+})
+
+test('multi-project blocked preflight never offers approval for the gated subset', async () => {
+  const gated = localRepository('multi-project-gated')
+  const broken = localRepository('multi-project-broken')
+  writeFileSync(path.join(broken, '.git', 'config'), '[invalid\n')
+  const entry = 'app.py: no-report: exception requires consent'
+  const input = { input: `[${path.join(gated, '.tackbox', 'approvals')}#ABCD]\nPUT >2:\n+${entry}\n[${path.join(broken, 'app.py')}#ABCD]\nPUT >2:\n+x = 1\n` }
+  const ctx = context()
+  const result = await toolCall(localCliCommand(), input, ctx)
+  assert.equal(result.block, true)
+  assert.ok(result.reason.includes(entry))
+  assert.match(result.reason, /bad config/)
+  assert.deepEqual(ctx.confirmations, [])
+})
+
+test('cross-project post checks landed records rather than failed input targets', async () => {
+  const first = localRepository('landed-first')
+  const second = localRepository('landed-second')
+  const failed = localRepository('failed-third')
+  const marker = '# no-report: caller tolerates this failure\nx = 1\n'
+  for (const repo of [first, second]) writeFileSync(path.join(repo, 'app.py'), marker)
+  writeFileSync(path.join(failed, '.git', 'config'), '[invalid\n')
+  const result = await toolResult(localCliCommand(), {
+    isError: true,
+    input: { input: `[${path.join(failed, 'app.py')}#ABCD]\nPUT >2:\n+x = 1\n` },
+    details: { perFileResults: [
+      { path: path.join(first, 'app.py'), op: 'update', newText: marker, snapshotsPruned: false },
+      { path: path.join(second, 'app.py'), op: 'update', newText: marker, snapshotsPruned: false },
+      { path: path.join(failed, 'app.py'), isError: true, errorText: 'mutation failed' },
+    ] },
+  })
+  assert.equal(result.isError, true)
+  const text = result.content.at(-1).text
+  assert.ok(text.includes(first) && text.includes(second))
+  assert.match(text, /unapproved no-report marker/)
+  assert.doesNotMatch(text, /bad config|mutation blocked/)
+})
+
+test('debt repair and clean-project edit share a call without sharing debt', async () => {
+  const indebted = localRepository('independent-debt')
+  const clean = localRepository('independent-clean')
+  const marker = '# no-report: caller tolerates this failure\nx = 1\n'
+  writeFileSync(path.join(indebted, 'marker.py'), marker)
+  const repairInput = `[${path.join(indebted, 'marker.py')}#ABCD]\nPUT 2.=2:\n+x = 2\n`
+  const cleanInput = `[${path.join(clean, 'plain.py')}#ABCD]\nPUT 1.=1:\n+x = 2\n`
+  const command = localCliCommand()
+  const ctx = context({ cwd: indebted, hasUI: false })
+  assert.equal(await toolCall(command, { input: repairInput + cleanInput }, ctx), undefined)
+  assert.equal(await toolCall(command, { input: cleanInput }, ctx), undefined)
+  const unrelated = `[${path.join(indebted, 'unrelated.py')}#ABCD]\nPUT 1.=1:\n+x = 2\n`
+  const blocked = await toolCall(command, { input: repairInput + cleanInput + unrelated }, ctx)
+  assert.equal(blocked.block, true)
+  assert.match(blocked.reason, /marker.py:1:.*unapproved no-report marker/)
+  assert.deepEqual(ctx.confirmations, [])
+})
+
+
+
 test('the shipped manifest declares the public OMP extension', () => {
   assert.deepEqual(manifest.omp.extensions, ['./js/omp/index.mjs'])
   assert.equal(existsSync(path.join(process.cwd(), manifest.omp.extensions[0])), true)

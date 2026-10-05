@@ -16,12 +16,14 @@ import (
 
 	"github.com/nikitatsym/tackbox/go/internal/astutil"
 	"github.com/nikitatsym/tackbox/go/internal/markers"
+	"github.com/nikitatsym/tackbox/go/internal/retainederrors"
 )
 
 var Analyzer = &analysis.Analyzer{
-	Name: "errcheck",
-	Doc:  "ERC001: err-branches must propagate, capture, report via terminal exit, or carry `// no-report:` marker",
-	Run:  markers.Runner(inspect),
+	Name:     "errcheck",
+	Doc:      "ERC001: err-branches must propagate, capture, report via terminal exit, or carry `// no-report:` marker",
+	Run:      markers.Runner(inspect),
+	Requires: []*analysis.Analyzer{retainederrors.Analyzer},
 }
 
 func inspect(idx *markers.Index, pass *analysis.Pass, n ast.Node) bool {
@@ -29,6 +31,9 @@ func inspect(idx *markers.Index, pass *analysis.Pass, n ast.Node) bool {
 	// identifier is an err-branch; `if conn != nil` on a *net.Conn is not.
 	ifst, errIdent, ok := astutil.ErrBranch(pass.TypesInfo, n)
 	if !ok {
+		return true
+	}
+	if pass.ResultOf[retainederrors.Analyzer].(retainederrors.Result)[ifst.Pos()] {
 		return true
 	}
 	errName := errIdent.Name

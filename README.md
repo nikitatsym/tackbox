@@ -585,9 +585,11 @@ specified in [docs/report-contracts.md](docs/report-contracts.md).
 
 The rules wire into a coding agent's edit loop through one shared core:
 approval gates, diff-scoped lint, and session approvals debt have the same
-semantics whichever host drives them. Session means the worktree difference
-from HEAD, including staged changes and untracked files; without a commit,
-the whole tree is added. Existing debt is left to `dev.py check` and CI.
+semantics whichever host drives them. Session means each target worktree's
+difference from HEAD, including staged changes and untracked files; it is not
+a snapshot taken when the agent starts. Without a commit, the whole tree is
+added. Existing committed debt is left to `dev.py check` and CI; dirty debt
+already present when an agent starts still belongs to the hook session.
 
 - **Post-edit** re-lints touched files (Go: their package). A finding on
   added lines or session approvals debt in a touched file becomes a tool
@@ -607,20 +609,33 @@ the whole tree is added. Existing debt is left to `dev.py check` and CI.
   A known target whose content is ambiguous asks when it reaches a bypass
   surface. An unclassifiable file mutation or a failed policy dependency blocks
   before it can run; it is never weakened into an approval prompt.
-  Session approvals debt also blocks an edit if any target is outside the
-  repair set: files of the debt's markers and `.tackbox/approvals`.
-  A multi-file edit with one unrelated target is refused as a whole.
-  The existing approval gates still apply to every permitted repair.
+  Session approvals debt also blocks an edit if any target in that repository
+  is outside its repair set: whole files of the debt's markers or unresolvable
+  files, files referenced by orphaned entries, and `.tackbox/approvals`.
+  A multi-file edit with one unrelated target in an indebted repository is
+  refused as a whole. Repairing debt in repository A while editing clean
+  repository B is permitted; A's debt does not restrict B's targets. The
+  existing approval gates still apply to every permitted repair.
 
 Only markers in files an engine would lint participate in the check
 (D012): a marker in a Go `testdata/` path or a non-lintable fixture
 extension (a `.java.txt`) is dead text - no entry needed, no
 question - while the `.tackbox/reporters` gate stays unconditional.
 
-The hook is inactive only when `git rev-parse --show-toplevel` emits C-locale
-stderr containing `not a git repository`, or after its discovered root has no
-`dev.py`. A missing git executable, corrupt Git config, or another discovery
-failure is unverified, not a no-op.
+Each explicit file target discovers its own Git worktree from its resolved path,
+using the nearest existing parent for new files and deleted paths. The session
+`cwd` only resolves relative host paths; it does not select repository policy.
+Cross-repository edits and moves check every affected worktree and produce one
+indivisible pre decision. All approval reasons and blockers remain visible, with
+repository paths identifying multi-worktree results. A blocked or unverified
+target prevents the entire pre mutation; post results check only targets that
+the host reports as landed and never claim rollback.
+
+A target is inactive only when discovery emits C-locale stderr containing
+`not a git repository`, or its discovered worktree has no root `dev.py`.
+A missing git executable, unreadable parent, corrupt Git config, or another
+discovery failure is unverified, not a no-op. Unclassifiable explicit file
+mutations fail closed even when the session starts outside Git.
 
 ### Claude Code
 
@@ -733,7 +748,7 @@ For development against a working tree, name the command explicitly - a JSON arr
 of argv, never a shell string:
 
 ```bash
-TACKBOX_OMP_COMMAND='["uv","run","--directory","py","python","-m","tackbox.cli"]'
+TACKBOX_OMP_COMMAND='["uv","run","--directory","/absolute/path/to/tackbox/py","python","-m","tackbox.cli"]'
 ```
 
 The subcommand is appended by the extension, never taken from the override, so
@@ -759,7 +774,8 @@ one JSON decision on stdout:
  "reason": "approve suppression marker: app/svc.py: no-report: covered upstream"}
 ```
 
-- `cwd` is the host session's non-empty absolute working directory.
+- `cwd` is the host session's non-empty absolute working directory, used by
+  adapters to resolve relative paths. Each target selects its own repository.
 - `phase` is `pre` (before the tool runs, still refusable) or `post` (after it
   landed). Pre requests omit `succeeded`; post requests require the boolean
   `succeeded`, so a failed tool is not misreported as a missing landed file.

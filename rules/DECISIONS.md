@@ -792,12 +792,15 @@ or an orphan whose matching marker was deleted from HEAD.
 For repeated identities, unchanged occurrences consume approval capacity
 before added lines; prepending a duplicate cannot shift new debt into HEAD.
 
-Pre-edit/write blocks the entire call if debt exists and any target is
-outside its fix set: the debt's marker files and `.tackbox/approvals`.
-Edits within that set still pass through the existing approval gates on
-the approvals manifest, reporters, git attributes, excluded files, and
-root `dev.py`. The green pre path inventories changed files only; engines
-run only for uncovered debt when a refusal needs its underlying rule text.
+Pre-edit/write checks the targets of each mutated repository independently.
+It blocks the entire call if one repository has debt and any target there is
+outside its fix set: whole marker or unresolvable files, files referenced by
+orphaned approvals, and `.tackbox/approvals`. A call may repair debt in one
+repository while editing a clean repository; debt never transfers across that
+boundary. Edits within a fix set still pass through the existing approval gates
+on the approvals manifest, reporters, git attributes, excluded files, and root
+`dev.py`. The green pre path inventories changed files only; engines run only
+for uncovered debt when a refusal needs its underlying rule text.
 
 Post-edit/write reports lint findings on added lines and session debt for
 the touched files. A post finding is a tool error after a mutation, never

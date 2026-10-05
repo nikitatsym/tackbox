@@ -16,12 +16,14 @@ import (
 
 	"github.com/nikitatsym/tackbox/go/internal/astutil"
 	"github.com/nikitatsym/tackbox/go/internal/markers"
+	"github.com/nikitatsym/tackbox/go/internal/retainederrors"
 )
 
 var Analyzer = &analysis.Analyzer{
-	Name: "parsenil",
-	Doc:  "ERC002: parser errs must capture or carry `// parse-skip:` marker",
-	Run:  markers.Runner(inspect),
+	Name:     "parsenil",
+	Doc:      "ERC002: parser errs must capture or carry `// parse-skip:` marker",
+	Run:      markers.Runner(inspect),
+	Requires: []*analysis.Analyzer{retainederrors.Analyzer},
 }
 
 // Identifiers are matched syntactically by qualified package name;
@@ -122,11 +124,7 @@ func handleErrParserAssign(pass *analysis.Pass, idx *markers.Index, assign *ast.
 			callee, errName)
 		return
 	}
-	if !errBranchHandled(pass.TypesInfo, ifst.Body, errName) {
-		pass.Reportf(ifst.Pos(),
-			"ERC002: %s err-branch must capture or propagate the error chain-preservingly (err=%s)",
-			callee, errName)
-	}
+	reportUnhandledParser(pass, ifst, callee, errName)
 }
 
 func handleErrParserShort(pass *analysis.Pass, idx *markers.Index, ifst *ast.IfStmt, assign *ast.AssignStmt, callee string) {
@@ -141,11 +139,16 @@ func handleErrParserShort(pass *analysis.Pass, idx *markers.Index, ifst *ast.IfS
 	if astutil.ErrIdentFromIfCond(ifst.Cond) != errName {
 		return
 	}
-	if !errBranchHandled(pass.TypesInfo, ifst.Body, errName) {
-		pass.Reportf(ifst.Pos(),
-			"ERC002: %s err-branch must capture or propagate the error chain-preservingly (err=%s)",
-			callee, errName)
+	reportUnhandledParser(pass, ifst, callee, errName)
+}
+
+func reportUnhandledParser(pass *analysis.Pass, ifst *ast.IfStmt, callee, errName string) {
+	if pass.ResultOf[retainederrors.Analyzer].(retainederrors.Result)[ifst.Pos()] || errBranchHandled(pass.TypesInfo, ifst.Body, errName) {
+		return
 	}
+	pass.Reportf(ifst.Pos(),
+		"ERC002: %s err-branch must capture or propagate the error chain-preservingly (err=%s)",
+		callee, errName)
 }
 
 // errBranchHandled mirrors the ERC001 exits: capture, chain-preserving

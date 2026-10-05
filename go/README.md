@@ -39,6 +39,14 @@ Details per rule:
   rethrow without cause - only when every occurrence of err in the
   returned value is stringified (`%v`, `.Error()`, `string(...)`). A
   two-step wrap (`w := fmt.Errorf("...%w", err); return w`) is credited.
+  Returning the original error inside a diagnostic struct also counts as
+  passing it to the caller. The linter checks that the same error reaches an
+  `error`-typed field in the returned value on every returning path. Passing
+  it to an already declared capture handler also counts. Creating a struct
+  or naming a field `Cause` is not enough: discarded values, overwritten
+  errors, and fields containing only text or `any` do not count. If the linter
+  cannot prove that a helper preserves the error, it does not assume so.
+  This proves that the error is passed on, not that it is shown to the user.
 - ERC002 `parsenil` - parser results that fall through to nil must
   capture, propagate the error (same object-flow rule as ERC001), or
   carry `// parse-skip: <reason>`.

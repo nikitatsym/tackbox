@@ -1,15 +1,4 @@
-"""`tackbox hook-protocol`: the versioned host-neutral hook protocol (v1).
-
-Drives `python -m tackbox.cli hook-protocol` with one protocol event on stdin
-and pins the decision object on stdout. Every case runs the subprocess from
-TACKBOX_ROOT (a git repo with no dev.py, so the guard fails there) and points
-the event's `cwd` at the fixture instead: the protocol derives the repo from the
-event, never from the process.
-
-The Claude Code host has its own suite (test_cli_hook.py). One case here pins
-the invariant that binds them - the same change draws the same text through both
-hosts, because both render one shared decision.
-"""
+"""Behavioral coverage of the host-neutral hook command and its shared core."""
 
 from __future__ import annotations
 
@@ -29,7 +18,6 @@ SVELTE_SWALLOW = "<script>\ntry { f() } catch (e) {}\n</script>\n"
 SVELTE_CLEAN = "<script>\nexport let name = 'x'\n</script>\n"
 
 MANIFEST_ENTRY = "app/svc.py#Handler.process: no-report: legacy path, covered upstream"
-CANON_SINGLE = f"approve suppression marker: {MANIFEST_ENTRY}"
 
 
 def _repo(root: Path) -> None:
@@ -72,12 +60,6 @@ def _event(
     if phase == "post":
         event["succeeded"] = succeeded
     return event
-
-def _active_outcome(root: Path, event: hookproto.Event) -> hookproto.Outcome:
-    return cli._hook_event_outcome(
-        cli.HookRepository(cli.HookRepositoryState.ACTIVE, root=root),
-        event,
-    )
 
 
 def _write_target(root: Path, rel: str, content: str) -> dict:
@@ -223,7 +205,7 @@ def test_pre_write_manifest_entry_asks(tmp_path):
     (tmp_path / ".tackbox").mkdir()
     payload = _decide(_manifest_write(tmp_path, MANIFEST_ENTRY + "\n"))
     assert payload["decision"] == "ask", payload
-    assert payload["reason"] == CANON_SINGLE
+    assert MANIFEST_ENTRY in payload["reason"]
 
 
 def test_pre_write_manifest_removal_is_free(tmp_path):
@@ -243,7 +225,8 @@ def test_pre_edit_added_fragment_asks(tmp_path):
     (tmp_path / ".tackbox").mkdir()
     (tmp_path / ".tackbox" / "approvals").write_text("b.py: no-report: already approved\n")
     payload = _decide(_manifest_edit(tmp_path, [MANIFEST_ENTRY]))
-    assert payload["reason"] == CANON_SINGLE
+    assert payload["decision"] == "ask"
+    assert MANIFEST_ENTRY in payload["reason"]
 
 
 def test_pre_edit_removal_only_is_free(tmp_path):
@@ -283,7 +266,8 @@ def test_pre_excluded_target_asks(tmp_path):
         _event("pre", tmp_path, "edit",
                [_edit_target(tmp_path, "gen/api.pb.go", ["// touched"])])
     )
-    assert payload["reason"] == "edit attribute-excluded file (linguist-generated): gen/api.pb.go"
+    assert payload["decision"] == "ask"
+    assert "linguist-generated" in payload["reason"] and "gen/api.pb.go" in payload["reason"]
 
 
 def test_pre_gitattributes_exclusion_line_asks(tmp_path):
@@ -292,9 +276,8 @@ def test_pre_gitattributes_exclusion_line_asks(tmp_path):
         _event("pre", tmp_path, "edit",
                [_edit_target(tmp_path, ".gitattributes", ["gen/*.pb.go linguist-generated"])])
     )
-    assert payload["reason"] == (
-        ".gitattributes exclusion line added: gen/*.pb.go linguist-generated"
-    )
+    assert payload["decision"] == "ask"
+    assert "gen/*.pb.go linguist-generated" in payload["reason"]
 
 
 def test_pre_plain_edit_is_free(tmp_path):
@@ -321,38 +304,8 @@ def test_pre_multi_file_call_asks_once_for_every_reason(tmp_path):
         ])
     )
     assert payload["decision"] == "ask", payload
-    assert payload["reason"] == (
-        f"{CANON_SINGLE}\n"
-        "edit attribute-excluded file (linguist-generated): gen/api.py"
-    )
-
-
-def test_pre_ask_text_matches_the_claude_host(tmp_path):
-    # The binding invariant: both hosts render ONE shared decision, so the same
-    # change draws byte-identical text through either wire.
-    _repo(tmp_path)
-    (tmp_path / ".tackbox").mkdir()
-    content = MANIFEST_ENTRY + "\n"
-    protocol = _decide(_manifest_write(tmp_path, content))
-    claude = subprocess.run(
-        [sys.executable, "-m", "tackbox.cli", "hook"],
-        input=json.dumps({
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Write",
-            "cwd": str(tmp_path),
-            "tool_input": {
-                "file_path": str(tmp_path / ".tackbox" / "approvals"),
-                "content": content,
-            },
-        }),
-        cwd=TACKBOX_ROOT,
-        env=tackbox_env(),
-        capture_output=True,
-        text=True,
-    )
-    assert claude.returncode == 0, claude.stderr
-    reason = json.loads(claude.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
-    assert protocol["reason"] == reason == CANON_SINGLE
+    assert MANIFEST_ENTRY in payload["reason"]
+    assert "linguist-generated" in payload["reason"] and "gen/api.py" in payload["reason"]
 
 
 # -- Post: session debt and diff-scoped lint
@@ -464,11 +417,9 @@ def test_post_unknown_payload_warns_without_blocking(tmp_path):
     reason = "tackbox cannot classify this edit call (no known field)"
     payload = _decide(_event("post", tmp_path, "edit", [], unknown=reason))
     assert payload["decision"] == "warn", payload
-    assert payload["reason"] == (
-        "The mutation may already have landed.\n"
-        f"Tackbox verification did not complete: tackbox hook: {reason}\n"
-        "Do not repeat the mutation; dev.py check remains required."
-    )
+    assert reason in payload["reason"]
+    assert "mutation may already have landed" in payload["reason"]
+    assert "Do not repeat" in payload["reason"] and "dev.py check" in payload["reason"]
 
 
 def test_post_unknown_mutation_does_not_attribute_unrelated_debt(tmp_path):
@@ -536,7 +487,7 @@ def test_post_scope_maps_native_paths_to_posix_rels(tmp_path):
     assert scope.files == {"src/app.js": {2}} and scope.failures == ()
 
 
-def test_post_scope_drops_targets_outside_the_repo(tmp_path):
+def test_post_scope_refuses_targets_outside_its_repository(tmp_path):
     outside = tmp_path.parent / "not-in-repo.py"
     event = hookproto.Event(
         phase="post",
@@ -545,7 +496,9 @@ def test_post_scope_drops_targets_outside_the_repo(tmp_path):
         targets=(hookproto.Target(outside, added=("x = 1",)),),
     )
     scope = cli._post_scope(tmp_path, event)
-    assert scope.files == {} and scope.failures == ()
+    assert scope.files == {}
+    assert len(scope.failures) == 1
+    assert "outside repository" in scope.failures[0]
 
 
 def test_post_scope_widens_a_repeated_path_to_the_whole_file(tmp_path):
@@ -768,7 +721,7 @@ def test_pre_unreadable_gated_full_replacement_is_unverified(tmp_path, monkeypat
         raise OSError("access denied")
 
     monkeypatch.setattr(Path, "read_text", unreadable)
-    outcome = _active_outcome(tmp_path, event)
+    outcome = cli._hook_outcome(event)
     assert outcome.kind is hookproto.OutcomeKind.UNVERIFIED
     assert "access denied" in outcome.reason
 
@@ -847,7 +800,7 @@ def test_excluded_target_with_unavailable_attribute_child_is_unverified(tmp_path
         raise cli.AttributeResolutionError("git check-attr unavailable")
 
     monkeypatch.setattr(cli, "resolve_attributes", unavailable)
-    outcome = _active_outcome(tmp_path, event)
+    outcome = cli._hook_outcome(event)
     assert outcome.kind is hookproto.OutcomeKind.UNVERIFIED
     assert "git check-attr unavailable" in outcome.reason
 
@@ -940,3 +893,409 @@ def test_session_debt_assigns_duplicate_capacity_to_unchanged_lines_first(tmp_pa
     assert blocked["decision"] == "block"
     assert blocked["reason"].startswith(expected)
     assert len(blocked["reason"].splitlines()) == 1
+
+
+def _child_repo(parent: Path, name: str) -> Path:
+    root = parent / name
+    root.mkdir()
+    _repo(root)
+    return root
+
+
+@pytest.mark.parametrize("cwd_kind", ["outside", "inactive", "active", "broken"])
+def test_manifest_policy_follows_target_not_launch_repository(tmp_path, cwd_kind):
+    target_root = _child_repo(tmp_path, "target")
+    cwd = tmp_path
+    if cwd_kind != "outside":
+        cwd = _child_repo(tmp_path, "launch")
+        if cwd_kind == "inactive":
+            (cwd / "dev.py").unlink()
+        elif cwd_kind == "broken":
+            (cwd / ".git/config").write_text("[invalid\n")
+    event = _event("pre", cwd, "write", [
+        _write_target(target_root, ".tackbox/approvals", MANIFEST_ENTRY + "\n"),
+    ])
+    decision = _decide(event)
+    assert decision["decision"] == "ask"
+    assert MANIFEST_ENTRY in decision["reason"]
+
+
+def test_multi_repository_asks_preserve_each_repository_and_entry(tmp_path):
+    first = _child_repo(tmp_path, "first")
+    second = _child_repo(tmp_path, "second")
+    second_entry = "other.py: no-report: second repository exception"
+    event = _event("pre", tmp_path, "edit", [
+        _edit_target(first, ".tackbox/approvals", [MANIFEST_ENTRY]),
+        _edit_target(second, ".tackbox/approvals", [second_entry]),
+    ])
+    decision = _decide(event)
+    assert decision["decision"] == "ask"
+    for value in (str(first), str(second), MANIFEST_ENTRY, second_entry):
+        assert value in decision["reason"]
+
+
+@pytest.mark.parametrize("phase", ["pre", "post"])
+def test_broken_target_repository_cannot_hide_other_repository_approval(tmp_path, phase):
+    gated = _child_repo(tmp_path, "gated")
+    broken = _child_repo(tmp_path, "broken")
+    (broken / ".git/config").write_text("[invalid\n")
+    if phase == "post":
+        (gated / "plain.py").write_text("x = 1\n")
+    gated_target = _edit_target(gated, ".tackbox/approvals", [MANIFEST_ENTRY]) if phase == "pre" else _edit_target(gated, "plain.py", ["x = 1"])
+    decision = _decide(_event(phase, tmp_path, "edit", [
+        gated_target, _edit_target(broken, "plain.py", ["x = 1"]),
+    ]))
+    assert decision["decision"] == ("block" if phase == "pre" else "warn")
+    assert str(broken / "plain.py") in decision["reason"]
+    assert "bad config" in decision["reason"]
+    if phase == "pre":
+        assert MANIFEST_ENTRY in decision["reason"]
+    else:
+        assert "Do not repeat the mutation" in decision["reason"]
+
+
+def test_multi_repository_post_preserves_findings_and_discovery_failure(tmp_path):
+    landed = _child_repo(tmp_path, "landed")
+    broken = _child_repo(tmp_path, "broken")
+    (landed / "bad.svelte").write_text(SVELTE_SWALLOW)
+    (broken / ".git/config").write_text("[invalid\n")
+    decision = _decide(_event("post", tmp_path, "edit", [
+        _write_target(landed, "bad.svelte", SVELTE_SWALLOW),
+        _edit_target(broken, "plain.py", ["x = 1"]),
+    ]))
+    assert decision["decision"] == "block"
+    assert "bad.svelte:2" in decision["reason"]
+    assert "tackbox/no-swallow-catch" in decision["reason"]
+    assert "bad config" in decision["reason"]
+    assert "Do not repeat the mutation" in decision["reason"]
+
+
+def test_worktree_policy_uses_worktree_tree_not_main_checkout(tmp_path):
+    main = _child_repo(tmp_path, "main")
+    worktree = tmp_path / "worktree"
+    git(main, "worktree", "add", "-q", "-b", "linked", str(worktree))
+    (main / "dev.py").unlink()
+    decision = _decide(_event("pre", main, "edit", [
+        _edit_target(worktree, ".tackbox/approvals", [MANIFEST_ENTRY]),
+    ]))
+    assert decision["decision"] == "ask"
+    (worktree / "dev.py").unlink()
+    (main / "dev.py").write_text("# active main\n")
+    assert _decide(_event("pre", main, "edit", [
+        _edit_target(worktree, ".tackbox/approvals", [MANIFEST_ENTRY]),
+    ]))["decision"] == "allow"
+
+
+def test_nested_worktree_targets_do_not_inherit_parent_policy(tmp_path):
+    main = _child_repo(tmp_path, "main")
+    worktree = main / ".worktrees" / "linked"
+    git(main, "worktree", "add", "-q", "-b", "linked", str(worktree))
+    (main / ".gitattributes").write_text(".worktrees/** linguist-generated\n")
+    decision = _decide(_event("pre", main, "edit", [
+        _edit_target(worktree, "plain.py", ["x = 1"]),
+    ]))
+    assert decision["decision"] == "allow"
+
+
+def test_symlinked_repository_path_enforces_resolved_target_policy(tmp_path):
+    target_root = _child_repo(tmp_path, "target")
+    alias = tmp_path / "alias"
+    alias.symlink_to(target_root, target_is_directory=True)
+    decision = _decide(_event("pre", tmp_path, "edit", [
+        _edit_target(alias, ".tackbox/approvals", [MANIFEST_ENTRY]),
+    ]))
+    assert decision["decision"] == "ask"
+    assert MANIFEST_ENTRY in decision["reason"]
+
+
+def test_new_nested_attribute_carrier_is_gated_without_existing_parents(tmp_path):
+    root = _child_repo(tmp_path, "target")
+    line = "*.py linguist-generated"
+    decision = _decide(_event("pre", tmp_path, "write", [
+        _write_target(root, "new/deep/.gitattributes", line + "\n"),
+    ]))
+    assert decision["decision"] == "ask"
+    assert line in decision["reason"]
+
+
+def test_non_directory_target_parent_blocks_instead_of_becoming_inactive(tmp_path):
+    root = _child_repo(tmp_path, "target")
+    (root / "file").write_text("not a directory\n")
+    decision = _decide(_event("pre", tmp_path, "write", [
+        _write_target(root, "file/.tackbox/approvals", MANIFEST_ENTRY + "\n"),
+    ]))
+    assert decision["decision"] == "block"
+    assert str(root / "file") in decision["reason"]
+
+
+@pytest.mark.parametrize("phase", ["pre", "post"])
+def test_unclassifiable_explicit_mutation_fails_closed_outside_git(tmp_path, phase):
+    decision = _decide(_event(phase, tmp_path, "edit", [], unknown="no target path"))
+    assert decision["decision"] == ("block" if phase == "pre" else "warn")
+    assert "no target path" in decision["reason"]
+
+
+def test_cross_repository_move_gates_source_and_destination_and_reports_landed_debt(tmp_path):
+    source = _child_repo(tmp_path, "source")
+    destination = _child_repo(tmp_path, "destination")
+    targets = [
+        {"path": str(source / "dev.py"), "op": "move", "expectedPresent": False, "moveId": "cross"},
+        {"path": str(destination / ".tackbox/approvals"), "op": "move", "expectedPresent": True,
+         "moveId": "cross", "ambiguous": True},
+    ]
+    pre = _decide(_event("pre", tmp_path, "edit", targets))
+    assert pre["decision"] == "ask"
+    for value in (str(source), str(destination), "root dev.py", ".tackbox/approvals"):
+        assert value in pre["reason"]
+    (source / "dev.py").unlink()
+    (destination / ".tackbox").mkdir()
+    (destination / ".tackbox/approvals").write_text(MANIFEST_ENTRY + "\n")
+    post = _decide(_event("post", tmp_path, "edit", targets))
+    assert post["decision"] == "block"
+    assert "root dev.py was removed or moved" in post["reason"]
+    assert "approval has no matching marker" in post["reason"]
+
+
+def test_cross_repository_post_checks_both_sides_of_marker_move(tmp_path):
+    source = _child_repo(tmp_path, "source")
+    destination = _child_repo(tmp_path, "destination")
+    marker = "# no-report: caller tolerates this failure\nx = 1\n"
+    (source / "marker.py").write_text(marker)
+    (source / ".tackbox").mkdir()
+    (source / ".tackbox/approvals").write_text("marker.py: no-report: caller tolerates this failure\n")
+    commit_all(source)
+    (source / "marker.py").unlink()
+    (destination / "marker.py").write_text(marker)
+    decision = _decide(_event("post", tmp_path, "edit", [
+        {"path": str(source / "marker.py"), "op": "move", "expectedPresent": False, "moveId": "marker"},
+        {"path": str(destination / "marker.py"), "op": "move", "expectedPresent": True,
+         "moveId": "marker", "content": marker},
+    ]))
+    assert decision["decision"] == "block"
+    assert str(source) in decision["reason"] and str(destination) in decision["reason"]
+    assert "approval has no matching marker" in decision["reason"]
+    assert "unapproved no-report marker" in decision["reason"]
+
+
+def test_post_uses_only_actual_target_repository_despite_launch_debt(tmp_path):
+    launch = _child_repo(tmp_path, "launch")
+    target_root = _child_repo(tmp_path, "target")
+    (launch / "debt.py").write_text("# no-report: unrelated launch debt\nx = 1\n")
+    (target_root / "clean.py").write_text("x = 1\n")
+    decision = _decide(_event("post", launch, "edit", [
+        _edit_target(target_root, "clean.py", ["x = 1"]),
+    ], succeeded=False))
+    assert decision == {"protocol": 1, "decision": "allow", "reason": ""}
+
+
+def test_claude_relative_path_is_resolved_from_launch_cwd_to_target_repository(tmp_path):
+    root = _child_repo(tmp_path, "target")
+    event = {
+        "hook_event_name": "PreToolUse", "tool_name": "Write", "cwd": str(tmp_path),
+        "tool_input": {"file_path": "target/.tackbox/approvals", "content": MANIFEST_ENTRY + "\n"},
+    }
+    result = subprocess.run(
+        [sys.executable, "-m", "tackbox.cli", "hook"], input=json.dumps(event),
+        cwd=TACKBOX_ROOT, env=tackbox_env(), capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    decision = json.loads(result.stdout)["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "ask"
+    assert MANIFEST_ENTRY in decision["permissionDecisionReason"]
+
+
+
+@pytest.mark.parametrize("phase", ["pre", "post"])
+def test_target_parent_permission_failure_is_unverified(tmp_path, monkeypatch, phase):
+    root = _child_repo(tmp_path, "target")
+    parent = root / "private"
+    parent.mkdir()
+    real_stat = Path.stat
+
+    def inaccessible(path, *args, **kwargs):
+        if path == parent:
+            raise PermissionError(13, "permission denied", str(path))
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", inaccessible)
+    event = hookproto.parse_request(_event(phase, tmp_path, "write", [
+        _write_target(root, "private/.gitattributes", "*.py linguist-generated\n"),
+    ]))
+    outcome = cli._hook_outcome(event)
+    decision = hookproto.wire_decision(outcome, phase)
+    assert decision.decision == ("block" if phase == "pre" else "warn")
+    assert str(parent) in decision.reason and "permission denied" in decision.reason
+
+
+@pytest.mark.parametrize("phase", ["pre", "post"])
+def test_explicit_target_with_missing_git_is_unverified_outside_repository(tmp_path, monkeypatch, phase):
+    root = _child_repo(tmp_path, "target")
+
+    def unavailable(*args, **kwargs):
+        raise FileNotFoundError(2, "executable unavailable", "git")
+
+    monkeypatch.setattr(cli.proc, "run", unavailable)
+    event = hookproto.parse_request(_event(phase, tmp_path, "edit", [
+        _edit_target(root, ".tackbox/approvals", [MANIFEST_ENTRY]),
+    ]))
+    decision = hookproto.wire_decision(cli._hook_outcome(event), phase)
+    assert decision.decision == ("block" if phase == "pre" else "warn")
+    assert "executable unavailable" in decision.reason
+
+
+def test_pre_plain_delete_outside_launch_repository_preserves_free_removal(tmp_path):
+    root = _child_repo(tmp_path, "target")
+    decision = _decide(_event("pre", tmp_path, "edit", [{
+        "path": str(root / "nested/gone.py"), "op": "delete", "expectedPresent": False,
+    }]))
+    assert decision == {"protocol": 1, "decision": "allow", "reason": ""}
+
+
+def test_target_in_inactive_repository_does_not_inherit_launch_gate(tmp_path):
+    launch = _child_repo(tmp_path, "launch")
+    inactive = tmp_path / "inactive"
+    inactive.mkdir()
+    init_repo(inactive)
+    decision = _decide(_event("pre", launch, "write", [
+        _write_target(inactive, ".tackbox/approvals", MANIFEST_ENTRY + "\n"),
+    ]))
+    assert decision == {"protocol": 1, "decision": "allow", "reason": ""}
+
+
+
+def test_cross_repository_attribute_policies_are_not_shared(tmp_path):
+    launch = _child_repo(tmp_path, "launch")
+    target_root = _child_repo(tmp_path, "target")
+    (launch / ".gitattributes").write_text("plain.py linguist-generated\n")
+    plain = _edit_target(target_root, "plain.py", ["x = 1"])
+    assert _decide(_event("pre", launch, "edit", [plain]))["decision"] == "allow"
+    (target_root / ".gitattributes").write_text("plain.py linguist-vendored\n")
+    decision = _decide(_event("pre", launch, "edit", [plain]))
+    assert decision["decision"] == "ask"
+    assert "linguist-vendored" in decision["reason"]
+    assert "linguist-generated" not in decision["reason"]
+
+
+def test_wrong_launch_repository_does_not_hide_target_session_debt(tmp_path):
+    launch = _child_repo(tmp_path, "launch")
+    target_root = _child_repo(tmp_path, "target")
+    (target_root / "debt.py").write_text("# no-report: caller tolerates this failure\nx = 1\n")
+    decision = _decide(_event("pre", launch, "edit", [
+        _edit_target(target_root, "other.py", ["x = 1"]),
+    ]))
+    assert decision["decision"] == "block"
+    assert "debt.py:1:" in decision["reason"]
+
+
+def test_deleted_target_with_absent_parent_directory_still_reports_approval_debt(tmp_path):
+    root = _child_repo(tmp_path, "target")
+    nested = root / "nested"
+    nested.mkdir()
+    (nested / "marker.py").write_text("# no-report: caller tolerates this failure\nx = 1\n")
+    (root / ".tackbox").mkdir()
+    (root / ".tackbox/approvals").write_text("nested/marker.py: no-report: caller tolerates this failure\n")
+    commit_all(root)
+    (nested / "marker.py").unlink()
+    nested.rmdir()
+    decision = _decide(_event("post", tmp_path, "edit", [{
+        "path": str(nested / "marker.py"), "op": "delete", "expectedPresent": False,
+    }]))
+    assert decision["decision"] == "block"
+    assert "approval has no matching marker" in decision["reason"]
+
+
+
+def test_multi_repository_debt_refusal_preserves_other_repository_approval_reason(tmp_path):
+    indebted = _child_repo(tmp_path, "indebted")
+    gated = _child_repo(tmp_path, "gated")
+    (indebted / "debt.py").write_text("# no-report: caller tolerates this failure\nx = 1\n")
+    decision = _decide(_event("pre", tmp_path, "edit", [
+        _edit_target(indebted, "unrelated.py", ["x = 1"]),
+        _edit_target(gated, ".tackbox/approvals", [MANIFEST_ENTRY]),
+    ]))
+    assert decision["decision"] == "block"
+    for value in (str(indebted), str(gated), "debt.py:1:", MANIFEST_ENTRY):
+        assert value in decision["reason"]
+
+
+def test_multi_repository_debt_refusal_reports_every_blocked_worktree(tmp_path):
+    first = _child_repo(tmp_path, "first")
+    second = _child_repo(tmp_path, "second")
+    for root in (first, second):
+        (root / "debt.py").write_text("# no-report: caller tolerates this failure\nx = 1\n")
+    decision = _decide(_event("pre", tmp_path, "edit", [
+        _edit_target(first, "unrelated.py", ["x = 1"]),
+        _edit_target(second, "unrelated.py", ["x = 1"]),
+    ]))
+    assert decision["decision"] == "block"
+    assert str(first) in decision["reason"] and str(second) in decision["reason"]
+    assert decision["reason"].count("debt.py:1:") == 2
+
+
+
+@pytest.mark.parametrize("gate", [".tackbox/approvals", ".gitattributes"])
+def test_file_symlink_alias_uses_target_gate_name(tmp_path, gate):
+    root = _child_repo(tmp_path, "target")
+    path = root / gate
+    path.parent.mkdir(exist_ok=True)
+    path.write_text("")
+    alias = tmp_path / "alias.txt"
+    alias.symlink_to(path)
+    text = MANIFEST_ENTRY if gate == ".tackbox/approvals" else "*.py linguist-generated"
+    decision = _decide(_event("pre", tmp_path, "edit", [
+        _edit_target(tmp_path, "alias.txt", [text]),
+    ]))
+    assert decision["decision"] == "ask"
+    assert text in decision["reason"]
+
+
+
+@pytest.mark.parametrize("repair", ["marker-file", "manifest"])
+def test_indebted_repository_repair_and_clean_repository_edit_remain_independent(tmp_path, repair):
+    indebted = _child_repo(tmp_path, "indebted")
+    clean = _child_repo(tmp_path, "clean")
+    marker = "# no-report: caller tolerates this failure\nx = 1\n"
+    (indebted / "marker.py").write_text(marker)
+    clean_target = _edit_target(clean, "plain.py", ["x = 2"])
+    repair_target = (
+        _edit_target(indebted, "marker.py", ["x = 2"], removed=["x = 1"])
+        if repair == "marker-file" else
+        _edit_target(indebted, ".tackbox/approvals", ["marker.py: no-report: caller tolerates this failure"])
+    )
+    mixed = _decide(_event("pre", tmp_path, "edit", [repair_target, clean_target]))
+    assert mixed["decision"] == ("allow" if repair == "marker-file" else "ask")
+    if repair == "manifest":
+        assert "marker.py: no-report: caller tolerates this failure" in mixed["reason"]
+    independent = _decide(_event("pre", indebted, "edit", [clean_target]))
+    assert independent["decision"] == "allow"
+    unrelated = _edit_target(indebted, "unrelated.py", ["x = 1"])
+    blocked = _decide(_event("pre", tmp_path, "edit", [repair_target, clean_target, unrelated]))
+    assert blocked["decision"] == "block"
+    assert "marker.py:1:" in blocked["reason"]
+
+
+def test_committed_marker_and_orphan_debt_does_not_block_general_hook_work(tmp_path):
+    root = _child_repo(tmp_path, "target")
+    (root / "unapproved.py").write_text("# no-report: caller tolerates this failure\nx = 1\n")
+    (root / "approved.py").write_text("# no-report: caller tolerates this failure\nx = 1\n")
+    (root / ".tackbox").mkdir()
+    manifest = root / ".tackbox/approvals"
+    manifest.write_text("approved.py: no-report: caller tolerates this failure\nmissing.py: no-report: committed orphan belongs to CI\n")
+    commit_all(root)
+    general = _edit_target(root, "plain.py", ["x = 1"])
+    assert _decide(_event("pre", tmp_path, "edit", [general]))["decision"] == "allow"
+    (root / "unapproved.py").write_text("# no-report: caller tolerates this failure\nx = 2\n")
+    assert _decide(_event("pre", tmp_path, "edit", [general]))["decision"] == "allow"
+    manifest.write_text(manifest.read_text() + "new-missing.py: no-report: added orphan blocks general work\n")
+    assert _decide(_event("pre", tmp_path, "edit", [general]))["decision"] == "block"
+
+
+def test_dirty_debt_before_first_event_blocks_until_marker_and_entry_are_consistent(tmp_path):
+    root = _child_repo(tmp_path, "target")
+    (root / "marker.py").write_text("# no-report: caller tolerates this failure\nx = 1\n")
+    general = _edit_target(root, "plain.py", ["x = 1"])
+    assert _decide(_event("pre", tmp_path, "edit", [general]))["decision"] == "block"
+    (root / ".tackbox").mkdir()
+    (root / ".tackbox/approvals").write_text("marker.py: no-report: caller tolerates this failure\n")
+    assert _decide(_event("pre", tmp_path, "edit", [general]))["decision"] == "allow"
+

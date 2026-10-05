@@ -91,6 +91,22 @@ func captureKind(info *types.Info, call *ast.CallExpr, errName string) capKind {
 	return capNone
 }
 
+// IsCaptureFunction identifies an existing tier-1 or declared capture by symbol.
+func IsCaptureFunction(function *types.Func) bool {
+	if function == nil || function.Pkg() == nil {
+		return false
+	}
+	if function.Pkg().Path() == reportPkgPath {
+		return reportErrCapture[function.Name()] || reportPanicCapture[function.Name()]
+	}
+	for _, declared := range declaredReporters {
+		if !declared.Usage && declared.PkgPath == function.Pkg().Path() && declared.Name == function.Name() {
+			return true
+		}
+	}
+	return false
+}
+
 // IsUsageSink reports whether call's callee resolves to a declared usage sink.
 func IsUsageSink(info *types.Info, call *ast.CallExpr) bool {
 	fn, ok := calleeFunc(info, call)

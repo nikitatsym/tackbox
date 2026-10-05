@@ -32,6 +32,7 @@ func TestDeclaredReporters(t *testing.T) {
 	astutil.SetDeclaredReporters([]astutil.DeclaredReporter{
 		{PkgPath: "declared", Name: "myReport"},
 		{PkgPath: "declared", Name: "myDie"},
+		{PkgPath: "declared", Name: "emitDiagnostic"},
 	})
 	defer astutil.SetDeclaredReporters(nil)
 	analysistest.Run(t, analysistest.TestData(), errcheck.Analyzer, "declared")
