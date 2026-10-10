@@ -206,8 +206,11 @@ def test_thin_wheel_carries_javalint_jar(wheels):
 
 def test_thin_wheel_preserves_engine_dependency_licenses(wheels, tmp_path):
     dependency_file = tmp_path / "maven-runtime.txt"
+    # Windows ships mvn as mvn.cmd, which CreateProcess resolves only by full path.
+    mvn = shutil.which("mvn")
+    assert mvn, "`mvn` toolchain not found on PATH; install it, do not skip"
     subprocess.run([
-        "mvn", "-q", "-B", "-f", str(REPO / "java" / "pom.xml"),
+        mvn, "-q", "-B", "-f", str(REPO / "java" / "pom.xml"),
         "org.apache.maven.plugins:maven-dependency-plugin:3.7.0:list", "-DincludeScope=runtime", f"-DoutputFile={dependency_file}",
     ], check=True, capture_output=True, text=True)
     maven_dependencies = set()
