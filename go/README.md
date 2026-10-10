@@ -120,19 +120,26 @@ ERC011 adapts gopls v0.23.0's `unusedparams` analyzer. It checks unexported
 function and method declarations used in the package, including test helpers.
 Exported declarations, function literals, functions used as values, fixed ABI
 roots (`go:linkname`, cgo `export`, `go:wasmexport`), generated code, body-less
-declarations, empty or panic-only bodies, and blank or unnamed parameters are
-excluded. An unexported method sharing a name with a package interface method
-is conservatively excluded, even when the signatures differ. Generic method
-uses are matched to their origin, including instantiated method values.
+declarations, and empty or panic-only bodies are excluded. Blank (`_`) and
+unnamed parameters are reported when the signature is not constrained by
+these exemptions. An unexported method sharing a name with a package interface
+method is conservatively excluded, even when the signatures differ. Generic
+method uses are matched to their origin, including instantiated method values.
 Function literals are excluded because an explicit function type can require
 their signature.
+Blank and unnamed parameters are also allowed when a top-level function or
+method with the same name exists in a build-excluded Go file of the same
+package (GOOS/GOARCH filename suffix or build constraint). Such variants
+constrain the cross-build signature; named parameters retain the normal unused
+check. Excluded-file read or parse errors fail analysis rather than hiding
+findings.
 
 The diagnostic is `ERC011: unused parameter <name>`, followed by the remedy:
 remove the parameter and the matching argument at every call site in this
 package. Preserve argument side effects and their original evaluation order:
 Go evaluates arguments left to right, and later arguments or captured values
-may depend on earlier ones. Use `_` only when another build variant needs
-the signature. There is no automatic removal fix.
+may depend on earlier ones. Renaming an unused parameter to `_` or omitting its
+name does not avoid the diagnostic. There is no automatic removal fix.
 
 Tackbox's JSON engine boundary selects the loaded package variant that includes
 internal tests. Its presence suppresses plain-package ERC011 findings even

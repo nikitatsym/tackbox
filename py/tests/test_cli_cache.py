@@ -168,6 +168,49 @@ def test_warm_run_skips_all_engines(go_repo, tmp_path):
     assert "== erclint-opengrep ==" not in warm.stdout
 
 
+@pytest.mark.parametrize("engine_id,versions", [
+    ("pyrules", ("Python old", "Python new")),
+    ("javalint", ("Java old", "Java new")),
+    ("tackbox-eslint", ("Node/ESLint old", "Node/ESLint new")),
+    ("erclint-opengrep", ("opengrep old", "opengrep new")),
+])
+def test_runtime_version_change_invalidates_warm_cache(monkeypatch, tmp_path, engine_id, versions):
+    engine = next(e for e in DEV_ENGINES if e.id == engine_id)
+    monkeypatch.setattr(cli, "_digests_for_engine", lambda *args: ([("source", "digest")], {}))
+    monkeypatch.setattr(tackbox_cache, "engine_runtime_version", lambda *args: versions[0])
+    args = ([(engine, ["source"])], tmp_path, tmp_path, "payload", tmp_path / "cache", "policy")
+    cold, pending = cli._apply_cache(*args)
+    assert cold == [(engine, ["source"])]
+    digest = pending[engine_id]["arg_digest"][0][1]
+    tackbox_cache.mark_clean(tackbox_cache.CacheKey("payload", digest, engine_id), tmp_path / "cache")
+    assert cli._apply_cache(*args)[0] == []
+    monkeypatch.setattr(tackbox_cache, "engine_runtime_version", lambda *args: versions[1])
+    assert cli._apply_cache(*args)[0] == cold
+
+
+def test_go_version_change_invalidates_warm_cache(go_repo, tmp_path, monkeypatch):
+    real_run = tackbox_cache.proc.run
+    version = {"value": "go1.27.0"}
+
+    def probe(argv, **kwargs):
+        if argv == ["go", "env", "GOVERSION"]:
+            assert kwargs["cwd"] == go_repo
+            return subprocess.CompletedProcess(argv, 0, version["value"], "")
+        return real_run(argv, **kwargs)
+
+    monkeypatch.setattr(tackbox_cache.proc, "run", probe)
+    monkeypatch.setattr(tackbox_cache, "engine_runtime_version", lambda *args: "")
+    engine = next(e for e in DEV_ENGINES if e.id == "erclint")
+    args = ([(engine, ["pkg_a", "pkg_b", "pkg_c"])], go_repo,
+            Path(__file__).resolve().parents[2], "payload", tmp_path / "cache", "policy")
+    cold, pending = cli._apply_cache(*args)
+    for _, digest in pending["erclint"]["arg_digest"]:
+        tackbox_cache.mark_clean(tackbox_cache.CacheKey("payload", digest, "erclint"), tmp_path / "cache")
+    assert cli._apply_cache(*args)[0] == []
+    version["value"] = "go1.27.1"
+    assert cli._apply_cache(*args)[0] == cold
+
+
 def test_signature_change_in_b_invalidates_a(go_repo, tmp_path):
     """Plan acceptance for step 4.
 
@@ -317,7 +360,7 @@ def test_missing_digest_still_lints_and_never_caches(monkeypatch, tmp_path):
     cache_root = tmp_path / "cacheroot"
 
     filtered, pending = cli._apply_cache(
-        [(erclint, ["pkg_a", "pkg_b"])], tmp_path, "h", cache_root, "p"
+        [(erclint, ["pkg_a", "pkg_b"])], tmp_path, tmp_path, "h", cache_root, "p"
     )
     assert [(e.id, args) for e, args in filtered] == [
         ("erclint", ["pkg_a", "pkg_b"])

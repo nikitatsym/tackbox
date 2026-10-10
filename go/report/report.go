@@ -204,7 +204,7 @@ func emit(ctx context.Context, logLevel slog.Level, level sentry.Level, noticeLe
 	if !ready || shouldDrop(key) {
 		return
 	}
-	capture(ctx, msg, err, tags, key, level)
+	capture(msg, err, tags, key, level)
 }
 
 // Notice is one user-lane event handed to the registered notifier. The app
@@ -325,7 +325,7 @@ func tagsGroup(tags map[string]string) slog.Attr {
 	return slog.Group("tags", attrs...)
 }
 
-func capture(_ context.Context, msg string, err error, tags map[string]string, dedupKey string, level sentry.Level) {
+func capture(msg string, err error, tags map[string]string, dedupKey string, level sentry.Level) {
 	if err == nil {
 		err = errors.New(msg)
 	}

@@ -349,7 +349,7 @@ def _lint_results(
         engines_hash = engines_hash_hermetic() if is_hermetic() else cache.engines_hash_dev(tackbox_root)
         cache.gc_stale_engines(engines_hash, cache_root)
 
-        filtered_plan, pending = _apply_cache(plan, repo_root, engines_hash, cache_root, policy)
+        filtered_plan, pending = _apply_cache(plan, repo_root, tackbox_root, engines_hash, cache_root, policy)
         results = run_engines(filtered_plan, repo_root, tackbox_root, reporter_pairs, machine, link_targets)
         # Cache attribution reads RAW erclint truth, BEFORE the exclusion filter:
         # a mixed package whose only findings sit in excluded files is not marked
@@ -619,6 +619,7 @@ def _build_selected_go_dirs(repo_root: Path, module: str, packages: list[str]) -
 def _apply_cache(
     plan: list[tuple[EngineSpec, list[str]]],
     repo_root: Path,
+    tackbox_root: Path,
     engines_hash: str,
     cache_root: Path,
     policy: str,
@@ -643,6 +644,10 @@ def _apply_cache(
             filtered_plan.append((engine, args))
             continue
         arg_digest, extras = _digests_for_engine(engine, args, repo_root, policy)
+        runtime = cache.engine_runtime_version(engine.id, repo_root, tackbox_root)
+        if runtime:
+            arg_digest = [(arg, cache.with_runtime_digest(digest, runtime) if digest is not None else None)
+                          for arg, digest in arg_digest]
         uncached: list[tuple[str, str]] = []
         for arg, digest in arg_digest:
             if digest is None:

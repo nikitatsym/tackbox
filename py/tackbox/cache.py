@@ -16,28 +16,40 @@ Unit granularity:
   paths digests apart (a test-exempt path vs a production path); policy folds in
   so a `.tackbox/reporters` change invalidates.
 - erclint -> unit = Go package, digest = sha256(import path + own .go files
-  (GoFiles + CgoFiles + TestGoFiles + XTestGoFiles) + transitive in-module deps'
+  (GoFiles + CgoFiles + TestGoFiles + XTestGoFiles + IgnoredGoFiles) + transitive in-module deps'
   .go files + go.mod + go.sum + reporter policy). A signature change in package B
   invalidates every in-module package that depends on B; a _test.go edit or a
-  policy change invalidates the package.
+  policy change invalidates the package. The selected Go version is queried in
+  each module with `go env GOVERSION`, honoring PATH and GOTOOLCHAIN.
 
 engines-hash:
 - Dev mode digests Go, Java, frontend, and pyrules engine sources plus their
   dependency manifests, so rule and dependency changes invalidate prior markers.
   Python engine result normalization is also payload; unrelated orchestration
   is not. Hermetic wheels include pyrules sources and analyzer pins in their digest.
+- Unit digests also include the running Python implementation/version and
+  installed flake8/pyflakes dependencies for pyrules, and the system Java runtime
+  version for javalint. In dev mode, Node and installed ESLint versions salt
+  ESLint units, and the PATH opengrep version salts erclint-opengrep units.
+  Hermetic Node/opengrep/ESLint payloads are already covered by engines-hash.
+  Only dispatched cacheable engines resolve versions; unresolved versions fail
+  the command rather than permitting a stale hit.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
+import subprocess
+import sys
 from dataclasses import dataclass
+from importlib import metadata
 from pathlib import Path
 
 from . import proc
-from .engines import iter_json_objects
+from .engines import EnginesStoreError, hermetic_env, is_hermetic, iter_json_objects
 from .hashing import sha256_file
 from .source_set import group_go_packages_by_module, module_relative
 
@@ -137,6 +149,54 @@ def non_go_unit_digest(rel_path: str, content_sha: str, policy: str) -> str:
     h.update(b"\0")
     h.update(policy.encode())
     return h.hexdigest()
+
+
+def with_runtime_digest(digest: str, runtime: str) -> str:
+    return hashlib.sha256(f"runtime-v1\0{digest}\0{runtime}".encode()).hexdigest()
+
+
+def required_tool_version(argv: list[str], cwd: Path, *, stderr: bool = False) -> str:
+    """Probe the executable/environment used by the analyzer, never a banner fallback."""
+    try:
+        completed = proc.run(
+            argv, cwd=cwd, env=hermetic_env() if is_hermetic() else None,
+            capture_output=True, timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise EnginesStoreError(f"cannot determine toolchain version ({' '.join(argv)}): {error}") from error
+    output = (completed.stderr if stderr else completed.stdout).strip()
+    if completed.returncode != 0 or not output or output == "?":
+        raise EnginesStoreError(
+            f"cannot determine toolchain version ({' '.join(argv)}) in {cwd}: "
+            f"exit {completed.returncode}; {completed.stderr.strip() or 'empty version output'}"
+        )
+    return output
+
+
+def engine_runtime_version(engine_id: str, repo_root: Path, tackbox_root: Path) -> str:
+    if engine_id == "pyrules":
+        try:
+            dependencies = [(name, metadata.version(name))
+                            for name in ("flake8", "pyflakes", "pycodestyle", "mccabe")]
+        except metadata.PackageNotFoundError as error:
+            raise EnginesStoreError(f"cannot determine Python analyzer version: {error}") from error
+        return json.dumps([sys.implementation.name, sys.version, dependencies])
+    if engine_id == "javalint":
+        return required_tool_version(["java", "-version"], repo_root, stderr=True)
+    if not is_hermetic():
+        if engine_id == "erclint-opengrep":
+            return required_tool_version(["opengrep", "--version"], repo_root)
+        if engine_id == "tackbox-eslint":
+            node = required_tool_version(["node", "--version"], repo_root)
+            manifest = tackbox_root / "node_modules" / "eslint" / "package.json"
+            try:
+                version = json.loads(manifest.read_text(encoding="utf-8"))["version"]
+            except (OSError, ValueError, KeyError) as error:
+                raise EnginesStoreError(f"cannot determine ESLint version ({manifest}): {error}") from error
+            if not isinstance(version, str) or not version.strip() or version == "?":
+                raise EnginesStoreError(f"cannot determine ESLint version ({manifest}): invalid version")
+            return json.dumps([node, version])
+    return ""
 
 
 def is_cached(key: CacheKey, root: Path) -> bool:
@@ -248,6 +308,7 @@ def _module_digests(
         raise GoListError(
             f"go list failed in {module}: {completed.stderr.strip()}"
         )
+    go_version = required_tool_version(["go", "env", "GOVERSION"], module_dir)
     pkgs = list(iter_json_objects(completed.stdout))
 
     our_module = _module_path_from_pkgs(pkgs)
@@ -271,6 +332,7 @@ def _module_digests(
             + list(p.get("CgoFiles") or [])
             + list(p.get("TestGoFiles") or [])
             + list(p.get("XTestGoFiles") or [])
+            + list(p.get("IgnoredGoFiles") or [])
         )
         # Deps is the transitive closure per `go list -json`; filter later.
         deps = set(p.get("Deps") or [])
@@ -307,9 +369,9 @@ def _module_digests(
         import_path = dir_to_import.get(pkg_dir)
         if import_path is None:
             continue
-        result[pkg_dir] = _package_digest(
+        result[pkg_dir] = with_runtime_digest(_package_digest(
             import_path, in_module, file_digest, go_mod_digest, go_sum_digest, policy
-        )
+        ), go_version)
     return result
 
 

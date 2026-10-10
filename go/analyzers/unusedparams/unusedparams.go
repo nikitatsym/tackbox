@@ -8,7 +8,11 @@ package unusedparams
 import (
 	"fmt"
 	"go/ast"
+	"go/parser"
+	"go/token"
 	"go/types"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -27,9 +31,13 @@ var Analyzer = &analysis.Analyzer{
 // records an internal test package even when it has no parameter findings.
 var EmitJSON func(*analysis.Pass, string, *analysis.Diagnostic)
 
-const remedy = "remove this parameter and its argument at every call site in this package; preserve argument side effects and evaluation order; use `_` only if another build variant uses the parameter"
+const remedy = "remove this parameter and its argument at every call site in this package; preserve argument side effects and evaluation order; blank or unnamed parameters do not exempt an unconstrained signature"
 
 func run(pass *analysis.Pass) (any, error) {
+	variantNames, err := excludedVariantNames(pass)
+	if err != nil {
+		return nil, err
+	}
 	inspect := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
 	variant := "plain"
 	abi := make(map[string]bool)
@@ -126,27 +134,72 @@ func run(pass *analysis.Pass) (any, error) {
 			continue
 		}
 		for _, field := range n.Type.Params.List {
+			forcedVariant := variantNames[n.Name.Name]
+			if len(field.Names) == 0 {
+				if forcedVariant {
+					continue
+				}
+				reportUnused(pass, variant, "(unnamed)", field.Pos(), field.End())
+				continue
+			}
 			for _, id := range field.Names {
-				if id.Name == "_" || usedVars[pass.TypesInfo.Defs[id].(*types.Var)] {
+				if id.Name == "_" && forcedVariant {
+					continue
+				}
+				if id.Name != "_" && usedVars[pass.TypesInfo.Defs[id].(*types.Var)] {
 					continue
 				}
 				start, end := field.Pos(), field.End()
 				if len(field.Names) > 1 {
 					start, end = id.Pos(), id.End()
 				}
-				diagnostic := analysis.Diagnostic{
-					Pos: start, End: end,
-					Message: fmt.Sprintf("ERC011: unused parameter %s: %s", id.Name, remedy),
-				}
-				if EmitJSON != nil {
-					EmitJSON(pass, variant, &diagnostic)
-				} else {
-					pass.Report(diagnostic)
-				}
+				reportUnused(pass, variant, id.Name, start, end)
 			}
 		}
 	}
 	return nil, nil
+}
+
+func excludedVariantNames(pass *analysis.Pass) (map[string]bool, error) {
+	names := make(map[string]bool)
+	readFile := pass.ReadFile
+	if readFile == nil {
+		readFile = os.ReadFile
+	}
+	for _, filename := range pass.IgnoredFiles {
+		if filepath.Ext(filename) != ".go" {
+			continue
+		}
+		content, err := readFile(filename)
+		if err != nil {
+			return nil, fmt.Errorf("read build-excluded Go file %s: %w", filename, err)
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), filename, content, parser.SkipObjectResolution)
+		if err != nil {
+			return nil, fmt.Errorf("parse build-excluded Go file %s: %w", filename, err)
+		}
+		if file.Name.Name != pass.Pkg.Name() {
+			continue
+		}
+		for _, declaration := range file.Decls {
+			if function, ok := declaration.(*ast.FuncDecl); ok {
+				names[function.Name.Name] = true
+			}
+		}
+	}
+	return names, nil
+}
+
+func reportUnused(pass *analysis.Pass, variant, name string, start, end token.Pos) {
+	diagnostic := analysis.Diagnostic{
+		Pos: start, End: end,
+		Message: fmt.Sprintf("ERC011: unused parameter %s: %s", name, remedy),
+	}
+	if EmitJSON != nil {
+		EmitJSON(pass, variant, &diagnostic)
+	} else {
+		pass.Report(diagnostic)
+	}
 }
 
 func fixedABI(n *ast.FuncDecl) bool {

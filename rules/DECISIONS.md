@@ -881,9 +881,12 @@ Tests reset state in fixtures rather than through test-only production hooks.
 For object lifetimes, prefer an explicit owner to a discard binding; the
 checks do not establish whether an unread binding keeps an object alive.
 
-ERC011 checks parameters of unexported functions and methods. Its exclusions,
-argument-removal requirements, and JSON package-variant selection are defined
-in the [Go rule reference](../go/README.md#unused-parameters-erc011).
+ERC011 checks parameters of unexported functions and methods, including blank
+(`_`) and unnamed parameters when their signatures are not constrained. A
+same-name declaration in a build-excluded file of the same package constrains
+blank/unnamed parameters across builds; named parameters remain checked.
+Its exclusions, argument-removal requirements, and JSON package-variant selection
+are defined in the [Go rule reference](../go/README.md#unused-parameters-erc011).
 
 Python parameters are not checked. Parameter names and callable signatures
 are part of the API and may be required by frameworks, overrides, or access
@@ -904,9 +907,10 @@ ordinary unused locals are reported regardless of name, including `_`,
 Discarded Java return values use a call without an assignment. Python locals
 use only bare `_`, not an `_name` prefix; side-effect imports use
 underscore-prefixed aliases on plain imports, not from-imports. Optional caught
-bindings are omitted. Go uses the blank identifier, including for side-effect
-imports. Java unnecessary imports are removed. Dead private declarations and
-members have no name exemption. The lane has no suppression marker,
+bindings are omitted. Go uses the blank identifier for required bindings and
+side-effect imports; an unconstrained private parameter is removed instead.
+Java unnecessary imports are removed. Dead private declarations and members
+have no name exemption. The lane has no suppression marker,
 approval-manifest entry, opt-in, transition mode, or per-rule switch.
 
 Rationale: abandoned bindings and omitted uses are structural concerns.

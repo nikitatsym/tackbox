@@ -9,7 +9,7 @@ These pin the plan's cache semantics before implementation:
 - `gc_soft_cap` drops oldest markers within the current dir once the cap
   is exceeded.
 - erclint unit digest = import-path + own `.go` files + transitive
-  in-module deps' `.go` files + go.mod + go.sum. Same-only-if-source-equal.
+  in-module deps' `.go` files + go.mod + go.sum + selected Go toolchain version.
 
 End-to-end CLI cache tests live in test_cli_cache.py.
 """
@@ -78,6 +78,52 @@ def test_engines_hash_dev_ignores_orchestrator_sources(tmp_path):
     before = cache.engines_hash_dev(tmp_path)
     (tmp_path / "py" / "cli.py").write_text("edited orchestrator\n")
     assert cache.engines_hash_dev(tmp_path) == before
+
+
+@pytest.mark.parametrize("engine_id,argv,stderr", [
+    ("erclint-opengrep", ["opengrep", "--version"], False),
+    ("tackbox-eslint", ["node", "--version"], False),
+    ("javalint", ["java", "-version"], True),
+])
+def test_external_runtime_version_invalidates_marker(monkeypatch, tmp_path, engine_id, argv, stderr):
+    manifest = tmp_path / "node_modules" / "eslint" / "package.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text('{"version":"9.0.0"}')
+    monkeypatch.setattr(cache, "is_hermetic", lambda: False)
+    version = {"value": "old-version"}
+
+    def probe(command, **kwargs):
+        assert command == argv
+        assert kwargs["cwd"] == tmp_path
+        output = version["value"]
+        return subprocess.CompletedProcess(command, 0, "" if stderr else output, output if stderr else "")
+
+    monkeypatch.setattr(cache.proc, "run", probe)
+    runtime = cache.engine_runtime_version(engine_id, tmp_path, tmp_path)
+    key = cache.CacheKey("payload", cache.with_runtime_digest("source", runtime), engine_id)
+    cache.mark_clean(key, tmp_path / "cache")
+    assert cache.is_cached(key, tmp_path / "cache")
+    version["value"] = "new-version"
+    runtime = cache.engine_runtime_version(engine_id, tmp_path, tmp_path)
+    assert not cache.is_cached(cache.CacheKey("payload", cache.with_runtime_digest("source", runtime), engine_id),
+                               tmp_path / "cache")
+
+
+def test_python_interpreter_version_invalidates_marker(monkeypatch, tmp_path):
+    runtime = cache.engine_runtime_version("pyrules", tmp_path, tmp_path)
+    key = cache.CacheKey("payload", cache.with_runtime_digest("source", runtime), "pyrules")
+    cache.mark_clean(key, tmp_path)
+    monkeypatch.setattr(cache.sys, "version", "changed interpreter version")
+    changed = cache.engine_runtime_version("pyrules", tmp_path, tmp_path)
+    assert not cache.is_cached(cache.CacheKey("payload", cache.with_runtime_digest("source", changed), "pyrules"), tmp_path)
+
+
+@pytest.mark.parametrize("returncode,output", [(0, ""), (0, "?"), (1, "go1.27.0")])
+def test_unknown_runtime_version_cannot_reuse_cache(monkeypatch, tmp_path, returncode, output):
+    monkeypatch.setattr(cache.proc, "run", lambda argv, **kwargs:
+                        subprocess.CompletedProcess(argv, returncode, output, "probe failure"))
+    with pytest.raises(cache.EnginesStoreError, match="cannot determine toolchain version"):
+        cache.required_tool_version(["go", "env", "GOVERSION"], tmp_path)
 
 
 # -- is_cached / mark_clean
@@ -290,6 +336,16 @@ def test_erclint_digest_changes_when_own_files_change(tmp_path):
     _make_go_repo(tmp_path)
     before = cache.erclint_package_digests(tmp_path, ["pkg_b"], "")["pkg_b"]
     (tmp_path / "pkg_b" / "b.go").write_text(_PKG_B_ADD2 + "\n// tail\n")
+    after = cache.erclint_package_digests(tmp_path, ["pkg_b"], "")["pkg_b"]
+    assert before != after
+
+
+def test_erclint_digest_changes_with_excluded_signature_twin(tmp_path):
+    _needs_go()
+    _make_go_repo(tmp_path)
+    before = cache.erclint_package_digests(tmp_path, ["pkg_b"], "")["pkg_b"]
+    twin = tmp_path / "pkg_b" / "alternate.go"
+    twin.write_text("//go:build tackbox_alternate\n\npackage pkg_b\nfunc Add(a, b int) int { return a + b }\n")
     after = cache.erclint_package_digests(tmp_path, ["pkg_b"], "")["pkg_b"]
     assert before != after
 
