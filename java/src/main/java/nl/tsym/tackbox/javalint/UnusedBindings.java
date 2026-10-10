@@ -3,7 +3,6 @@ package nl.tsym.tackbox.javalint;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.TypeDeclaration;
-import com.github.javaparser.ast.expr.MethodCallExpr;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -13,7 +12,6 @@ import net.sourceforge.pmd.lang.document.FileId;
 import net.sourceforge.pmd.lang.document.TextFile;
 import net.sourceforge.pmd.lang.java.JavaLanguageModule;
 import net.sourceforge.pmd.lang.java.rule.bestpractices.UnusedPrivateFieldRule;
-import net.sourceforge.pmd.lang.java.rule.bestpractices.UnusedPrivateMethodRule;
 import net.sourceforge.pmd.lang.java.rule.codestyle.UnnecessaryImportRule;
 import net.sourceforge.pmd.lang.rule.Rule;
 import net.sourceforge.pmd.lang.rule.RuleSet;
@@ -36,7 +34,7 @@ final class UnusedBindings {
                     List.of(), List.of(), List.of(
                             rule(new UnusedLocalBindingsRule(), "JV011", "unused local variable ''{0}''"),
                             rule(new UnusedPrivateFieldRule(), "JV012", "unused private field ''{0}''"),
-                            rule(new UnusedPrivateMethodRule(), "JV013", "unused private method ''{0}''"),
+                            rule(new UnusedPrivateBindingsRule(), "JV013", "unused private method ''{0}''"),
                             rule(new UnnecessaryImportRule(), "JV014", null))));
             if (!pmd.files().addFile(TextFile.forCharSeq(content, FileId.fromPathLikeString(file),
                     JavaLanguageModule.getInstance().getDefaultVersion()))) {
@@ -102,9 +100,8 @@ final class UnusedBindings {
             }
             TypeDeclaration<?> owner = method.findAncestor(TypeDeclaration.class).orElseThrow();
             long sameName = owner.getMethods().stream().filter(m -> m.getNameAsString().equals(name)).count();
-            if (sameName > 1 && cu.findAll(MethodCallExpr.class).stream().anyMatch(call ->
-                    call.getNameAsString().equals(name)
-                            && call.getArguments().size() == method.getParameters().size())) {
+            if (sameName > 1 && ((UnusedPrivateBindingsRule) violation.getRule())
+                    .hasUncertainCall(name, method.getParameters().size())) {
                 return true;
             }
         }

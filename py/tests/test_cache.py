@@ -62,7 +62,7 @@ def test_engines_hash_dev_changes_when_rule_source_changes(tmp_path):
     assert cache.engines_hash_dev(tmp_path) != before
 
 
-@pytest.mark.parametrize("relative", ["py/tackbox/pyrules/checker.py", "py/setup.py", "go.mod", "go.sum"])
+@pytest.mark.parametrize("relative", ["py/tackbox/pyrules/checker.py", "py/tackbox/engines.py", "py/setup.py", "go.mod", "go.sum"])
 def test_engines_hash_dev_changes_with_python_rules_and_go_dependencies(tmp_path, relative):
     _payload_tree(tmp_path)
     target = tmp_path / relative

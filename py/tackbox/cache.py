@@ -24,8 +24,8 @@ Unit granularity:
 engines-hash:
 - Dev mode digests Go, Java, frontend, and pyrules engine sources plus their
   dependency manifests, so rule and dependency changes invalidate prior markers.
-  Python orchestration outside pyrules is not engine payload. Hermetic wheels
-  include pyrules sources and analyzer pins in the bundled-payload digest.
+  Python engine result normalization is also payload; unrelated orchestration
+  is not. Hermetic wheels include pyrules sources and analyzer pins in their digest.
 """
 
 from __future__ import annotations
@@ -76,6 +76,7 @@ _DEV_PAYLOAD = (
     "go.mod",
     "go.sum",
     "py/tackbox/pyrules",
+    "py/tackbox/engines.py",
     "py/setup.py",
     "js",
     "bin",

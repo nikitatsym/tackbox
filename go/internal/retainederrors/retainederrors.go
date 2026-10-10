@@ -275,12 +275,18 @@ func isNil(value ssa.Value) bool {
 }
 
 func (scanner *scan) evaluate(start *ssa.BasicBlock, initial state) ([]paths, bool) {
-	incoming := map[*ssa.BasicBlock]state{start: initial}
+	// A later loop iteration is distinct from the seeded error occurrence.
+	incoming := map[*ssa.BasicBlock]state{}
 	queue := []*ssa.BasicBlock{start}
+	seeded := true
 	for len(queue) != 0 {
 		block := queue[0]
 		queue = queue[1:]
-		current := incoming[block].clone()
+		current := initial.clone()
+		if !seeded {
+			current = incoming[block].clone()
+		}
+		seeded = false
 		for _, instruction := range block.Instrs {
 			scanner.step(instruction, current)
 		}
@@ -309,8 +315,8 @@ func (scanner *scan) evaluate(start *ssa.BasicBlock, initial state) ([]paths, bo
 	}
 	var results []paths
 	returned, safe := false, true
-	for block, initial := range incoming {
-		current := initial.clone()
+	checkReturns := func(block *ssa.BasicBlock, entry state) {
+		current := entry.clone()
 		for _, instruction := range block.Instrs {
 			scanner.step(instruction, current)
 			if _, panics := instruction.(*ssa.Panic); panics && !current.captured {
@@ -339,6 +345,10 @@ func (scanner *scan) evaluate(start *ssa.BasicBlock, initial state) ([]paths, bo
 			safe = safe && retained
 			returned = true
 		}
+	}
+	checkReturns(start, initial)
+	for block, entry := range incoming {
+		checkReturns(block, entry)
 	}
 	return results, returned && safe
 }
@@ -407,6 +417,12 @@ func (scanner *scan) call(call *ssa.Call, current state) {
 			if len(retainedPaths(current.get(argument), argument.Type())) != 0 {
 				current.captured = true
 			}
+		}
+		return
+	}
+	if function != nil && function.Pkg() != nil && function.Pkg().Path() == "errors" && function.Name() == "Join" {
+		if len(common.Args) == 1 && current.get(common.Args[0])[".e"] {
+			current.put(call, paths{"": true})
 		}
 		return
 	}

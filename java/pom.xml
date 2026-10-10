@@ -67,15 +67,13 @@
         <directory>../engines/licenses/javalint</directory>
         <targetPath>META-INF/third-party</targetPath>
       </resource>
-      <resource>
-        <directory>..</directory>
-        <targetPath>META-INF</targetPath>
-        <includes>
-          <include>LICENSE</include>
-        </includes>
-      </resource>
     </resources>
     <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <version>3.7.0</version>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
@@ -114,6 +112,10 @@
               <createDependencyReducedPom>false</createDependencyReducedPom>
               <transformers>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.IncludeResourceTransformer">
+                  <resource>META-INF/LICENSE</resource>
+                  <file>../LICENSE</file>
+                </transformer>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                   <mainClass>nl.tsym.tackbox.javalint.Javalint</mainClass>
                 </transformer>
@@ -127,115 +129,6 @@
                     <exclude>META-INF/*.SF</exclude>
                     <exclude>META-INF/*.DSA</exclude>
                     <exclude>META-INF/*.RSA</exclude>
-                  </excludes>
-                </filter>
-                <filter>
-                  <artifact>com.github.javaparser:javaparser-core</artifact>
-                  <excludes>
-                    <exclude>META-INF/LICENSE*</exclude>
-                    <exclude>META-INF/NOTICE*</exclude>
-                    <exclude>META-INF/DEPENDENCIES</exclude>
-                  </excludes>
-                </filter>
-                <filter>
-                  <artifact>net.sourceforge.pmd:pmd-java</artifact>
-                  <excludes>
-                    <exclude>META-INF/LICENSE*</exclude>
-                    <exclude>META-INF/NOTICE*</exclude>
-                    <exclude>META-INF/DEPENDENCIES</exclude>
-                  </excludes>
-                </filter>
-                <filter>
-                  <artifact>net.sourceforge.pmd:pmd-core</artifact>
-                  <excludes>
-                    <exclude>META-INF/LICENSE*</exclude>
-                    <exclude>META-INF/NOTICE*</exclude>
-                    <exclude>META-INF/DEPENDENCIES</exclude>
-                  </excludes>
-                </filter>
-                <filter>
-                  <artifact>org.slf4j:slf4j-api</artifact>
-                  <excludes>
-                    <exclude>META-INF/LICENSE*</exclude>
-                    <exclude>META-INF/NOTICE*</exclude>
-                    <exclude>META-INF/DEPENDENCIES</exclude>
-                  </excludes>
-                </filter>
-                <filter>
-                  <artifact>org.slf4j:jul-to-slf4j</artifact>
-                  <excludes>
-                    <exclude>META-INF/LICENSE*</exclude>
-                    <exclude>META-INF/NOTICE*</exclude>
-                    <exclude>META-INF/DEPENDENCIES</exclude>
-                  </excludes>
-                </filter>
-                <filter>
-                  <artifact>org.slf4j:slf4j-simple</artifact>
-                  <excludes>
-                    <exclude>META-INF/LICENSE*</exclude>
-                    <exclude>META-INF/NOTICE*</exclude>
-                    <exclude>META-INF/DEPENDENCIES</exclude>
-                  </excludes>
-                </filter>
-                <filter>
-                  <artifact>org.antlr:antlr4-runtime</artifact>
-                  <excludes>
-                    <exclude>META-INF/LICENSE*</exclude>
-                    <exclude>META-INF/NOTICE*</exclude>
-                    <exclude>META-INF/DEPENDENCIES</exclude>
-                  </excludes>
-                </filter>
-                <filter>
-                  <artifact>com.google.code.gson:gson</artifact>
-                  <excludes>
-                    <exclude>META-INF/LICENSE*</exclude>
-                    <exclude>META-INF/NOTICE*</exclude>
-                    <exclude>META-INF/DEPENDENCIES</exclude>
-                  </excludes>
-                </filter>
-                <filter>
-                  <artifact>com.google.errorprone:error_prone_annotations</artifact>
-                  <excludes>
-                    <exclude>META-INF/LICENSE*</exclude>
-                    <exclude>META-INF/NOTICE*</exclude>
-                    <exclude>META-INF/DEPENDENCIES</exclude>
-                  </excludes>
-                </filter>
-                <filter>
-                  <artifact>com.github.oowekyala.ooxml:nice-xml-messages</artifact>
-                  <excludes>
-                    <exclude>META-INF/LICENSE*</exclude>
-                    <exclude>META-INF/NOTICE*</exclude>
-                    <exclude>META-INF/DEPENDENCIES</exclude>
-                  </excludes>
-                </filter>
-                <filter>
-                  <artifact>org.ow2.asm:asm</artifact>
-                  <excludes>
-                    <exclude>META-INF/LICENSE*</exclude>
-                    <exclude>META-INF/NOTICE*</exclude>
-                    <exclude>META-INF/DEPENDENCIES</exclude>
-                  </excludes>
-                </filter>
-                <filter>
-                  <artifact>org.apache.commons:commons-lang3</artifact>
-                  <excludes>
-                    <exclude>META-INF/LICENSE*</exclude>
-                    <exclude>META-INF/NOTICE*</exclude>
-                    <exclude>META-INF/DEPENDENCIES</exclude>
-                  </excludes>
-                </filter>
-                <filter>
-                  <artifact>org.checkerframework:checker-qual</artifact>
-                  <excludes>
-                    <exclude>META-INF/LICENSE*</exclude>
-                    <exclude>META-INF/NOTICE*</exclude>
-                    <exclude>META-INF/DEPENDENCIES</exclude>
-                  </excludes>
-                </filter>
-                <filter>
-                  <artifact>org.pcollections:pcollections</artifact>
-                  <excludes>
                     <exclude>META-INF/LICENSE*</exclude>
                     <exclude>META-INF/NOTICE*</exclude>
                     <exclude>META-INF/DEPENDENCIES</exclude>

@@ -9,6 +9,7 @@ import com.google.gson.JsonParser;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 import java.util.zip.ZipFile;
 import org.junit.jupiter.api.Test;
 
@@ -42,6 +43,16 @@ class ShadedJarIT {
                 assertTrue(jar.getEntry("META-INF/third-party/" + license) != null, license);
             }
             assertTrue(jar.getEntry("META-INF/services/net.sourceforge.pmd.lang.Language") != null);
+            assertTrue(jar.getEntry("META-INF/LICENSE") != null);
+            assertEquals(Files.readString(Path.of("../LICENSE")), new String(jar.getInputStream(
+                    jar.getEntry("META-INF/LICENSE")).readAllBytes(), StandardCharsets.UTF_8));
+            assertTrue(jar.stream().noneMatch(entry -> {
+                String name = entry.getName();
+                String lower = name.toLowerCase(Locale.ROOT);
+                return lower.startsWith("meta-inf/") && !lower.startsWith("meta-inf/third-party/")
+                        && !name.equals("META-INF/LICENSE")
+                        && (lower.contains("licen") || lower.contains("notice") || lower.contains("dependencies"));
+            }));
         }
     }
 }

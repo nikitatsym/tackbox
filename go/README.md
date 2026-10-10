@@ -48,6 +48,9 @@ Details per rule:
   or naming a field `Cause` is not enough: discarded values, overwritten
   errors, and fields containing only text or `any` do not count. If the linter
   cannot prove that a helper preserves the error, it does not assume so.
+  Errors accumulated in a slice and later returned through `errors.Join`, or
+  cumulatively combined with `errors.Join` and returned, count as propagation.
+  Discarding or resetting the accumulator does not count.
   This proves that the error is passed on, not that it is shown to the user.
 - ERC002 `parsenil` - parser results that fall through to nil must
   capture, propagate the error (same object-flow rule as ERC001), or
@@ -109,9 +112,8 @@ tackbox filters their diagnostics from the lint output rather than removing
 them from Go's package. A hook editing one file also analyzes the complete
 package. Callers must pass package patterns, not a single `.go` filename
 that discards its sibling context.
-Directories whose Go files are all excluded by the current build constraints
-are not package targets and are skipped. Package compile errors still fail
-the engine run.
+Directories with no build-selected Go files are not package targets and are
+skipped. Package compile errors still fail the engine run.
 
 A production declaration used only by tests is still reported: test-only
 helpers belong in `_test.go`. Production findings appear once, not once per
@@ -158,7 +160,8 @@ fields before caching, filtering, or rendering. Analyzer errors remain visible
 and fail the run. Standalone non-JSON erclint is outside this guarantee and
 can report a plain-variant false positive.
 Package/type-check failures produce an engine error and failing exit without a
-Python traceback; CodeClimate output is still written for valid findings.
+Python traceback. CodeClimate output includes one critical `tackbox-engine-error`
+per failed package alongside valid findings from other packages.
 
 Declarations with no references are left to ERC010; dead recursive functions
 and callees reached only by dead code can get both ERC010 and ERC011.

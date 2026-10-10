@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import ast
 import json
-import tokenize
 
 from flake8.formatting.base import BaseFormatter
 from flake8.formatting.default import Default
 from flake8.main.application import Application
+from flake8.processor import FileProcessor
 from pyflakes.checker import Importation
 
 from .codes import CODE_TO_ID, PYFLAKES_CODES
@@ -23,8 +23,8 @@ class _FilteredFormatter(BaseFormatter):
     def handle(self, error):
         if error.code == "F401":
             if error.filename not in self._side_effect_imports:
-                with tokenize.open(error.filename) as source:
-                    tree = ast.parse(source.read(), filename=error.filename)
+                source = FileProcessor(error.filename, self.options)
+                tree = ast.parse("".join(source.lines), filename=error.filename)
                 self._side_effect_imports[error.filename] = {
                     (node.lineno, f"'{Importation(alias.asname, node, alias.name)}' imported but unused")
                     for node in ast.walk(tree) if isinstance(node, ast.Import)

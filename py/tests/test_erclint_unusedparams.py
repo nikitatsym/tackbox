@@ -87,6 +87,14 @@ def test_analyzer_failure_preserved_but_not_a_finding():
     assert len(list(engines.iter_json_objects(result.stdout))) == 1
 
 
+def test_compile_skip_and_prerequisites_have_one_short_package_error():
+    result = normalize({"p": {"unused": {"error": engines.COMPILE_SKIP}}},
+                       {"p [p.test]": {"errcheck": {"error": "failed prerequisites: retainederrors@p [p.test]"}}})
+    assert result.stderr == "tackbox: erclint skipped p: package does not compile\n"
+    assert result.exit_code == 1
+    assert "failed prerequisites" in result.stdout
+
+
 def test_error_and_other_findings_survive_variant_selection():
     result = normalize({"p": {"unusedparams": [PARAM, PRESENCE],
                                "errcheck": {"error": "analyzer failed"},
@@ -149,17 +157,24 @@ def test_typecheck_failure_no_traceback_and_writes_codequality(tmp_path, codequa
     result = subprocess.run(args, cwd=tmp_path, env=tackbox_env(), capture_output=True, text=True)
     assert result.returncode != 0
     assert "Traceback" not in result.stderr
-    assert "erclint analyzer" in result.stderr and "failed" in result.stderr
+    assert "erclint skipped brokenfixture: package does not compile" in result.stderr
     if codequality:
-        assert json.loads(report.read_text()) == []
+        [issue] = json.loads(report.read_text())
+        assert issue["check_name"] == "tackbox-engine-error"
+        assert issue["severity"] == "critical"
+        assert issue["location"] == {"path": ".", "lines": {"begin": 1}}
 
 
 @pytest.mark.parametrize("no_cache", [False, True])
-def test_only_build_excluded_directory_skipped_but_normal_package_analyzed(tmp_path, no_cache):
+@pytest.mark.parametrize("ignored_name,ignored_source", [
+    ("fixture.go", "//go:build ignore\n\npackage ignored\nfunc Broken() { missing() }\n"),
+    ("_gen.go", "package ignored\nfunc Broken() { missing() }\n"),
+])
+def test_only_build_excluded_directory_skipped_but_normal_package_analyzed(tmp_path, no_cache, ignored_name, ignored_source):
     (tmp_path / "go.mod").write_text("module selectedfixture\n\ngo 1.27.0\n")
     ignored = tmp_path / "ignored"
     ignored.mkdir()
-    (ignored / "fixture.go").write_text("//go:build ignore\n\npackage ignored\nfunc Broken() { missing() }\n")
+    (ignored / ignored_name).write_text(ignored_source)
     normal = tmp_path / "normal"
     normal.mkdir()
     (normal / "p.go").write_text("package p\nfunc helper(x int) int { return 1 }\nfunc Public() { helper(1) }\n")

@@ -72,6 +72,18 @@ class UnusedBindingsTest {
     }
 
     @Test
+    void resolvedJdkCallDoesNotHideDeadOverload() {
+        String source = "class S {\n"
+                + " private int over(String value) { return 1; }\n"
+                + " private int over(Integer value) { return 2; }\n"
+                + " int run() { return over(\"used\"); }\n}";
+        List<Finding> findings = Javalint.analyze("S.java", source);
+        assertEquals(Set.of("JV013:3"), findings.stream().map(f -> f.rule() + ":" + f.line())
+                .collect(java.util.stream.Collectors.toSet()));
+        assertEquals(1, findings.size());
+    }
+
+    @Test
     void analyzerClasspathDoesNotExposeBundledLibraries() {
         String source = "import com.google.gson.JsonObject; import com.google.gson.JsonArray;"
                 + " class S { private int over(JsonObject f) { return 1; } private int over(JsonArray b) { return 2; }"

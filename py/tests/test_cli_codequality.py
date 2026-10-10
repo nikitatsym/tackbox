@@ -22,9 +22,9 @@ import pytest
 from conftest import init_repo, tackbox_env
 from test_cli_fixture import REDUNDANT_DUP_MARKER, callable_header_pair
 
-from tackbox import approvals
+from tackbox import approvals, cli, engines
 from tackbox.cli import _approvals_findings
-from tackbox.codequality import build_report
+from tackbox.codequality import build_report, engine_findings
 from tackbox.engines import Finding
 
 # One swallowed-exception on line 2 (pyrules TBX001) - located via flake8 text.
@@ -121,6 +121,129 @@ def test_flag_does_not_change_exit_code(two_engine_repo, tmp_path):
     result = _run(two_engine_repo, out)
     assert result.returncode == 1
     assert out.is_file()
+
+
+
+@pytest.mark.parametrize("no_cache", [False, True])
+def test_broken_go_package_report_preserves_other_package_findings(tmp_path, no_cache):
+    module = tmp_path / "nested"
+    module.mkdir()
+    (module / "go.mod").write_text("module qualityfixture\n\ngo 1.27.0\n")
+    (module / "broken").mkdir()
+    (module / "broken" / "p.go").write_text("package broken\nfunc Public() { missing() }\n")
+    (module / "broken" / "p_test.go").write_text('package broken\nimport "testing"\nfunc TestPublic(t *testing.T) { Public() }\n')
+    (module / "clean").mkdir()
+    (module / "clean" / "p.go").write_text("package clean\nfunc helper(x int) int { return 1 }\nfunc Public() { helper(1) }\n")
+    init_repo(tmp_path, commit=True)
+    args = [sys.executable, "-m", "tackbox.cli", "lint", "."]
+    if no_cache:
+        args.append("--no-cache")
+    out = tmp_path / "quality.json"
+    plain = subprocess.run(args, cwd=tmp_path, env=tackbox_env(), capture_output=True, text=True)
+    result = subprocess.run([*args, "--codequality", str(out)], cwd=tmp_path,
+                            env=tackbox_env(), capture_output=True, text=True)
+    assert result.returncode == plain.returncode != 0, result.stdout + result.stderr
+    issues = json.loads(out.read_text())
+    assert len(issues) == 2, issues
+    [failure] = [issue for issue in issues if issue["check_name"] == "tackbox-engine-error"]
+    assert failure["severity"] == "critical"
+    assert failure["location"] == {"path": "nested/broken", "lines": {"begin": 1}}
+    assert "erclint" in failure["description"] and "errors in package" in failure["description"]
+    assert "\n" not in failure["description"]
+    [finding] = [issue for issue in issues if issue["check_name"] == "unusedparams"]
+    assert finding["location"] == {"path": "nested/clean/p.go", "lines": {"begin": 2}}
+    assert finding["fingerprint"] == hashlib.sha256(b"unusedparams:nested/clean/p.go:2").hexdigest()
+
+
+@pytest.mark.parametrize("engine,extension,raw,code", [
+    ("erclint", ".go", "{", 0),
+    ("javalint", ".java", "{", 2),
+    ("tackbox-eslint", ".js", "not json", 7),
+    ("tackbox-eslint", ".js", "[]", 1),
+    ("tackbox-eslint", ".js", '{"rule": [], "line": "bad"}', 1),
+    ("pyrules", ".py", "invalid output", 1),
+    ("tackbox-eslint", ".js", "", 7),
+])
+def test_engine_failure_writes_report_without_changing_exit(tmp_path, monkeypatch, engine, extension, raw, code):
+    source = "src/a" + extension
+    (tmp_path / "src").mkdir()
+    (tmp_path / source).write_text("")
+    if engine == "erclint":
+        (tmp_path / "go.mod").write_text("module fixture\n")
+    init_repo(tmp_path, commit=True)
+    spec = engines.EngineSpec(engine, frozenset({extension}), lambda *_: ["fixture-engine"],
+                              package_mode=engine == "erclint", machine_flag=engine == "tackbox-eslint")
+    monkeypatch.setattr(cli, "active_engines", lambda: [spec])
+    monkeypatch.setattr(cli, "_print_banner", lambda *_: None)
+    real_run = engines.proc.run_bytes
+
+    def run(argv, **kwargs):
+        if argv[0] == "fixture-engine":
+            return subprocess.CompletedProcess(argv, code, raw.encode(), b"engine failed\nreason")
+        return real_run(argv, **kwargs)
+
+    monkeypatch.setattr(engines.proc, "run_bytes", run)
+    monkeypatch.chdir(tmp_path)
+    plain = cli._run_lint(".", True, False, None)
+    report = tmp_path / "quality.json"
+    assert cli._run_lint(".", True, False, None, str(report)) == plain != 0
+    [issue] = json.loads(report.read_text())
+    assert issue["check_name"] == "tackbox-engine-error"
+    assert issue["severity"] == "critical"
+    path = "." if engine == "erclint" else source
+    assert issue["location"] == {"path": path, "lines": {"begin": 1}}
+    assert engine in issue["description"] and "\n" not in issue["description"]
+    if raw:
+        assert "invalid" in issue["description"]
+
+
+def test_clean_report_has_no_engine_errors(tmp_path):
+    (tmp_path / "a.py").write_text("def run():\n    return 1\n")
+    init_repo(tmp_path, commit=True)
+    out = tmp_path / "quality.json"
+    result = _run(tmp_path, out)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(out.read_text()) == []
+
+
+def test_engine_errors_at_same_scope_have_independent_fingerprints(tmp_path):
+    failed = [engines.EngineResult(engine, 2, "", "failed") for engine in ("pyrules", "tackbox-eslint")]
+    findings = [finding for result in failed for finding in engine_findings(result, tmp_path)]
+    report = build_report(findings)
+    assert len({item["fingerprint"] for item in report}) == 2
+    assert build_report(list(reversed(findings))) == list(reversed(report))
+
+
+def test_java_analyzer_errors_share_one_file_issue(tmp_path):
+    raw = json.dumps({"src/A.java": {"unused": {"error": "cannot analyze"},
+                                    "imports": {"error": "cannot analyze"}}})
+    result = engines.normalize_erclint_result(engines.EngineResult("javalint", 2, raw, ""))
+    [issue] = build_report(engine_findings(result, tmp_path))
+    assert issue["check_name"] == "tackbox-engine-error"
+    assert issue["location"] == {"path": "src/A.java", "lines": {"begin": 1}}
+    assert "cannot analyze" in issue["description"]
+
+
+def test_module_crash_does_not_hide_another_modules_findings(tmp_path, monkeypatch):
+    for module in ("broken", "clean"):
+        (tmp_path / module).mkdir()
+        (tmp_path / module / "go.mod").write_text(f"module {module}\n")
+    payload = {"clean": {"errcheck": [{"posn": str(tmp_path / "clean/p.go") + ":2:1",
+                                      "message": "unchecked error"}]}}
+
+    def run(_argv, *, cwd, **_kwargs):
+        if cwd.name == "broken":
+            return subprocess.CompletedProcess([], 3, b"", b"crashed\nreason")
+        return subprocess.CompletedProcess([], 0, json.dumps(payload).encode(), b"")
+
+    spec = engines.EngineSpec("erclint", frozenset({".go"}), lambda *_: [], package_mode=True)
+    monkeypatch.setattr(engines.proc, "run_bytes", run)
+    [result] = engines.run_engines([(spec, ["broken", "clean"])], tmp_path, tmp_path, machine=True)
+    issues = build_report(engine_findings(result, tmp_path))
+    assert result.exit_code == 3
+    assert [(issue["check_name"], issue["location"]["path"]) for issue in issues] == [
+        ("tackbox-engine-error", "broken"), ("errcheck", "clean/p.go"),
+    ]
 
 
 # -- approvals findings + fingerprint override seam

@@ -139,6 +139,10 @@ Full constraints per rule:
   JS core rule.
 - `no-unused-private-class-members` - unused `#private` fields and methods
   must be removed.
+- `no-restricted-syntax` - bare `_` declaration names are reserved for
+  required for-of and for-in loop bindings. Other variables, functions,
+  classes, type aliases, interfaces, and enums must not use that discard
+  name. Optional catches omit the binding; unused array elements use holes.
 
 Required-binding naming conventions, side-effect imports, and the
 no-suppression policy are defined in

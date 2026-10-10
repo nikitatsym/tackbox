@@ -141,15 +141,34 @@ class _Uses(ast.NodeVisitor):
                 return
             self.visit(parsed)
 
+    def slice_visit(self, node: ast.AST, values: bool = False) -> None:
+        forward, previous_values = self.forward, self.values
+        self.forward = isinstance(node, (ast.Constant, ast.Name, ast.Attribute, ast.Subscript))
+        if isinstance(node, ast.Attribute):
+            self.values |= values
+            self.slice_visit(node.value)
+            self.forward, self.values = forward, previous_values
+            return
+        self.values |= values
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            self.slice_visit(node.left)
+            self.slice_visit(node.right)
+        else:
+            self.visit(node)
+        self.forward, self.values = forward, previous_values
+
     def visit_Subscript(self, node):
-        self.visit(node.value)
+        if self.forward:
+            self.slice_visit(node.value)
+        else:
+            self.visit(node.value)
         if isinstance(node.value, ast.Call) and self.spelling(node.value.func) in {"globals", "vars"}:
             if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
                 self.credit(node.slice.value)
         head = self.spelling(node.value)
         elements = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
         for index, element in enumerate(elements):
-            self.type_visit(element, values=head == "Literal" or (head == "Annotated" and index > 0))
+            self.slice_visit(element, values=head == "Literal" or (head == "Annotated" and index > 0))
 
     def visit_Call(self, node):
         forward = self.forward

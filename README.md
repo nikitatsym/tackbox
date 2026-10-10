@@ -110,9 +110,11 @@ repos:
 ## CodeClimate report
 
 `tackbox lint --codequality <path>` also writes a CodeClimate-format JSON
-array of every finding to `<path>` (console output and exit code unchanged;
-the report is written even when findings exist). Wire it into GitLab CI as a
-`codequality` report so the MR widget renders the findings:
+array of every finding to `<path>` (console output and exit code unchanged).
+Failed engine scopes add one `tackbox-engine-error` issue with `critical`
+severity, the engine and reason on one line, and the package/file/scope at
+line 1 (repo root `.` when unknown). Ordinary finding fingerprints are
+unchanged. Wire it into GitLab CI as a `codequality` report:
 
 ```yaml
 lint:

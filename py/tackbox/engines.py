@@ -27,7 +27,7 @@ import time
 import zipfile
 from contextlib import contextmanager
 from ctypes import wintypes
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
 from urllib.request import urlopen
@@ -483,11 +483,21 @@ class EngineSpec:
 
 
 @dataclass(frozen=True)
+class EngineOutput:
+    scope: str
+    targets: tuple[str, ...]
+    exit_code: int
+    stdout: str
+    stderr: str
+
+
+@dataclass(frozen=True)
 class EngineResult:
     engine_id: str
     exit_code: int
     stdout: str
     stderr: str
+    outputs: tuple[EngineOutput, ...] = ()
 
 
 def normalize_exit_code(rc: int) -> int:
@@ -615,12 +625,14 @@ def _run_one(run: EngineRun) -> EngineResult:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-    return EngineResult(
-        engine_id=run.engine.id,
-        exit_code=normalize_exit_code(completed.returncode),
-        stdout=proc.decode(completed.stdout),
-        stderr=proc.decode(completed.stderr),
-    )
+    stdout, stderr = proc.decode(completed.stdout), proc.decode(completed.stderr)
+    code = normalize_exit_code(completed.returncode)
+    scope = os.path.commonpath(run.args).replace(os.sep, "/") or "."
+    result = EngineResult(run.engine.id, code, stdout, stderr)
+    if run.machine or run.engine.id in ("javalint", "pyrules"):
+        result = normalize_erclint_result(result)
+    return replace(result, outputs=(EngineOutput(scope, tuple(run.args), result.exit_code,
+                                               result.stdout, result.stderr),))
 
 
 def _run_per_module(run: EngineRun) -> EngineResult:
@@ -636,6 +648,7 @@ def _run_per_module(run: EngineRun) -> EngineResult:
     max_code = 0
     outs: list[str] = []
     errs: list[str] = []
+    outputs: list[EngineOutput] = []
     # One temp dir for the whole per-module fan-out; each module drops its own
     # list-file into it (mkstemp keeps names unique), all torn down at the end.
     with tempfile.TemporaryDirectory(prefix="tackbox-argv-") as paths_dir:
@@ -655,9 +668,15 @@ def _run_per_module(run: EngineRun) -> EngineResult:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-            max_code = max(max_code, normalize_exit_code(completed.returncode))
-            outs.append(proc.decode(completed.stdout))
-            errs.append(proc.decode(completed.stderr))
+            result = normalize_erclint_result(EngineResult(
+                run.engine.id, normalize_exit_code(completed.returncode),
+                proc.decode(completed.stdout), proc.decode(completed.stderr),
+            ))
+            max_code = max(max_code, result.exit_code)
+            outs.append(result.stdout)
+            errs.append(result.stderr)
+            outputs.append(EngineOutput(module, tuple(groups[module]), result.exit_code,
+                                        result.stdout, result.stderr))
     for pkg in orphans:
         errs.append(f"no enclosing go.mod, skipped: {pkg}\n")
     result = EngineResult(
@@ -665,18 +684,27 @@ def _run_per_module(run: EngineRun) -> EngineResult:
         exit_code=max_code,
         stdout="".join(outs),
         stderr="".join(errs),
+        outputs=tuple(outputs),
     )
-    return normalize_erclint_result(result) if result.engine_id == "erclint" else result
+    return result
 
 
 def normalize_erclint_result(result: EngineResult) -> EngineResult:
-    """Prefer ERC011's loaded internal-test variant over its plain variant.
+    """Validate engine output and prefer ERC011's widest loaded test variant.
 
-    Presence records use exact package paths so external tests cannot
-    suppress production findings. Analyzer failures remain in stdout and
-    make the engine result fail.
+    Analyzer failures remain in stdout and make the engine result fail.
     """
     try:
+        if result.engine_id not in ("erclint", "javalint"):
+            parsed = located_findings(result.engine_id, result.stdout, Path("."))
+            if any(not isinstance(f.rule, str) or not f.rule
+                   or (f.file is not None and not isinstance(f.file, str))
+                   or (f.line is not None and (type(f.line) is not int or f.line < 1))
+                   or (f.message is not None and not isinstance(f.message, str)) for f in parsed):
+                raise ValueError("invalid finding record")
+            if result.engine_id == "pyrules" and result.stdout.strip() and not parsed:
+                raise ValueError("no parseable flake8 findings")
+            return result
         docs = list(iter_json_objects(result.stdout))
         widest: set[str] = set()
         errors: dict[str, dict[str, set[str]]] = {}
@@ -692,7 +720,10 @@ def normalize_erclint_result(result: EngineResult) -> EngineResult:
                         continue
                     if not isinstance(payload, list) or any(not isinstance(item, dict) for item in payload):
                         raise ValueError(f"invalid {analyzer!r} payload for {pkg!r}")
-                    if analyzer != "unusedparams":
+                    if any(not isinstance(item.get("posn", ""), str)
+                           or not isinstance(item.get("message", ""), str) for item in payload):
+                        raise ValueError(f"invalid {analyzer!r} diagnostic for {pkg!r}")
+                    if result.engine_id != "erclint" or analyzer != "unusedparams":
                         continue
                     for item in payload:
                         if "record" in item:
@@ -707,7 +738,7 @@ def normalize_erclint_result(result: EngineResult) -> EngineResult:
         for doc in docs:
             for pkg, analyzers in doc.items():
                 for analyzer, payload in analyzers.items():
-                    if analyzer == "unusedparams" and isinstance(payload, list):
+                    if result.engine_id == "erclint" and analyzer == "unusedparams" and isinstance(payload, list):
                         payload = [{key: value for key, value in item.items() if key != "variant"}
                                    for item in payload if "record" not in item
                                    and not (item["variant"] == "plain" and pkg in widest)]
@@ -720,17 +751,24 @@ def normalize_erclint_result(result: EngineResult) -> EngineResult:
                         merged[analyzer].extend(payload)
                     elif merged[analyzer] != payload:
                         raise ValueError(f"conflicting {analyzer!r} payloads for {pkg!r}")
-    except ValueError as error:
+    except (ValueError, TypeError, AttributeError, KeyError) as error:
         # no-report: malformed engine output returns a failing result with the parse error on stderr
-        return EngineResult(result.engine_id, max(result.exit_code, 2), "",
-                            result.stderr + f"tackbox: invalid erclint output: {error}\n")
+        return replace(result, exit_code=(max(result.exit_code, 2) if result.engine_id == "erclint"
+                                         else result.exit_code or 2), stdout="",
+                       stderr=result.stderr + f"tackbox: invalid {result.engine_id} output: {error}\n")
     stderr = result.stderr
     for pkg, failures in errors.items():
+        if result.engine_id == "erclint" and all(
+            error == COMPILE_SKIP or error.startswith("failed prerequisites:") for error in failures
+        ):
+            stderr += f"tackbox: erclint skipped {pkg}: package does not compile\n"
+            continue
         details = "; ".join(f"{', '.join(sorted(analyzers))}: {' '.join(error.split())}"
                             for error, analyzers in failures.items())
-        stderr += f"tackbox: erclint analyzers failed for {pkg!r}: {details}\n"
+        stderr += f"tackbox: {result.engine_id} analyzers failed for {pkg!r}: {details}\n"
     stdout = json.dumps(normalized, indent="\t") + "\n" if normalized else ""
-    return EngineResult(result.engine_id, max(result.exit_code, int(bool(errors))), stdout, stderr)
+    code = max(result.exit_code, int(bool(errors))) if result.engine_id == "erclint" else result.exit_code
+    return replace(result, exit_code=code, stdout=stdout, stderr=stderr)
 
 
 def parse_erclint_findings(raw: str, *, allow_errors: bool = False) -> list[dict]:
@@ -908,7 +946,7 @@ def javalint_located_findings(stdout: str, _repo_root: Path) -> list[Finding]:
     absolute posn - the file is taken verbatim, no relpath. Only the line comes
     from posn."""
     out: list[Finding] = []
-    for f in parse_erclint_findings(stdout):
+    for f in parse_erclint_findings(stdout, allow_errors=True):
         _, line = _split_posn(f.get("posn", ""))
         out.append(
             Finding(

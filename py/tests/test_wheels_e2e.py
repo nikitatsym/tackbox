@@ -208,7 +208,7 @@ def test_thin_wheel_preserves_engine_dependency_licenses(wheels, tmp_path):
     dependency_file = tmp_path / "maven-runtime.txt"
     subprocess.run([
         "mvn", "-q", "-B", "-f", str(REPO / "java" / "pom.xml"),
-        "dependency:list", "-DincludeScope=runtime", f"-DoutputFile={dependency_file}",
+        "org.apache.maven.plugins:maven-dependency-plugin:3.7.0:list", "-DincludeScope=runtime", f"-DoutputFile={dependency_file}",
     ], check=True, capture_output=True, text=True)
     maven_dependencies = set()
     for line in dependency_file.read_text().splitlines():
@@ -239,11 +239,13 @@ def test_thin_wheel_preserves_engine_dependency_licenses(wheels, tmp_path):
                     assert wheel.read(entry["notice_path"]) == (source.parent / component["notice_path"]).read_bytes()
         assert {(c["id"], c["version"]) for c in inventories["javalint"]} == maven_dependencies
         linked_modules = set()
+        build_versions = set()
         for command in ("erclint", "erclint-opengrep", "tackbox-jscpd"):
             path = next(n for n in names if n in {f"tackbox/bin/{command}", f"tackbox/bin/{command}.exe"})
             binary = tmp_path / Path(path).name
             binary.write_bytes(wheel.read(path))
             info = subprocess.run(["go", "version", "-m", str(binary)], check=True, capture_output=True, text=True).stdout
+            build_versions.add(info.splitlines()[0].rsplit(': ', 1)[1].removeprefix('go'))
             for line in info.splitlines():
                 fields = line.split()
                 if fields and fields[0] == "dep":
@@ -256,8 +258,9 @@ def test_thin_wheel_preserves_engine_dependency_licenses(wheels, tmp_path):
         vendored = [c for c in inventories["go"] if c.get("vendored_source") and c["id"] not in dict(linked_modules)]
         assert {c["id"] for c in vendored} == {"golang.org/x/tools/gopls"}
         assert all((REPO / c["local_path"]).is_file() for c in vendored)
-        version = next(line.split()[1] for line in (REPO / "go.mod").read_text().splitlines() if line.startswith("go "))
-        assert [(c["id"], c["version"]) for c in inventories["go"] if c.get("kind") == "runtime"] == [("go", version)]
+        assert {(c["id"], c["version"]) for c in inventories["go"] if c.get("kind") == "runtime"} == {
+            ('go', version) for version in build_versions
+        }
         with zipfile.ZipFile(io.BytesIO(wheel.read("tackbox/bin/javalint.jar"))) as jar:
             prefix = "tackbox/third_party/licenses/javalint/"
             for filename in (REPO / "engines" / "licenses" / "javalint").iterdir():

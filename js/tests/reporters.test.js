@@ -208,7 +208,7 @@ test('tier-2 $lib alias: aliased .svelte.ts reporter is recognized; bare/undecla
     "<script>\n" +
     "  function reportError(m, e) { void m; void e }\n" +
     "  function go() {\n" +
-    "    try { risky() } catch { const _ = 1; void _ }\n" +
+    "    try { risky() } catch { work() }\n" +
     "    try { risky() } catch (e) { reportError('local shadow not declared', e) }\n" +
     "  }\n" +
     "</script>\n<button onclick={go}>run</button>\n"

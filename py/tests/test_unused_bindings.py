@@ -89,6 +89,19 @@ def test_formatter_returns_only_emitted_findings(tmp_path, capsys):
     assert len(findings) == 2
     assert all(item['rule'] == 'python-unused-import' for item in findings)
 
+
+def test_alias_filter_uses_flake8_source_decoding(tmp_path):
+    target = tmp_path / 'sample.py'
+    target.write_bytes(b'import json as _json\nimport re\nx = "\xe9"\n')
+    engine = next(e for e in DEV_ENGINES if e.id == 'pyrules')
+    result = subprocess.run(engine.build_argv(tmp_path, ROOT, ['sample.py'], (), tmp_path),
+                            cwd=tmp_path, capture_output=True, text=True)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert [(f.rule, f.line) for f in located_findings('pyrules', result.stdout, tmp_path)] == [
+        ('python-unused-import', 2),
+    ]
+    assert 'Traceback' not in result.stderr
+
 def test_underscore_bindings_and_all_reexports_are_clean(tmp_path):
     source = """import os as _os
 from pathlib import Path

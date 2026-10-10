@@ -369,10 +369,12 @@ def prepare_thin(
     thin_entries.extend(stage_engine_licenses(thin_root, "go"))
     thin_entries.extend(stage_engine_licenses(thin_root, "javalint"))
 
+    toolchain = "go" + next(line.split()[1] for line in (REPO / "go.mod").read_text().splitlines()
+                           if line.startswith("go "))
     for cmd in ("erclint", "erclint-opengrep", "tackbox-jscpd"):
         out = thin_root / "bin" / f"{cmd}{exe_suffix}"
         print(f"go build {cmd} -> {out.relative_to(REPO)}", file=sys.stderr)
-        env = {**os.environ, "GOOS": goos, "GOARCH": goarch, "CGO_ENABLED": "0"}
+        env = {**os.environ, "GOOS": goos, "GOARCH": goarch, "CGO_ENABLED": "0", "GOTOOLCHAIN": toolchain}
         subprocess.run(
             [
                 "go", "build",

@@ -866,10 +866,12 @@ deletes through attributes or subscripts; nested class bodies are inspected.
 Exact strings count only in explicit name-access positions (`getattr` and
 related calls, `globals`/`vars` keys, and module-level literal `__all__` lists
 or tuples, including concatenation and augmented assignment). Forward-reference
-strings are parsed in annotations, subscript slices, explicit type aliases,
-`cast` type arguments, and `TypeVar` bounds/constraints. Recognized `Literal`
-values and `Annotated` metadata are excluded; import aliases are recognized.
-Comments, docstrings, and ordinary strings do not count.
+strings are parsed in annotations, explicit type aliases, `cast` type
+arguments, and `TypeVar` bounds/constraints. Subscript slices parse bare
+strings, type names, attributes, nested subscripts, and union-type operands,
+not arbitrary expressions such as concatenation, lambdas, or conditionals.
+Recognized `Literal` values and `Annotated` metadata are excluded; import
+aliases are recognized. Comments, docstrings, and ordinary strings do not count.
 
 A private name used by another production module loses its leading underscore;
 an unused declaration is deleted while preserving assignment or
@@ -891,13 +893,14 @@ does not compiler-check parameter removal.
 
 A naming convention applies only when a signature or binding form requires
 an unused binding; otherwise the binding is removed. JS/TS/Svelte permit `_`
-prefixes on required unused parameters, caught-error bindings, and array
-destructuring targets, not general variables or imports. A loop binding required
-by syntax can use bare `_`; object destructuring can omit unused keys when
-the rest binding is used.
-Side-effect imports are binding-free. Java permits `_` prefixes only for
-enhanced-for targets and try-with-resources bindings; ordinary unused locals
-are reported regardless of name, including `_`, `ignored*`, and `unused*`.
+prefixes only on required unused parameters. A loop binding required by syntax
+can use bare `_`; other declarations cannot use `_` as a discard name.
+Optional caught bindings are omitted and unused array-destructuring targets
+are replaced with holes. Object destructuring can omit unused keys when the
+rest binding is used. Side-effect imports are binding-free. Java permits `_`
+prefixes only for enhanced-for targets and try-with-resources bindings;
+ordinary unused locals are reported regardless of name, including `_`,
+`ignored*`, and `unused*`.
 Discarded Java return values use a call without an assignment. Python locals
 use only bare `_`, not an `_name` prefix; side-effect imports use
 underscore-prefixed aliases on plain imports, not from-imports. Optional caught
@@ -925,11 +928,12 @@ documented in the [Go reference](../go/README.md#unused-declarations-erc010).
 PMD retains framework and serialization exemptions and resolves only JDK
 classes, not javalint's bundled libraries. Without a consumer classpath,
 unused type and static wildcard imports are not diagnosed, but duplicate
-and redundant imports are checked. JV013 keeps a private overload when
-its declaring class has another method with the same name and the file
-has a call with that name and matching arity; dead overloads with the same
-arity can therefore remain undiagnosed. None of these checks proves
-reflective reachability.
+and redundant imports are checked. JV013 keeps a private overload only when
+its declaring class has another same-name method and the file contains a
+same-name, matching-arity call whose PMD overload resolution failed or whose
+argument type is unresolved. A dead overload can remain undiagnosed around
+such uncertain calls; fully resolved calls do not hide dead overloads. None
+of these checks proves reflective reachability.
 
 The [hook contract](../README.md#agent-hook) and [D020](#d020---hooks-enforce-session-debt-not-existing-tree-debt-2026-09-06)
 define diff-scoped presentation. Pure deletions and whole-file writes lint
@@ -938,3 +942,24 @@ declarations on untouched lines. Go package analysis can find an unused
 sibling declaration that the hook's target and line filters omit.
 `dev.py check` and CI are the full-source gate within the stated language
 and build-configuration limits.
+
+## D022 - returned Go error data establishes propagation (2026-10-10)
+
+Rules affected: ERC001 and ERC002.
+
+Decision: an error is propagated when every returning path retains that same
+error in the returned error value or in an error-typed field of returned data.
+This includes slices returned through `errors.Join` and cumulative joins
+returned after a loop. Appending an error without returning its carrier,
+discarding or overwriting the accumulator, and retaining only text or an
+`any`-typed field do not establish propagation. Capture and suppression
+contracts are unchanged.
+
+Rationale: returning diagnostic data or an accumulated error passes failures
+to the caller just as returning one error does; logging inside the loop is
+not required to avoid losing them.
+
+Named gaps: recognition uses typed local data flow and conservative summaries
+of available helper bodies. Opaque calls and unproved mutation may prevent
+recognition. Returning an error establishes retention, not that the caller
+reports it to a user or telemetry sink.

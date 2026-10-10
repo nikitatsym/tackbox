@@ -43,7 +43,7 @@ test('underscore bindings and positional arguments before the last used argument
 import './side-effect.js'
 export function process(first, last, _trailing) {
   for (const _ of [1, 2]) { work() }
-  const [_slot, value] = [1, 2]
+  const [, value] = [1, 2]
   const { omitted, ...rest } = { omitted: 1, retained: 2 }
   try { work() } catch { throw new Error('failure', { cause: null }) }
   return last + value + rest.retained
@@ -57,7 +57,7 @@ test('Svelte markup references are uses but unused script bindings remain findin
     const messages = await findings(`${script}
 const visible = 'shown'
 const hidden = 'unused'
-const [_reserved, selected] = ['intentional', 'shown']
+const [, selected] = ['intentional', 'shown']
 </script>
 <p>{visible}{selected}</p>`, 'fixture.svelte')
     assert.equal(messages.length, 1, JSON.stringify(messages))
@@ -114,5 +114,33 @@ const _x = 1`
 test('JSX parses in JavaScript without the unused ecmaFeatures option', async () => {
   for (const extension of ['js', 'jsx', 'tsx']) {
     assert.deepEqual(await findings('export const view = <div />', `fixture.${extension}`), [])
+  }
+})
+
+test('bare underscore declarations cannot escape unused checks', async () => {
+  for (const declaration of [
+    'function _() {}', 'class _ {}', 'const _ = compute()',
+    'type _ = number', 'interface _ {}', 'enum _ { First }',
+  ]) {
+    const messages = await findings(declaration, 'fixture.ts')
+    assert.ok(messages.some(m => m.ruleId === 'no-restricted-syntax' && m.line === 1), declaration)
+  }
+})
+
+test('bare underscore loop heads stay allowed but ordinary for-loop declarations do not', async () => {
+  assert.deepEqual(await findings(`for (const _ of items) { work() }
+for (const _ in object) { work() }`, 'fixture.js'), [])
+  const messages = await findings('for (let _ = 0; _ < 3; _++) { work() }', 'fixture.js')
+  assert.ok(messages.some(m => m.ruleId === 'no-restricted-syntax'))
+})
+
+test('optional catch and array bindings have no underscore escape', async () => {
+  for (const extension of ['js', 'ts']) {
+    const messages = await findings(`try { work() } catch (_err) { throw new Error('failed', { cause: null }) }
+const [_dead] = xs`, `fixture.${extension}`)
+    assertUnusedLines(messages.filter(m => m.ruleId === '@typescript-eslint/no-unused-vars'), [1, 2])
+    assert.deepEqual(await findings(`try { work() } catch { throw new Error('failed') }
+const [, value] = xs
+consume(value)`, `fixture.${extension}`), [])
   }
 })

@@ -562,7 +562,8 @@ def _codequality_findings(
     )
     if not results:
         return []
-    return [finding for finding in _located(results, repo_root) if not finding.suppressed]
+    return [finding for result in results
+            for finding in codequality.engine_findings(result, repo_root) if not finding.suppressed]
 
 
 def _drop_go_orphans(
@@ -605,7 +606,7 @@ def _build_selected_go_dirs(repo_root: Path, module: str, packages: list[str]) -
     excluded: set[Path] = set()
     for package in iter_json_objects(completed.stdout):
         error = package.get("Error", {}).get("Err", "")
-        if (error.startswith("build constraints exclude all Go files in ")
+        if (error.startswith(("build constraints exclude all Go files in ", "no Go files in "))
                 and not any(package.get(kind) for kind in
                             ("GoFiles", "CgoFiles", "TestGoFiles", "XTestGoFiles"))):
             excluded.add(Path(package["Dir"]).resolve())
@@ -794,7 +795,7 @@ def _filter_erclint_result(
     if not changed:
         return r
     stdout = "".join(json.dumps(o, indent="\t") + "\n" for o in kept_objs)
-    return EngineResult(r.engine_id, r.exit_code, stdout, r.stderr)
+    return replace(r, stdout=stdout)
 
 
 def _posn_excluded(item: dict, repo_root: Path, excluded: frozenset[str]) -> bool:

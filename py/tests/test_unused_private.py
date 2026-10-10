@@ -138,6 +138,7 @@ def test_class_definition_effects_are_credited(source):
     "globals()['_T']", "vars()['_T']", "dictionary['_T']",
     "x: '_T'", "def public(x: '_T') -> '_T':\n    pass",
     "X = Optional['_T']", "X: TypeAlias = '_T'",
+    "X = list['_T' | None]", "X = tuple[int, '_T']", "dictionary['a', '_T']",
     "cast('_T', value)", "t.cast('_T', value)",
     "TypeVar('X', '_T', int)", "t.TypeVar('X', bound='_T')",
     "X = Annotated['_T', 'metadata']",
@@ -172,6 +173,9 @@ def test_name_access_and_forward_references(use):
     "Literal[f'_T{suffix}']",
     "x: 'not a valid annotation!'", "getattr(other, prefix + '_T')",
     "globals()[f'_T{suffix}']", "data[str('_T')]", "data[make_type('_T')]",
+    "data[key + '_T']", "data['_T' + key]", "data[lambda: '_T']",
+    "data[value if condition else '_T']", "data[['_T']]", "data[{'key': '_T'}]",
+    "data[(lambda: '_T').__name__]", "data[(key + '_T').attribute]",
 ])
 def test_value_strings_and_dynamic_names_do_not_credit(use):
     assert len(_findings("class _T:\n    pass\n" + use + "\n")) == 1
