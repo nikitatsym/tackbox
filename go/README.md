@@ -33,25 +33,14 @@ Details per rule:
 - ERC001 `errcheck` - in any `if err != nil` branch (guarding an
   error-assignable identifier - a bare `int`/`*Conn` guard is not an
   err-branch), propagate the error, capture it, carry it into a
-  printing terminal, or carry `// no-report: <reason>`. Propagation is
-  the err OBJECT reaching a returned error-assignable value: a bare
-  `return err`, a `%w` wrap, `errors.Join`, or a wrapper composite /
-  constructor carrying it (`&E{Cause: err}`, `newE(err)` - the wrapper's
-  Unwrap contract is trusted, not verified). The chain breaks - a
-  rethrow without cause - only when every occurrence of err in the
-  returned value is stringified (`%v`, `.Error()`, `string(...)`). A
-  two-step wrap (`w := fmt.Errorf("...%w", err); return w`) is credited.
-  Returning the original error inside a diagnostic struct also counts as
-  passing it to the caller. The linter checks that the same error reaches an
-  `error`-typed field in the returned value on every returning path. Passing
-  it to an already declared capture handler also counts. Creating a struct
-  or naming a field `Cause` is not enough: discarded values, overwritten
-  errors, and fields containing only text or `any` do not count. If the linter
-  cannot prove that a helper preserves the error, it does not assume so.
-  Errors accumulated in a slice and later returned through `errors.Join`, or
-  cumulatively combined with `errors.Join` and returned, count as propagation.
-  Discarding or resetting the accumulator does not count.
-  This proves that the error is passed on, not that it is shown to the user.
+  printing terminal, or carry `// no-report: <reason>`. Return propagation
+  follows [D022](../rules/DECISIONS.md#d022---returned-go-error-data-establishes-propagation-2026-10-10):
+  direct errors, `%w` operands, joins, and returned typed diagnostic carriers
+  count. Keyed and positional composite literals, pointers, assignment before
+  return, and visible carriers boxed as `any` follow the same field rules.
+  An `Err any` field does not qualify. Constructor preservation and successful
+  `errors.As` bindings are trusted; field names and textual error mentions are
+  not. A `%w` for a different argument does not rescue an error printed by `%v`.
 - ERC002 `parsenil` - parser results that fall through to nil must
   capture, propagate the error (same object-flow rule as ERC001), or
   carry `// parse-skip: <reason>`.
@@ -220,8 +209,8 @@ file (`file#function: reason`); a declared call counts only when the
 caught error flows into its arguments. Declarations are validated every
 run - a dead file or symbol is a hard error.
 
-Propagation means `return ..., err`, `return err`, or `panic(err)`
-referencing the err identifier.
+Return propagation is defined by [D022](../rules/DECISIONS.md#d022---returned-go-error-data-establishes-propagation-2026-10-10).
+`panic(err)` also propagates the referenced error.
 
 User-input expressions banned in capture arguments: `r.URL.Path`,
 `r.Header.Get(...)`, `req.Body` (and equivalent `*http.Request`

@@ -947,19 +947,31 @@ and build-configuration limits.
 
 Rules affected: ERC001 and ERC002.
 
-Decision: an error is propagated when every returning path retains that same
-error in the returned error value or in an error-typed field of returned data.
-This includes slices returned through `errors.Join` and cumulative joins
-returned after a loop. Appending an error without returning its carrier,
-discarding or overwriting the accumulator, and retaining only text or an
-`any`-typed field do not establish propagation. Capture and suppression
-contracts are unchanged.
+Decision: ERC001 and ERC002 credit an error returned directly or retained in
+returned typed data, including composite values and pointers, nested and
+embedded fields, slice elements, and generic fields after substitution. The
+retaining slot must be assignable to `error`; concrete error implementations
+and interfaces embedding `error` qualify. A visible typed carrier boxed to
+`any` qualifies, but an `any`-typed error slot or opaque interface does not.
+
+`fmt.Errorf` credits only error-typed operands selected by `%w`, including
+explicit argument indexes. `errors.Join` and accumulated joins retain their
+error operands. A successful `errors.As` target also counts until overwritten;
+this trusts its error-chain contract rather than proving object identity.
+Constructor calls, including external constructors and calls taking a typed
+carrier as an argument or receiver, trust the constructor's preservation
+contract only after that argument qualifies under the same carrier rules.
+Available scalar-error helper bodies may supply conservative summaries.
+Assignments before return follow the same rules. Discarded carriers,
+overwritten fields or accumulators, and string-only error representations
+do not qualify. Capture and suppression contracts are unchanged.
 
 Rationale: returning diagnostic data or an accumulated error passes failures
-to the caller just as returning one error does; logging inside the loop is
-not required to avoid losing them.
+to the caller; reporting inside a loop or changing a UI message's result type
+is not required merely to establish propagation.
 
-Named gaps: recognition uses typed local data flow and conservative summaries
-of available helper bodies. Opaque calls and unproved mutation may prevent
-recognition. Returning an error establishes retention, not that the caller
-reports it to a user or telemetry sink.
+Named gaps: constructor and `errors.As` preservation are explicit trust,
+not whole-program proof. Dynamic format strings and opaque interface values
+are not inspected. Unknown mutation through calls, closures, asynchronous
+work, or aliases can prevent recognition. Propagation does not prove that
+the caller reports the error to a user or telemetry sink.

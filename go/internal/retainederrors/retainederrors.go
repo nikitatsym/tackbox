@@ -85,6 +85,13 @@ func run(pass *analysis.Pass) (any, error) {
 				initial := newState()
 				initial.values[errorValue] = paths{"": true}
 				initial.scalars[errorValue] = true
+				if load, ok := errorValue.(*ssa.UnOp); ok && load.Op == token.MUL {
+					root, prefix := address(load.X)
+					switch root.(type) {
+					case *ssa.Alloc, *ssa.FreeVar:
+						initial.store(root, prefix, paths{"": true})
+					}
+				}
 				_, safe := scanner.evaluate(start, initial)
 				result[guards[condition.Pos()]] = safe
 			}
@@ -292,6 +299,20 @@ func (scanner *scan) evaluate(start *ssa.BasicBlock, initial state) ([]paths, bo
 		}
 		for _, successor := range block.Succs {
 			next := current.clone()
+			if branch, ok := block.Instrs[len(block.Instrs)-1].(*ssa.If); ok && successor == block.Succs[0] {
+				if call, ok := branch.Cond.(*ssa.Call); ok {
+					common := call.Common()
+					callee := common.StaticCallee()
+					if callee != nil && callee.Pkg != nil && callee.Pkg.Pkg.Path() == "errors" && callee.Name() == "As" && len(common.Args) == 2 && len(current.get(common.Args[0])) != 0 {
+						target := common.Args[1]
+						if boxed, ok := target.(*ssa.MakeInterface); ok {
+							target = boxed.X
+						}
+						root, prefix := address(target)
+						next.store(root, prefix, paths{"": true})
+					}
+				}
+			}
 			for _, instruction := range successor.Instrs {
 				phi, ok := instruction.(*ssa.Phi)
 				if !ok {
@@ -335,6 +356,9 @@ func (scanner *scan) evaluate(start *ssa.BasicBlock, initial state) ([]paths, bo
 			}
 			for i, expression := range ret.Results {
 				flow := retainedPaths(current.get(expression), expression.Type())
+				if current.get(expression)[".boxed"] {
+					flow[".boxed"] = true
+				}
 				retained = retained || len(flow) != 0
 				if !returned {
 					results[i] = copyPaths(flow)
@@ -366,6 +390,13 @@ func (scanner *scan) step(instruction ssa.Instruction, current state) {
 	switch instruction := instruction.(type) {
 	case *ssa.Store:
 		root, prefix := address(instruction.Addr)
+		if load, ok := root.(*ssa.UnOp); ok && load.Op == token.MUL {
+			for tracked := range current.memory {
+				if types.Identical(tracked.Type(), root.Type()) {
+					delete(current.memory, tracked)
+				}
+			}
+		}
 		current.store(root, prefix, current.get(instruction.Val))
 	case *ssa.UnOp:
 		if instruction.Op == token.MUL {
@@ -384,7 +415,17 @@ func (scanner *scan) step(instruction ssa.Instruction, current state) {
 			current.put(instruction, current.get(instruction.X))
 		}
 	case *ssa.MakeInterface:
-		current.put(instruction, current.get(instruction.X))
+		flow := current.get(instruction.X)
+		if isError(instruction.Type()) {
+			flow = retainedPaths(flow, instruction.X.Type())
+			if len(flow) != 0 {
+				flow = paths{"": true}
+			}
+		}
+		if !isError(instruction.Type()) && len(retainedPaths(flow, instruction.X.Type())) != 0 {
+			flow = paths{".boxed": true}
+		}
+		current.put(instruction, flow)
 	case *ssa.ChangeInterface:
 		current.put(instruction, current.get(instruction.X))
 	case *ssa.ChangeType:
@@ -393,11 +434,18 @@ func (scanner *scan) step(instruction ssa.Instruction, current state) {
 		current.put(instruction, subset(current.get(instruction.Tuple), ".r"+strconv.Itoa(instruction.Index)))
 	case *ssa.Call:
 		scanner.call(instruction, current)
+	case *ssa.Defer:
+		current.invalidateCall(instruction.Common())
+	case *ssa.Go:
+		current.invalidateCall(instruction.Common())
 	}
 }
 
 func (scanner *scan) call(call *ssa.Call, current state) {
 	common := call.Common()
+	if closure, ok := common.Value.(*ssa.MakeClosure); ok {
+		current.invalidate(closure.Bindings)
+	}
 	if builtin, ok := common.Value.(*ssa.Builtin); ok && builtin.Name() == "append" {
 		flow := copyPaths(current.get(common.Args[0]))
 		for path := range current.get(common.Args[1]) {
@@ -412,6 +460,9 @@ func (scanner *scan) call(call *ssa.Call, current state) {
 		return
 	}
 	function, _ := callee.Object().(*types.Func)
+	if function != nil && function.Pkg() != nil && function.Pkg().Path() == "errors" && (function.Name() == "As" || function.Name() == "Is") {
+		return
+	}
 	if astutil.IsCaptureFunction(function) {
 		for _, argument := range common.Args {
 			if len(retainedPaths(current.get(argument), argument.Type())) != 0 {
@@ -421,25 +472,60 @@ func (scanner *scan) call(call *ssa.Call, current state) {
 		return
 	}
 	if function != nil && function.Pkg() != nil && function.Pkg().Path() == "errors" && function.Name() == "Join" {
-		if len(common.Args) == 1 && current.get(common.Args[0])[".e"] {
+		retained := len(common.Args) == 1 && current.get(common.Args[0])[".e"]
+		if len(common.Args) == 1 {
+			for index := 0; ; index++ {
+				argument, ok := variadicArgument(common.Args[0], index)
+				if !ok {
+					break
+				}
+				retained = retained || len(retainedPaths(current.get(argument), argument.Type())) != 0
+			}
+		}
+		if retained {
 			current.put(call, paths{"": true})
 		}
 		return
 	}
 	if function != nil && function.Pkg() != nil && function.Pkg().Path() == "fmt" && function.Name() == "Errorf" && len(common.Args) == 2 {
 		format, ok := common.Args[0].(*ssa.Const)
-		if ok && format.Value != nil && format.Value.Kind() == constant.String && singleWrapFormat(constant.StringVal(format.Value)) {
-			if retained := current.get(common.Args[1]); retained[".e"] && soleArgument(common.Args[1]) {
-				current.put(call, paths{"": true})
+		if ok && format.Value != nil && format.Value.Kind() == constant.String {
+			wrapped := astutil.WrappingArguments(constant.StringVal(format.Value))
+			for _, index := range wrapped {
+				value, ok := variadicArgument(common.Args[1], index)
+				if boxed, isBoxed := value.(*ssa.MakeInterface); isBoxed {
+					value = boxed.X
+				} else if changed, isChanged := value.(*ssa.ChangeInterface); isChanged {
+					value = changed.X
+				}
+				if ok && isError(value.Type()) && len(retainedPaths(current.get(value), value.Type())) != 0 {
+					current.put(call, paths{"": true})
+					break
+				}
 			}
 		}
 		return
 	}
+	flow := paths{}
+	for _, argument := range common.Args {
+		if len(retainedPaths(current.get(argument), argument.Type())) == 0 && !current.get(argument)[".boxed"] {
+			continue
+		}
+		for index := range callee.Signature.Results().Len() {
+			if isError(callee.Signature.Results().At(index).Type()) {
+				prefix := ""
+				if callee.Signature.Results().Len() > 1 {
+					prefix = ".r" + strconv.Itoa(index)
+				}
+				flow[prefix] = true
+			}
+		}
+	}
 	if len(callee.Blocks) == 0 {
+		current.put(call, flow)
 		current.invalidate(common.Args)
 		return
 	}
-	flow := paths{}
 	for i, argument := range common.Args {
 		if i >= len(callee.Params) || !isError(callee.Params[i].Type()) || len(current.get(argument)) == 0 {
 			continue
@@ -458,50 +544,56 @@ func (scanner *scan) call(call *ssa.Call, current state) {
 	current.invalidate(common.Args)
 }
 
-func singleWrapFormat(format string) bool {
-	wrapping := 0
-	for index := 0; index < len(format); index++ {
-		if format[index] != '%' {
-			continue
-		}
-		index++
-		if index >= len(format) {
-			return false
-		}
-		if format[index] == '%' {
-			continue
-		}
-		if format[index] != 'w' {
-			return false
-		}
-		wrapping++
-	}
-	return wrapping == 1
-}
-
-func soleArgument(value ssa.Value) bool {
+func variadicArgument(value ssa.Value, index int) (ssa.Value, bool) {
 	slice, ok := value.(*ssa.Slice)
 	if !ok {
-		return false
+		return nil, false
 	}
-	pointer, ok := slice.X.Type().Underlying().(*types.Pointer)
-	if !ok {
-		return false
+	allocation, ok := slice.X.(*ssa.Alloc)
+	if !ok || allocation.Referrers() == nil {
+		return nil, false
 	}
-	array, ok := pointer.Elem().Underlying().(*types.Array)
-	return ok && array.Len() == 1
+	for _, reference := range *allocation.Referrers() {
+		address, ok := reference.(*ssa.IndexAddr)
+		if !ok {
+			continue
+		}
+		position, ok := address.Index.(*ssa.Const)
+		if !ok || position.Value == nil {
+			continue
+		}
+		n, exact := constant.Int64Val(position.Value)
+		if !exact || n != int64(index) || address.Referrers() == nil {
+			continue
+		}
+		var argument ssa.Value
+		for _, use := range *address.Referrers() {
+			if store, ok := use.(*ssa.Store); ok {
+				if argument != nil {
+					return nil, false
+				}
+				argument = store.Val
+			}
+		}
+		return argument, argument != nil
+	}
+	return nil, false
 }
 
 func (current state) invalidate(arguments []ssa.Value) {
 	for _, argument := range arguments {
 		switch argument.Type().Underlying().(type) {
 		case *types.Pointer, *types.Slice, *types.Map:
-			if isError(argument.Type()) {
-				continue
-			}
 			root, prefix := address(argument)
 			current.store(root, prefix, nil)
 		}
+	}
+}
+
+func (current state) invalidateCall(call *ssa.CallCommon) {
+	current.invalidate(call.Args)
+	if closure, ok := call.Value.(*ssa.MakeClosure); ok {
+		current.invalidate(closure.Bindings)
 	}
 }
 

@@ -490,14 +490,11 @@ func IsErrorCarryingExpr(info *types.Info, expr ast.Expr) bool {
 	return typeIsErrorAssignable(t)
 }
 
-// BlockPropagatesChain reports whether the err-branch body carries the err
-// OBJECT into a returned error-assignable expression without stringifying every
-// occurrence. Object flow through a composite literal, a constructor call, a
-// `%w` wrap, errors.Join, or a bare `return err` is propagation - a
-// constructor's Unwrap contract is trusted (trust-class die/declared), not
-// verified. The chain breaks only when every occurrence of err in the carrier
-// passes through a string (`.Error()`, a non-%w verb, a string conversion). A
-// two-step wrap (`v := ...%w...; return v`) is resolved against body.
+// BlockPropagatesChain checks non-composite returned error carriers.
+// Constructor calls, %w wraps, errors.Join and bare returns are trusted
+// propagation when the guarded object reaches an error result. Composite
+// fields are checked separately by retainederrors. Two-step local wraps are
+// resolved against the branch body.
 func BlockPropagatesChain(info *types.Info, body *ast.BlockStmt, errName string) bool {
 	if errName == "" {
 		return false
@@ -540,30 +537,85 @@ func returnResultPropagates(info *types.Info, body *ast.BlockStmt, res ast.Expr,
 			carrier = rhs
 		}
 	}
+	// Composite fields require the typed retention proof, not name containment.
+	value := ast.Unparen(carrier)
+	for {
+		switch expression := value.(type) {
+		case *ast.UnaryExpr:
+			if expression.Op != token.AND {
+				goto unwrapped
+			}
+			value = ast.Unparen(expression.X)
+		case *ast.CallExpr:
+			if len(expression.Args) != 1 || !info.Types[expression.Fun].IsType() {
+				goto unwrapped
+			}
+			value = ast.Unparen(expression.Args[0])
+		default:
+			goto unwrapped
+		}
+	}
+unwrapped:
+	if _, composite := value.(*ast.CompositeLit); composite {
+		return false
+	}
 	if !IsErrorCarryingExpr(info, carrier) {
 		return false
 	}
-	return errObjectFlows(carrier, errName)
+	var object types.Object
+	if scope := info.Scopes[body]; scope != nil {
+		position := body.Pos()
+		_, outer := scope.LookupParent(errName, body.Pos())
+		if local := scope.Lookup(errName); local != nil && local.Pos() < res.Pos() && local.Pos() > body.Pos() {
+			if outer == nil {
+				position = res.Pos()
+			}
+		}
+		_, object = scope.LookupParent(errName, position)
+	}
+	return object != nil && errObjectFlows(info, carrier, object)
 }
 
-// errObjectFlows reports whether errName reaches root as a live object: found
-// as a bare identifier outside any stringifying construct. Subtrees that
-// stringify their content (`.Error()`, a fmt string builder, a %w-less
-// fmt.Errorf, a `string(...)` conversion) are pruned - an err inside them is a
-// stringified occurrence, not object flow.
-func errObjectFlows(root ast.Node, errName string) bool {
+// errObjectFlows ignores syntax-only keys and selector names; only uses of
+// the guarded binding outside stringifying expressions carry its identity.
+func errObjectFlows(info *types.Info, root ast.Node, object types.Object) bool {
 	found := false
 	ast.Inspect(root, func(n ast.Node) bool {
 		if found {
 			return false
 		}
 		switch x := n.(type) {
+		case *ast.KeyValueExpr:
+			found = errObjectFlows(info, x.Value, object)
+			return false
+		case *ast.SelectorExpr:
+			found = errObjectFlows(info, x.X, object)
+			return false
+		case *ast.CompositeLit:
+			return false
 		case *ast.CallExpr:
+			if QualifiedName(x.Fun) == "fmt.Errorf" {
+				if len(x.Args) == 0 {
+					return false
+				}
+				literal, ok := x.Args[0].(*ast.BasicLit)
+				if !ok || literal.Kind != token.STRING {
+					return false
+				}
+				format, _ := strconv.Unquote(literal.Value)
+				for _, index := range WrappingArguments(format) {
+					if index+1 < len(x.Args) && IsErrorAssignableExpr(info, x.Args[index+1]) && errObjectFlows(info, x.Args[index+1], object) {
+						found = true
+						break
+					}
+				}
+				return false
+			}
 			if stringifies(x) {
 				return false
 			}
 		case *ast.Ident:
-			if x.Name == errName {
+			if info.Uses[x] == object {
 				found = true
 				return false
 			}
