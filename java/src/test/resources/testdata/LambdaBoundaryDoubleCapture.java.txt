@@ -14,7 +14,7 @@ class LambdaBoundaryDoubleCapture {
         try {
             risky();
         } catch (Exception e) {
-            Runnable r = () -> {
+            Runnable r = () -> { // want "JV011"
                 log.error("failed", e);
                 throw new RuntimeException(e);
             };

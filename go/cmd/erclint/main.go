@@ -13,6 +13,7 @@ import (
 	"golang.org/x/tools/go/analysis/multichecker"
 
 	"github.com/nikitatsym/tackbox/go/analyzers"
+	"github.com/nikitatsym/tackbox/go/analyzers/unusedparams"
 	"github.com/nikitatsym/tackbox/go/internal/astutil"
 	"github.com/nikitatsym/tackbox/go/internal/markers"
 	"github.com/nikitatsym/tackbox/go/internal/reporters"
@@ -80,8 +81,10 @@ func main() {
 		switch arg {
 		case "-json", "--json", "-json=true", "--json=true":
 			markers.Suppressed = emitSuppressed
+			unusedparams.EmitJSON = emitUnusedParams
 		case "-json=false", "--json=false":
 			markers.Suppressed = nil
+			unusedparams.EmitJSON = nil
 		}
 	}
 	os.Args = append([]string{os.Args[0]}, rest...)
@@ -104,6 +107,25 @@ func emitSuppressed(pass *analysis.Pass, diagnostic analysis.Diagnostic, marker 
 		pass.Pkg.Path(): map[string]interface{}{pass.Analyzer.Name: []interface{}{finding}},
 	}); err != nil {
 		report.Error(context.Background(), "write suppressed finding", err, nil, "erclint.output")
+		os.Exit(2)
+	}
+}
+
+func emitUnusedParams(pass *analysis.Pass, variant string, diagnostic *analysis.Diagnostic) {
+	item := map[string]interface{}{"variant": variant}
+	if diagnostic == nil {
+		item["record"] = "erc011-package-variant-v1"
+	} else {
+		item["posn"] = pass.Fset.Position(diagnostic.Pos).String()
+		item["end"] = pass.Fset.Position(diagnostic.End).String()
+		item["message"] = diagnostic.Message
+	}
+	outputMu.Lock()
+	defer outputMu.Unlock()
+	if err := json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
+		pass.Pkg.Path(): map[string]interface{}{"unusedparams": []interface{}{item}},
+	}); err != nil {
+		report.Error(context.Background(), "write parameter finding", err, nil, "erclint.output")
 		os.Exit(2)
 	}
 }

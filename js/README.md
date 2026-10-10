@@ -30,16 +30,20 @@ npm:
 npm install --save-dev tackbox eslint
 ```
 
-`@typescript-eslint/parser` and `svelte-eslint-parser` ship as direct
-dependencies, so `.ts`, `.tsx`, `.svelte`, and `<script lang="ts">`
-blocks work out of the box. The plugin exposes a `recommended` config:
+`@typescript-eslint/parser`, `@typescript-eslint/eslint-plugin`, and
+`svelte-eslint-parser` ship as direct dependencies. The bundled preset
+handles `.ts`, `.tsx`, `.svelte`, and `<script lang="ts">` blocks. Direct
+flat-config integration registers both rule plugins:
 
 ```js
 import tackbox from 'tackbox'
+import tsPlugin from '@typescript-eslint/eslint-plugin'
+import tsParser from '@typescript-eslint/parser'
 
 export default [
   {
-    plugins: { tackbox },
+    plugins: { tackbox, '@typescript-eslint': tsPlugin },
+    languageOptions: { parser: tsParser },
     rules: tackbox.configs.recommended.rules,
   },
 ]
@@ -69,6 +73,8 @@ npx tackbox-eslint src/**/*.{ts,svelte}
 | `tackbox/ts-exit-in-catch`         | no `process.exit` inside catch       |
 | `tackbox/no-skipped-test`          | skip/todo needs `test-skip:` marker  |
 | `tackbox/no-focused-test`          | banned `.only`/`f`-tests; no escape  |
+| `@typescript-eslint/no-unused-vars` | unused imports, bindings, arguments |
+| `no-unused-private-class-members` | remove dead private class members    |
 
 Full constraints per rule:
 
@@ -126,6 +132,17 @@ Full constraints per rule:
   `describe` (`it.only`, `describe.only`, `test.only.each(...)(...)`), or a
   bare `fit` / `fdescribe` / `ftest`, disables the rest of the suite. No
   escape hatch; the focused test must be removed.
+- `@typescript-eslint/no-unused-vars` - unused imports and local bindings,
+  trailing unused positional arguments (`args: after-used`), and caught
+  errors are findings. References in Svelte markup count as uses.
+  TypeScript-only bindings follow the TypeScript ESLint analyzer, not the
+  JS core rule.
+- `no-unused-private-class-members` - unused `#private` fields and methods
+  must be removed.
+
+Required-binding naming conventions, side-effect imports, and the
+no-suppression policy are defined in
+[D021](../rules/DECISIONS.md#d021---unused-bindings-are-a-mandatory-lane-2026-10-10).
 
 ### Svelte template markers
 

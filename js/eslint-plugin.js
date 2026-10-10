@@ -39,10 +39,20 @@ module.exports = {
   rules,
   configs: {
     recommended: {
-      plugins: ['tackbox'],
-      rules: Object.fromEntries(
-        Object.keys(rules).map(name => [`tackbox/${name}`, 'error']),
-      ),
+      plugins: ['tackbox', '@typescript-eslint'],
+      rules: {
+        ...Object.fromEntries(Object.keys(rules).map(name => [`tackbox/${name}`, 'error'])),
+        '@typescript-eslint/no-unused-vars': ['error', {
+          args: 'after-used',
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_$',
+          ignoreRestSiblings: true,
+          caughtErrors: 'all',
+          caughtErrorsIgnorePattern: '^_',
+          destructuredArrayIgnorePattern: '^_',
+        }],
+        'no-unused-private-class-members': 'error',
+      },
     },
   },
 }

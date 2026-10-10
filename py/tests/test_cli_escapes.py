@@ -18,7 +18,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from conftest import commit_all, git, init_repo, tackbox_env
+from conftest import git, init_repo, tackbox_env
 
 from tackbox import escapes
 from tackbox.cli import _MARKER_RE

@@ -18,9 +18,10 @@ import tokenize
 
 from tackbox import __version__ as _version
 
-from .codes import CODE_TO_ID, MESSAGES
+from .codes import CODE_TO_ID, MESSAGES, PYFLAKES_CODES
 from .markers import MarkerIndex, TEST_SKIP
 from . import origin
+from .unused_private import findings as unused_private_findings
 from . import reporters as _reporters
 
 # Sound supervised-shutdown carve-out: an except catching only these, whose
@@ -618,8 +619,7 @@ class _Visitor(ast.NodeVisitor):
 
 
 class Plugin:
-    """flake8 AST plugin. Invoked only in closed form:
-    `flake8 --isolated --disable-noqa --select=TBX [--reporters=...] <files>`."""
+    """TBX AST plugin used in isolated, noqa-disabled flake8 runs."""
 
     name = "tackbox-pyrules"
     version = _version
@@ -643,6 +643,7 @@ class Plugin:
             _is_test_file(self.filename),
         )
         visitor.visit(self.tree)
+        visitor.findings.extend(unused_private_findings(self.tree))
         return visitor.findings
 
     def run(self):
@@ -712,14 +713,9 @@ def _machine(files: list[str], options) -> int:
 
 
 if __name__ == "__main__":
-    # Run form: python -m tackbox.pyrules.checker --files-from <list> <flake8 flags>
-    # The file list rides --files-from (thousands of paths on argv overflow
-    # ARG_MAX / E2BIG on large repos); the checker reads it and hands the paths to
-    # flake8 in process, every other arg passing through unchanged. flake8 is
-    # imported here, in the __main__ guard, so the main tackbox process - which
-    # imports this module only for Plugin / CODE_TO_ID - never pulls it in.
+    # List files avoid ARG_MAX; keep flake8 out of the main CLI process.
     import argparse
-    from flake8.main import cli as _flake8_cli
+    from .flake8_runner import run as _run_flake8
 
     _parser = argparse.ArgumentParser(add_help=False)
     _parser.add_argument("--files-from", required=True)
@@ -729,5 +725,11 @@ if __name__ == "__main__":
     with open(_ns.files_from, encoding="utf-8") as _fh:
         _files = [line for line in _fh.read().splitlines() if line]
     if _ns.machine:
-        sys.exit(_machine(_files, _ns))
-    sys.exit(_flake8_cli.main([*_passthrough, f"--reporters={_ns.reporters}", *_files]))
+        _failed = _machine(_files, _ns)
+        _failed |= bool(_run_flake8(
+            _files, ["--isolated", "--disable-noqa", "--select=" + ",".join(PYFLAKES_CODES)], True,
+        ))
+        sys.exit(_failed)
+    sys.exit(bool(_run_flake8(
+        _files, [*_passthrough, f"--reporters={_ns.reporters}"], False,
+    )))

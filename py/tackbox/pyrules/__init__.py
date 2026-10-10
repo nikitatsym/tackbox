@@ -1,9 +1,8 @@
-"""tackbox python exception rules as a flake8 plugin (codes TBX001..TBX008).
+"""Tackbox's flake8 plugin and stable Python diagnostic identities.
 
-The engine is invoked only in closed form by the tackbox CLI:
-`flake8 --isolated --disable-noqa --select=TBX [--reporters=...] <files>`.
-CODE_TO_ID is re-exported so the CLI's machine parser can map a TBX code back
-to its canonical rule id without importing the checker internals.
+The CLI selects TBX,F401,F841 in isolated, noqa-disabled flake8 runs.
+The runner adapts pyflakes' side-effect import convention; the TBX plugin
+retains its per-site failure-lane suppression metadata in machine output.
 """
 
 from __future__ import annotations

@@ -72,7 +72,7 @@ test('--files-from strips CRLF line endings', () => lintViaList('bad.js\r\n'))
 test('machine output preserves suppressed findings without failing human lint', () => {
   inTmpDir(dir => {
     fs.writeFileSync(path.join(dir, 'bad.js'),
-      '// no-report: caller tolerates this failure\ntry { work() } catch (error) {}\n')
+      '// no-report: caller tolerates this failure\ntry { work() } catch {}\n')
     const human = runWrapper(dir, [])
     assert.equal(human.status, 0, human.stderr)
     assert.equal(human.stdout, '')

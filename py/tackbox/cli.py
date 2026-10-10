@@ -58,6 +58,7 @@ from .source_set import (
     PathspecMagicError,
     Snapshot,
     group_go_packages_by_module,
+    module_relative,
     narrow_files,
     parse_git_diff_names,
     parse_ls_files_untracked,
@@ -567,10 +568,10 @@ def _codequality_findings(
 def _drop_go_orphans(
     plan: list[tuple[EngineSpec, list[str]]], repo_root: Path
 ) -> tuple[list[tuple[EngineSpec, list[str]]], list[str]]:
-    """Drop package-mode args with no enclosing go.mod - loudly, upstream.
+    """Drop orphan directories and erclint targets outside the current Go build.
 
-    erclint cannot lint a package outside any module; filtering here keeps
-    the warning in one place and the engine/digest layers orphan-free.
+    Filtering before cache attribution keeps excluded directories out of both
+    go list digest queries and analyzer invocations.
     """
     filtered: list[tuple[EngineSpec, list[str]]] = []
     orphans: set[str] = set()
@@ -580,11 +581,35 @@ def _drop_go_orphans(
                 args, lambda d: (repo_root / d / "go.mod").is_file()
             )
             orphans.update(orphan)
+            if engine.id == "erclint":
+                groups = {
+                    module: _build_selected_go_dirs(repo_root, module, packages)
+                    for module, packages in groups.items()
+                }
             args = sorted(p for pkgs in groups.values() for p in pkgs)
             if not args:
                 continue
         filtered.append((engine, args))
     return filtered, sorted(orphans)
+
+
+def _build_selected_go_dirs(repo_root: Path, module: str, packages: list[str]) -> list[str]:
+    args = [f"./{module_relative(module, package)}" for package in packages]
+    completed = proc.run(
+        ["go", "list", "-e", "-json", *args],
+        cwd=repo_root / module,
+        capture_output=True,
+    )
+    if completed.returncode != 0:
+        raise cache.GoListError(f"go list failed in {module}: {completed.stderr.strip()}")
+    excluded: set[Path] = set()
+    for package in iter_json_objects(completed.stdout):
+        error = package.get("Error", {}).get("Err", "")
+        if (error.startswith("build constraints exclude all Go files in ")
+                and not any(package.get(kind) for kind in
+                            ("GoFiles", "CgoFiles", "TestGoFiles", "XTestGoFiles"))):
+            excluded.add(Path(package["Dir"]).resolve())
+    return [package for package in packages if (repo_root / package).resolve() not in excluded]
 
 
 # -- Cache wiring ---------------------------------------------------------

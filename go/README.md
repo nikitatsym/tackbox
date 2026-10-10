@@ -1,7 +1,7 @@
 # erclint (Go)
 
-Error reporting coverage analyzer for Go. Implements the rules
-described in the parent README and the source spec.
+Error reporting coverage, test integrity, and unused binding analyzers
+for Go. Implements the rules described in the parent README and source spec.
 
 ## Usage
 
@@ -25,6 +25,8 @@ uvx tackbox@latest lint .
 | ERC007 | recoverswallow| recover must report or re-panic      |
 | ERC008 | skiptest      | skipped test must state a reason     |
 | ERC009 | notifygate    | notify must be narrowed (condition)  |
+| ERC010 | unused        | remove unused unexported declarations |
+| ERC011 | unusedparams  | remove unused private-function parameters |
 
 Details per rule:
 
@@ -85,8 +87,87 @@ Details per rule:
   stays covered by ERC001; a `// no-report: <reason>` marker above the
   branch suppresses.
 
-`_test.go` files are skipped by every analyzer except ERC008
-`skiptest`, whose subject is the tests themselves.
+`_test.go` files are skipped by ERC001-007 and ERC009. ERC008 checks
+test skips, and ERC010-011 check unused declarations and parameters in tests.
+
+### Unused declarations (ERC010)
+
+ERC010 uses staticcheck's U1000 package reachability analysis to find unused
+unexported functions, methods, types, fields, constants, and package-level
+variables. Diagnostics use `ERC010: <kind> <name> is unused (U1000)` in both
+text and JSON output; the JSON analyzer name is `unused`.
+
+Exported declarations are treated as API and are not reported. Function
+parameters are outside this rule's scope. The Go compiler already rejects
+unused local variables and imports. Naming conventions and the no-suppression
+policy are defined in [D021](../rules/DECISIONS.md#d021---unused-bindings-are-a-mandatory-lane-2026-10-10);
+staticcheck `lint:ignore` and `lint:file-ignore` directives also have no effect.
+
+Analysis loads the complete build-selected package, including sibling files
+excluded from tackbox's source set. Those files can therefore establish uses;
+tackbox filters their diagnostics from the lint output rather than removing
+them from Go's package. A hook editing one file also analyzes the complete
+package. Callers must pass package patterns, not a single `.go` filename
+that discards its sibling context.
+Directories whose Go files are all excluded by the current build constraints
+are not package targets and are skipped. Package compile errors still fail
+the engine run.
+
+A production declaration used only by tests is still reported: test-only
+helpers belong in `_test.go`. Production findings appear once, not once per
+test variant. Generated-code reachability and other exemptions follow U1000;
+this is not a whole-program proof that an exported API is used.
+
+ERC010 analyzes only the host GOOS and current architecture and build tags.
+A helper in a platform-neutral file used only by platform-specific callers
+can therefore be reported on another host. Move the helper next to its callers
+under the matching build constraint; do not rename it to hide the finding.
+
+### Unused parameters (ERC011)
+
+ERC011 adapts gopls v0.23.0's `unusedparams` analyzer. It checks unexported
+function and method declarations used in the package, including test helpers.
+Exported declarations, function literals, functions used as values, fixed ABI
+roots (`go:linkname`, cgo `export`, `go:wasmexport`), generated code, body-less
+declarations, empty or panic-only bodies, and blank or unnamed parameters are
+excluded. An unexported method sharing a name with a package interface method
+is conservatively excluded, even when the signatures differ. Generic method
+uses are matched to their origin, including instantiated method values.
+Function literals are excluded because an explicit function type can require
+their signature.
+
+The diagnostic is `ERC011: unused parameter <name>`, followed by the remedy:
+remove the parameter and the matching argument at every call site in this
+package. Preserve argument side effects and their original evaluation order:
+Go evaluates arguments left to right, and later arguments or captured values
+may depend on earlier ones. Use `_` only when another build variant needs
+the signature. There is no automatic removal fix.
+
+Tackbox's JSON engine boundary selects the loaded package variant that includes
+internal tests. Its presence suppresses plain-package ERC011 findings even
+when it has no findings. This preserves signatures used as function values
+only by internal tests. External test packages do not suppress production
+findings. `-test=false` and build tags determine which variants are loaded;
+the boundary does not infer test variants from files on disk.
+Each raw ERC011 finding carries `variant` (`plain`, `internal-test`, or
+`external-test`). Internal-test presence is encoded under the exact package
+path and `unusedparams` as
+`{"record":"erc011-package-variant-v1","variant":"internal-test"}`.
+The boundary merges result documents and removes presence records and variant
+fields before caching, filtering, or rendering. Analyzer errors remain visible
+and fail the run. Standalone non-JSON erclint is outside this guarantee and
+can report a plain-variant false positive.
+Package/type-check failures produce an engine error and failing exit without a
+Python traceback; CodeClimate output is still written for valid findings.
+
+Declarations with no references are left to ERC010; dead recursive functions
+and callees reached only by dead code can get both ERC010 and ERC011.
+Remove that dead code rather than editing its parameters. ERC011 has the
+same host and build-configuration limits as [ERC010](#unused-declarations-erc010).
+Hook presentation follows the [agent hook contract](../README.md#agent-hook);
+full repository gates cover findings outside the hook's target and line scope.
+
+The linked x/tools supports Go 1.27.2 export data.
 
 ## Markers
 

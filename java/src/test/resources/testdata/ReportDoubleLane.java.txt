@@ -62,7 +62,7 @@ class ReportDoubleLane {
         try {
             risky();
         } catch (java.io.IOException e) { // want "JV006.*captures the caught and notifies"
-            for (int x : items) {
+            for (int _x : items) {
                 Report.notify("connection lost, retrying", e, null, "net.offline");
             }
             Report.warn("server unreachable", e, null, "net.fail");

@@ -15,10 +15,12 @@ import (
 	"github.com/nikitatsym/tackbox/go/analyzers/returnnil"
 	"github.com/nikitatsym/tackbox/go/analyzers/skiptest"
 	"github.com/nikitatsym/tackbox/go/analyzers/terminal"
+	"github.com/nikitatsym/tackbox/go/analyzers/unused"
+	"github.com/nikitatsym/tackbox/go/analyzers/unusedparams"
 )
 
 // All returns every native Go analyzer in the ruleset, ordered to match
-// rule codes ERC001..ERC009.
+// rule codes ERC001..ERC011.
 func All() []*analysis.Analyzer {
 	return []*analysis.Analyzer{
 		errcheck.Analyzer,
@@ -30,5 +32,7 @@ func All() []*analysis.Analyzer {
 		recoverswallow.Analyzer,
 		skiptest.Analyzer,
 		notifygate.Analyzer,
+		unused.Analyzer,
+		unusedparams.Analyzer,
 	}
 }

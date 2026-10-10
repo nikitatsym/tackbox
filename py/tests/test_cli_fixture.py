@@ -107,7 +107,7 @@ function shortThrow() {
 PY_SUPPRESSED_OK = """def cleanup():
     try:
         work()
-    except ValueError as e:
+    except ValueError:
         # no-report: boundary cleanup, nothing to propagate
         pass
 """
@@ -248,10 +248,6 @@ def _split_engine_sections(stdout: str) -> dict[str, str]:
     if current is not None:
         sections[current] = "\n".join(body).rstrip() + ("\n" if body else "")
     return sections
-
-
-def _normalize(text: str, fixture_repo: Path) -> str:
-    return text.replace(str(fixture_repo), FIXTURE_MARKER)
 
 
 # -- Acceptance

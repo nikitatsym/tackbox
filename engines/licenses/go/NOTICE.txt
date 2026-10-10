@@ -1,0 +1,8 @@
+Go engine third-party notices
+
+Tackbox is MIT licensed; see ../tackbox.LICENSE.txt.
+inventory.json lists the Go runtime, linked modules, and vendored source
+components, with versions, source URLs, and license paths. The ERC011 source
+is adapted from gopls unusedparams; its files and adaptations are recorded
+in the same inventory.
+Full upstream license texts are in the sibling *.LICENSE.txt files.

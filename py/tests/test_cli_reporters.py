@@ -12,7 +12,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 from conftest import init_repo, tackbox_env
 
 GO_MOD = "module fixture\n\ngo 1.21\n"
@@ -89,7 +88,7 @@ func Run() error {
 }
 """
 
-JS_DECLARED = """export function myReport(m, e) {}
+JS_DECLARED = """export function myReport(m, e) { void m; void e }
 
 try {
   f()

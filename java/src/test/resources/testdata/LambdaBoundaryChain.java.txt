@@ -7,7 +7,7 @@ class LambdaBoundaryChain {
         try {
             risky();
         } catch (Exception e) {
-            Supplier<Integer> s = () -> {
+            Supplier<Integer> s = () -> { // want "JV011"
                 throw new RuntimeException(e.getMessage());
             };
             throw new IllegalStateException("wrap", e);

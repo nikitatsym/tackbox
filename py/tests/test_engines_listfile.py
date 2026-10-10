@@ -506,7 +506,6 @@ def test_pyrules_argv_uses_checker_files_from_not_flake8(tmp_path):
     assert argv[0] == sys.executable
     assert _after(argv, "-m") == "tackbox.pyrules.checker"
     assert "--files-from" in argv
-    assert "--isolated" in argv and "--disable-noqa" in argv and "--select=TBX" in argv
     assert "a.py" not in argv and "b.py" not in argv
     assert _lines(_after(argv, "--files-from")) == ["a.py", "b.py"]
 

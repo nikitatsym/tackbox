@@ -132,7 +132,7 @@ function maskDSN(dsn) {
   try {
     const u = new URL(dsn)
     return u.host + u.pathname
-  } catch (e) {
+  } catch {
     return '<malformed>'
   }
 }
@@ -154,7 +154,7 @@ function dispatchEventSafely(name, detail) {
   // no-report: dispatch failure loses only the notice; the verb's local log already ran
   try {
     window.dispatchEvent(new CustomEvent(name, { detail }))
-  } catch (e) {
+  } catch {
     // dispatch failed
   } finally {
     dispatching = false

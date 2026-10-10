@@ -75,6 +75,9 @@ its next run.
   failing test reborn as `test.todo`, the `it.only` that quietly turns
   off the rest of the suite. Every skip must state a reason; focused
   tests are always an error.
+- **Unused bindings** - unused imports and locals, trailing JS/TS/Svelte
+  arguments, and dead private declarations. Required unused bindings follow
+  the [language conventions](#unused-bindings).
 
 ## Wiring into a repo
 
@@ -211,13 +214,18 @@ wheel records the source, version, sha256, and license of every
 bundled binary and dependency; `tackbox doctor` fetches the store if
 absent and verifies the payload against it.
 
+Third-party license texts and dependency inventories ship in the jar under
+`META-INF/third-party` and in the wheel under `tackbox/third_party/licenses`;
+see the [engine notices](engines/licenses/NOTICE.txt).
+PMD acknowledgment: This product includes software developed in part by
+support from the Defense Advanced Research Project Agency (DARPA).
+
 ## What the rules enforce
 
-Covers ERC001-009 (Go, via `erclint`), JV001-010 (Java, via the native
-`javalint` engine; JV008 is retired), Python exception, notify, and
-test-skip rules (via the `pyrules` flake8 plugin), frontend swallow,
-notify, and test-skip rules (JS, TS, Svelte, via ESLint), and Markdown
-(MD001-060 + ASCII).
+Covers ERC001-011 (Go, via `erclint`), JV001-014 (Java, via `javalint`;
+JV008 is retired), Python exception, reporting, test, and unused-binding rules
+(via flake8), frontend rules (JS, TS, Svelte, via ESLint), duplication,
+and Markdown link integrity and declared-charset checks.
 
 See `go/README.md` for the complete Go ruleset. Across supported
 languages, the core policy is:
@@ -251,7 +259,7 @@ languages, the core policy is:
 
 The same model is enforced beyond Go:
 
-- **Java** (`javalint`, JV001-010) on a typed javaparser AST: JV001
+- **Java** (`javalint`, JV001-014) on a javaparser AST plus embedded PMD: JV001
   swallow (every catch path must propagate, report, print, or carry
   `// no-report`), JV002 chain (a thrown exception must carry the
   caught as its cause), JV003 throwable (a catch of `Throwable` /
@@ -263,7 +271,14 @@ The same model is enforced beyond Go:
   (`@Disabled` / `@Ignore` must carry a non-empty reason string), JV009
   notify gate (a notify in a broad catch must narrow the type), and
   JV010 reporter args (a Report user-lane verb needs a static-literal
-  msg and a well-formed literal dedupKey). JV008 is retired.
+  msg and a well-formed literal dedupKey). JV008 is retired. PMD supplies
+  JV011 unused locals, JV012 unused private fields, JV013 unused private
+  methods, and JV014 unnecessary imports, in the same JVM and output format.
+  JV014 also catches duplicate imports and redundant imports from `java.lang`
+  or the current package; Javadoc references follow PMD's import analysis.
+  The shaded jar embeds JavaParser and PMD and emits erclint-shaped JSON.
+  Tackbox combines finding exit statuses; analysis errors and malformed
+  reporter declarations fail the run.
 - **Python** exception and test-skip rules ship as the `pyrules`
   flake8 plugin (`TBX` codes). A skip reason is accepted in any of
   the natural forms: `@pytest.mark.skip(reason=...)`,
@@ -285,10 +300,12 @@ The same model is enforced beyond Go:
   inside the catch); `valid-error-report` and `valid-dedup-key` also
   validate `notify`'s msg and dedupKey.
 
-### Python rules (TBX001-011)
+### Python rules (TBX001-012, F401, F841)
 
-The `pyrules` flake8 plugin emits these codes; each maps to a stable
-rule id (parity with the pre-migration ids).
+The `pyrules` flake8 plugin and selected pyflakes checks map their codes
+to stable rule ids in human, machine, CodeClimate, and hook output. Flake8
+runs isolated with `noqa` disabled and the fixed selection `TBX,F401,F841`;
+consumer flake8 configuration does not change the bundle.
 
 | Code | Rule | Summary |
 | --- | --- | --- |
@@ -302,9 +319,20 @@ rule id (parity with the pre-migration ids).
 | TBX008 | test-skip | a skipped/xfailed test needs a reason |
 | TBX010 | notify-lane | notify needs a narrow except type |
 | TBX011 | reporter-args | literal msg and dedup key; data in cause/tags |
+| TBX012 | unused-private | delete unused module-private code or make a cross-module API public |
+| F401 | unused-import | remove unused imports; declare re-exports in `__all__` |
+| F841 | unused-variable | remove unused local assignments; only bare `_` is a discard |
 
 Full ids carry the `python-` prefix (e.g. `python-swallowed-exception`).
 TBX009 is retired (the removed secret-name heuristic, D001), as JV008 is.
+
+### Unused bindings
+
+[Decision D021](rules/DECISIONS.md#d021---unused-bindings-are-a-mandatory-lane-2026-10-10)
+defines binding conventions, required deletions, and known analysis limits.
+The Python codes and Java rules are listed above. Language-specific rule
+references are in [Go](go/README.md#unused-declarations-erc010) and
+[JS / TS / Svelte](js/README.md#rules).
 
 ### Duplication (DUP001, DUP002, DUP003)
 
@@ -395,6 +423,9 @@ the explicit per-site marker (`// no-report`, `// parse-skip`,
 least 10 characters - non-empty was too cheap (`ok` / `todo` passed) -
 plus a covering line in the approval manifest below: the reason
 explains the exception, the manifest line records its approval.
+
+The unused-binding lane has no suppression mechanism; see
+[D021](rules/DECISIONS.md#d021---unused-bindings-are-a-mandatory-lane-2026-10-10).
 
 Capture helpers are recognized by origin, not by name: a Go call
 counts only when its callee resolves (type info / import) to the
@@ -590,6 +621,11 @@ difference from HEAD, including staged changes and untracked files; it is not
 a snapshot taken when the agent starts. Without a commit, the whole tree is
 added. Existing committed debt is left to `dev.py check` and CI; dirty debt
 already present when an agent starts still belongs to the hook session.
+
+An import can be temporarily unused between edits. The post hook reports it
+on the added line without undoing the edit; adding its use clears the finding.
+Add the import and its use in one edit when possible. Do not delete a needed
+import just to silence feedback during a multi-step change.
 
 - **Post-edit** re-lints touched files (Go: their package). A finding on
   added lines or session approvals debt in a touched file becomes a tool
@@ -914,7 +950,7 @@ eslint.config.preset.js                # default config used by tackbox-eslint b
 bin/tackbox-eslint.js                  # ESLint CLI wrapper with bundled preset
 bin/tackbox-mdlint.js                  # markdownlint wrapper with bundled preset
 go/
-  cmd/erclint/                         # native Go analyzers (ERC001-009)
+  cmd/erclint/                         # native Go analyzers (ERC001-011)
   cmd/erclint-opengrep/                # opengrep wrapper, embedded rule yamls
     rules/                             # exceptions-go (go-exit-in-recover)
   analyzers/                           # per-rule go/analysis packages
@@ -922,7 +958,7 @@ go/
   report/                              # Go capture helper (Sentry/glitchtip)
 java/
   pom.xml                              # Maven module -> shaded javalint.jar
-  src/main/.../javalint/               # typed-AST analyzer (JV001-010)
+  src/main/.../javalint/               # JavaParser and PMD checks (JV001-014)
     rules/                             # per-rule checkers
   report/                              # Java capture helper -> Maven Central io.github.nikitatsym:report
 js/
@@ -934,7 +970,7 @@ js/
   tests/                               # RuleTester + node:test
 py/
   tackbox/                             # lint / hook / doctor CLI, cache, engines
-    pyrules/                           # flake8 TBX plugin (python exception rules)
+    pyrules/                           # flake8 TBX rules and pyflakes output adapter
   tackbox_report/                      # Python capture helper -> PyPI tackbox-report
   tests/                               # pytest suite
 docs/

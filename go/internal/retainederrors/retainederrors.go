@@ -85,7 +85,7 @@ func run(pass *analysis.Pass) (any, error) {
 				initial := newState()
 				initial.values[errorValue] = paths{"": true}
 				initial.scalars[errorValue] = true
-				_, safe := scanner.evaluate(function, start, initial)
+				_, safe := scanner.evaluate(start, initial)
 				result[guards[condition.Pos()]] = safe
 			}
 		}
@@ -274,7 +274,7 @@ func isNil(value ssa.Value) bool {
 	return ok && constant.IsNil()
 }
 
-func (scanner *scan) evaluate(function *ssa.Function, start *ssa.BasicBlock, initial state) ([]paths, bool) {
+func (scanner *scan) evaluate(start *ssa.BasicBlock, initial state) ([]paths, bool) {
 	incoming := map[*ssa.BasicBlock]state{start: initial}
 	queue := []*ssa.BasicBlock{start}
 	for len(queue) != 0 {
@@ -500,7 +500,7 @@ func (scanner *scan) summary(key constructor) []paths {
 	initial := newState()
 	initial.values[key.function.Params[key.parameter]] = paths{"": true}
 	initial.scalars[key.function.Params[key.parameter]] = true
-	results, _ := scanner.evaluate(key.function, key.function.Blocks[0], initial)
+	results, _ := scanner.evaluate(key.function.Blocks[0], initial)
 	delete(scanner.active, key)
 	scanner.summaries[key] = results
 	return results

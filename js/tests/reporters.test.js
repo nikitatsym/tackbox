@@ -201,17 +201,17 @@ test('tier-2 $lib alias: aliased .svelte.ts reporter is recognized; bare/undecla
     "    doThing().catch((e) => reportError('inline edit commit failed', e, { c: 'x' }));\n" +
     "    try { risky() } catch (e) { reportError('inline edit focus failed', e, { c: 'y' }) }\n" +
     "  }\n" +
-    "</script>\n"
+    "</script>\n<button onclick={go}>run</button>\n"
   // A dropped error and a call to an undeclared local reporter must still be
   // caught - recognition widens for the declared alias only, nothing else.
   const bad =
     "<script>\n" +
     "  function reportError(m, e) { void m; void e }\n" +
     "  function go() {\n" +
-    "    try { risky() } catch (e) { const _ = 1; void _ }\n" +
+    "    try { risky() } catch { const _ = 1; void _ }\n" +
     "    try { risky() } catch (e) { reportError('local shadow not declared', e) }\n" +
     "  }\n" +
-    "</script>\n"
+    "</script>\n<button onclick={go}>run</button>\n"
 
   const out = await lintTree(
     {

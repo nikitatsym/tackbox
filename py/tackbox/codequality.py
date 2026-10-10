@@ -25,20 +25,21 @@ _DUP_PREFIX = "DUP"
 # A per-finding fingerprint override: given a finding, return its fingerprint or
 # None to fall back to the default sha256(rule:path:line). tackbox-approvals
 # supplies the serialized entry address here so a marker's identity - not its
-# line - keys the MR widget; every engine finding keeps the default.
+# line - keys the MR widget; engine collisions get an occurrence suffix.
 FingerprintOf = Callable[[Finding], "str | None"]
 
 
-def _issue(f: Finding, fingerprint_of: FingerprintOf | None = None) -> dict:
+def _issue(f: Finding, fingerprint_of: FingerprintOf | None = None, occurrence: int = 0) -> dict:
     path = f.file if f.file is not None else _UNKNOWN_PATH
     line = f.line if f.line is not None else 1
     category = "Duplication" if f.rule.startswith(_DUP_PREFIX) else "Bug Risk"
     # Message stays out of the fingerprint: rewording a diagnostic must not
     # re-open resolved issues in the MR widget.
     override = fingerprint_of(f) if fingerprint_of is not None else None
-    fingerprint = override if override is not None else hashlib.sha256(
-        f"{f.rule}:{path}:{line}".encode()
-    ).hexdigest()
+    identity = f"{f.rule}:{path}:{line}"
+    if occurrence:
+        identity += f":{occurrence}"
+    fingerprint = override if override is not None else hashlib.sha256(identity.encode()).hexdigest()
     description = f"{f.rule}: {' '.join(f.message.split())}" if f.message else f.rule
     return {
         "type": "issue",
@@ -53,10 +54,14 @@ def _issue(f: Finding, fingerprint_of: FingerprintOf | None = None) -> dict:
 
 def build_report(findings: list[Finding], fingerprint_of: FingerprintOf | None = None) -> list[dict]:
     """Issue objects sorted by (path, line, rule) for a stable artifact."""
-    issues = [_issue(f, fingerprint_of) for f in findings]
-    issues.sort(
-        key=lambda i: (i["location"]["path"], i["location"]["lines"]["begin"], i["check_name"])
-    )
+    ordered = sorted(findings, key=lambda f: (f.file or _UNKNOWN_PATH, f.line or 1, f.rule))
+    occurrences: dict[tuple[str, str, int], int] = {}
+    issues = []
+    for finding in ordered:
+        key = (finding.rule, finding.file or _UNKNOWN_PATH, finding.line or 1)
+        occurrence = occurrences.get(key, 0)
+        issues.append(_issue(finding, fingerprint_of, occurrence))
+        occurrences[key] = occurrence + 1
     return issues
 
 

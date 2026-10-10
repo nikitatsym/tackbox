@@ -49,5 +49,7 @@ py/tackbox/engines.py#_erclint_dev_version: no-report: no go toolchain - the dev
 py/tackbox/engines.py#_fetch_and_install: no-report: lost the init race - the winner's store is committed
 py/tackbox/engines.py#_version_from_binary: no-report: binary missing or non-zero exit - the version banner degrades to "?"
 py/tackbox/engines.py#_version_from_npm_manifest: no-report: manifest missing or unparseable - the version banner degrades to "?"
+py/tackbox/engines.py#normalize_erclint_result: no-report: malformed engine output returns a failing result with the parse error on stderr
+py/tackbox/pyrules/unused_private.py#_Uses.visit_Constant: no-report: invalid forward-reference strings are values, not type references
 py/tests/test_publish_workflow.py#_find_matrix_job: no-report: malformed matrix entry in the scanned workflow yaml - skip it
 scripts/lock_engines.py#cmd_check: no-report: prints the parse error and fails the gate (exit 1)

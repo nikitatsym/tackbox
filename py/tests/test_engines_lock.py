@@ -21,7 +21,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 
 from tackbox.hashing import sha256_file
 

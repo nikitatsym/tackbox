@@ -1,0 +1,162 @@
+{
+  "components": [
+    {
+      "id": "com.github.javaparser:javaparser-core",
+      "version": "3.26.4",
+      "license": "Apache-2.0",
+      "license_path": "javaparser.LICENSE.txt",
+      "notice_path": "javaparser.NOTICE.txt",
+      "source": "https://repo.maven.apache.org/maven2/com/github/javaparser/javaparser-core/3.26.4/javaparser-core-3.26.4-sources.jar",
+      "jar_sha256": "3b2d6c4451b2c675d4f4be10784c5681049529d11f3c4e5936f08ba90dd45c27",
+      "jar_size": 1434171,
+      "license_source": "https://raw.githubusercontent.com/javaparser/javaparser/javaparser-parent-3.26.4/LICENSE.APACHE"
+    },
+    {
+      "id": "net.sourceforge.pmd:pmd-java",
+      "version": "7.17.0",
+      "license": "LicenseRef-PMD",
+      "license_path": "pmd.LICENSE.txt",
+      "notice_path": "pmd.NOTICE.txt",
+      "source": "https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-java/7.17.0/pmd-java-7.17.0-sources.jar",
+      "jar_sha256": "1fa1c9651562ed3e575c84c6c91c19f05165e6aa06712a89761c787d743707eb",
+      "jar_size": 1742101,
+      "license_source": "https://raw.githubusercontent.com/pmd/pmd/pmd_releases/7.17.0/LICENSE"
+    },
+    {
+      "id": "net.sourceforge.pmd:pmd-core",
+      "version": "7.17.0",
+      "license": "LicenseRef-PMD",
+      "license_path": "pmd.LICENSE.txt",
+      "notice_path": "pmd.NOTICE.txt",
+      "source": "https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-core/7.17.0/pmd-core-7.17.0-sources.jar",
+      "jar_sha256": "73089de9d6bfe41e2c4e5780f0465c5e647a048c486f942070fbccceec666a52",
+      "jar_size": 980628,
+      "license_source": "https://raw.githubusercontent.com/pmd/pmd/pmd_releases/7.17.0/LICENSE"
+    },
+    {
+      "id": "org.slf4j:slf4j-api",
+      "version": "1.7.36",
+      "license": "MIT",
+      "license_path": "slf4j.LICENSE.txt",
+      "notice_path": null,
+      "source": "https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/1.7.36/slf4j-api-1.7.36-sources.jar",
+      "jar_sha256": "d3ef575e3e4979678dc01bf1dcce51021493b4d11fb7f1be8ad982877c16a1c0",
+      "jar_size": 41125,
+      "license_source": "https://raw.githubusercontent.com/qos-ch/slf4j/v_1.7.36/LICENSE.txt"
+    },
+    {
+      "id": "org.slf4j:jul-to-slf4j",
+      "version": "1.7.36",
+      "license": "MIT",
+      "license_path": "slf4j.LICENSE.txt",
+      "notice_path": null,
+      "source": "https://repo.maven.apache.org/maven2/org/slf4j/jul-to-slf4j/1.7.36/jul-to-slf4j-1.7.36-sources.jar",
+      "jar_sha256": "9e641fb142c5f0b0623d6222c09ea87523a41bf6bed48ac79940724010b989de",
+      "jar_size": 4519,
+      "license_source": "https://raw.githubusercontent.com/qos-ch/slf4j/v_1.7.36/LICENSE.txt"
+    },
+    {
+      "id": "org.slf4j:slf4j-simple",
+      "version": "1.7.36",
+      "license": "MIT",
+      "license_path": "slf4j.LICENSE.txt",
+      "notice_path": null,
+      "source": "https://repo.maven.apache.org/maven2/org/slf4j/slf4j-simple/1.7.36/slf4j-simple-1.7.36-sources.jar",
+      "jar_sha256": "2f39bed943d624dfa8f4102d0571283a10870b6aa36f197a8a506f147010c10f",
+      "jar_size": 15333,
+      "license_source": "https://raw.githubusercontent.com/qos-ch/slf4j/v_1.7.36/LICENSE.txt"
+    },
+    {
+      "id": "org.antlr:antlr4-runtime",
+      "version": "4.9.3",
+      "license": "BSD-3-Clause",
+      "license_path": "antlr4.LICENSE.txt",
+      "notice_path": null,
+      "source": "https://repo.maven.apache.org/maven2/org/antlr/antlr4-runtime/4.9.3/antlr4-runtime-4.9.3-sources.jar",
+      "jar_sha256": "131a6594969bc4f321d652ea2a33bc0e378ca312685ef87791b2c60b29d01ea5",
+      "jar_size": 336742,
+      "license_source": "https://raw.githubusercontent.com/antlr/antlr4/4.9.3/LICENSE.txt"
+    },
+    {
+      "id": "com.google.code.gson:gson",
+      "version": "2.13.1",
+      "license": "Apache-2.0",
+      "license_path": "gson.LICENSE.txt",
+      "notice_path": null,
+      "source": "https://repo.maven.apache.org/maven2/com/google/code/gson/gson/2.13.1/gson-2.13.1-sources.jar",
+      "jar_sha256": "94855942d4992f112946d3de1c334e709237b8126d8130bf07807c018a4a2120",
+      "jar_size": 286972,
+      "license_source": "https://raw.githubusercontent.com/google/gson/gson-parent-2.13.1/LICENSE"
+    },
+    {
+      "id": "com.google.errorprone:error_prone_annotations",
+      "version": "2.38.0",
+      "license": "Apache-2.0",
+      "license_path": "error-prone.LICENSE.txt",
+      "notice_path": null,
+      "source": "https://repo.maven.apache.org/maven2/com/google/errorprone/error_prone_annotations/2.38.0/error_prone_annotations-2.38.0-sources.jar",
+      "jar_sha256": "6661d5335090a5fc61dd869d2095bc6c1e2156e3aa47a6e4ababdf64c99a7889",
+      "jar_size": 20389,
+      "license_source": "https://raw.githubusercontent.com/google/error-prone/v2.38.0/COPYING"
+    },
+    {
+      "id": "com.github.oowekyala.ooxml:nice-xml-messages",
+      "version": "3.1",
+      "license": "MIT",
+      "license_path": "nice-xml-messages.LICENSE.txt",
+      "notice_path": null,
+      "source": "https://repo.maven.apache.org/maven2/com/github/oowekyala/ooxml/nice-xml-messages/3.1/nice-xml-messages-3.1-sources.jar",
+      "jar_sha256": "0b4ceb5b8362d43c9c6c49b1bd57f1c5da54d3c5c7c305fa39c0a04462bb4799",
+      "jar_size": 48648,
+      "license_source": "https://raw.githubusercontent.com/oowekyala/nice-xml-messages/bf8e73125d556559fbf4777339557f156d1ca422/LICENSE"
+    },
+    {
+      "id": "org.ow2.asm:asm",
+      "version": "9.8",
+      "license": "BSD-3-Clause",
+      "license_path": "asm.LICENSE.txt",
+      "notice_path": null,
+      "source": "https://repo.maven.apache.org/maven2/org/ow2/asm/asm/9.8/asm-9.8-sources.jar",
+      "jar_sha256": "876eab6a83daecad5ca67eb9fcabb063c97b5aeb8cf1fca7a989ecde17522051",
+      "jar_size": 126113,
+      "license_source": "https://gitlab.ow2.org/asm/asm/-/raw/ASM_9_8/LICENSE.txt"
+    },
+    {
+      "id": "org.apache.commons:commons-lang3",
+      "version": "3.18.0",
+      "license": "Apache-2.0",
+      "license_path": "commons-lang3.LICENSE.txt",
+      "notice_path": "commons-lang3.NOTICE.txt",
+      "source": "https://repo.maven.apache.org/maven2/org/apache/commons/commons-lang3/3.18.0/commons-lang3-3.18.0-sources.jar",
+      "jar_sha256": "4eeeae8d20c078abb64b015ec158add383ac581571cddc45c68f0c9ae0230720",
+      "jar_size": 702952,
+      "license_source": "https://repo.maven.apache.org/maven2/org/apache/commons/commons-lang3/3.18.0/commons-lang3-3.18.0.jar!/META-INF/LICENSE.txt"
+    },
+    {
+      "id": "org.checkerframework:checker-qual",
+      "version": "3.49.5",
+      "license": "MIT",
+      "license_path": "checker-qual.LICENSE.txt",
+      "notice_path": null,
+      "source": "https://repo.maven.apache.org/maven2/org/checkerframework/checker-qual/3.49.5/checker-qual-3.49.5-sources.jar",
+      "jar_sha256": "508c83c62c344f6f7ee28f47b88a8797d6116d043bfd1ca0576c828dd1df2880",
+      "jar_size": 238219,
+      "license_source": "https://repo.maven.apache.org/maven2/org/checkerframework/checker-qual/3.49.5/checker-qual-3.49.5.jar!/META-INF/LICENSE.txt"
+    },
+    {
+      "id": "org.pcollections:pcollections",
+      "version": "4.0.2",
+      "license": "MIT",
+      "license_path": "pcollections.LICENSE.txt",
+      "notice_path": null,
+      "source": "https://repo.maven.apache.org/maven2/org/pcollections/pcollections/4.0.2/pcollections-4.0.2-sources.jar",
+      "jar_sha256": "2bbeef5797a241300c4f7513cd546239629ed7deda4fc0c31df90bb95f5f13ef",
+      "jar_size": 73718,
+      "license_source": "https://raw.githubusercontent.com/hrldcpr/pcollections/v4.0.2/LICENSE"
+    }
+  ],
+  "excluded": [
+    "net.sf.saxon:Saxon-HE",
+    "org.xmlresolver:xmlresolver and its transitive dependencies"
+  ]
+}

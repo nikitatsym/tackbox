@@ -1,0 +1,3 @@
+package unused
+
+func usedFromSibling() {}

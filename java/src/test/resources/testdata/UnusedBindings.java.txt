@@ -1,0 +1,26 @@
+import java.util.Map; // want "JV014: Unused import 'java.util.Map'"
+import java.lang.String; // want "JV014: Unnecessary import from the java.lang package"
+import java.util.List;
+import java.util.List; // want "JV014: Duplicate import 'java.util.List'"
+import static java.util.Collections.emptySet; // want "JV014: Unused static import"
+
+class UnusedBindings {
+    private int forgotten; // want "JV012: unused private field 'forgotten'"
+    private int _forgotten; // want "JV012: unused private field '_forgotten'"
+    private int used = 3;
+    private void forgottenMethod() {} // want "JV013: unused private method 'forgottenMethod\(\)'"
+    private void _forgottenMethod() {} // want "JV013: unused private method '_forgottenMethod\(\)'"
+    private int readUsed() { return used; }
+
+    String run(List<String> values, int parameterNotChecked) {
+        int forgottenLocal = 1; // want "JV011: unused local variable 'forgottenLocal'"
+        int _discarded = readUsed(); // want "JV011"
+        int ignoredResult = readUsed(); // want "JV011"
+        int unusedResult = readUsed(); // want "JV011"
+        for (String _element : values) {
+            readUsed();
+        }
+        String usedLocal = values.get(0);
+        return usedLocal;
+    }
+}

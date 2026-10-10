@@ -31,7 +31,7 @@ from tackbox.engines import Finding
 PY_SWALLOW = """def cleanup():
     try:
         work()
-    except ValueError as e:
+    except ValueError:
         pass
 """
 
@@ -315,10 +315,24 @@ def test_build_report_fingerprint_ignores_message():
     assert bare["fingerprint"] == worded["fingerprint"]
 
 
+def test_repeated_same_location_findings_have_distinct_stable_fingerprints():
+    findings = [Finding("F401", "a.py", 1, "unused os"), Finding("F401", "a.py", 1, "unused sys")]
+    report = build_report(findings)
+    assert report[0]["fingerprint"] == hashlib.sha256(b"F401:a.py:1").hexdigest()
+    assert len({issue["fingerprint"] for issue in report}) == 2
+    reworded = build_report([Finding("F401", "a.py", 1, "changed"), Finding("F401", "a.py", 1, "again")])
+    assert [i["fingerprint"] for i in reworded] == [i["fingerprint"] for i in report]
+    unrelated = Finding("F841", "z.py", 2, "unused local")
+    assert build_report([unrelated, *findings])[:2] == report
+    assert {i["fingerprint"] for i in build_report([*reversed(findings), unrelated])[:2]} == {
+        i["fingerprint"] for i in report
+    }
+
+
 def test_approved_suppression_is_invisible_to_lint_and_codequality(tmp_path):
     (tmp_path / "dev.py").write_text("# hook entry\n")
     (tmp_path / "app.js").write_text(
-        "// no-report: caller tolerates this failure\ntry { work() } catch (e) {}\n"
+        "// no-report: caller tolerates this failure\ntry { work() } catch {}\n"
     )
     (tmp_path / ".tackbox").mkdir()
     (tmp_path / ".tackbox/approvals").write_text("app.js: no-report: caller tolerates this failure\n")

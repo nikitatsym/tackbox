@@ -258,7 +258,7 @@ def test_codequality_no_entries_for_excluded_files(tmp_path):
         attrs="gen/*.py linguist-generated\n",
     )
     report = repo / "cq.json"
-    r = _run(repo, ".", "--no-cache", "--codequality", str(report))
+    _run(repo, ".", "--no-cache", "--codequality", str(report))
     assert report.is_file()
     data = report.read_text()
     assert "gen/a.py" not in data

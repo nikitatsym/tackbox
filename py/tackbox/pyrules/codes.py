@@ -1,10 +1,4 @@
-"""TBX rule codes, their canonical rule ids, and one-line messages.
-
-Single source of truth for the code<->id mapping: the flake8 plugin emits
-`TBXNNN <id>: <message>` and the CLI's machine parser maps the TBX code back
-to the id via CODE_TO_ID. Messages are one line, ~100 chars: the violated
-invariant plus the primary fix; details and rationale live in the rule docs.
-"""
+"""Selected flake8 codes, stable rule ids, and default TBX messages."""
 
 from __future__ import annotations
 
@@ -21,7 +15,12 @@ CODE_TO_ID: dict[str, str] = {
     "TBX008": "python-test-skip",
     "TBX010": "python-notify-lane",
     "TBX011": "python-reporter-args",
+    "TBX012": "python-unused-private",
+    "F401": "python-unused-import",
+    "F841": "python-unused-variable",
 }
+
+PYFLAKES_CODES = tuple(code for code in CODE_TO_ID if not code.startswith("TBX"))
 
 
 MESSAGES: dict[str, str] = {

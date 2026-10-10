@@ -94,6 +94,7 @@ public final class Javalint {
         out.addAll(new NotifyGateRule(rec).check(name, cu, markers));
         out.addAll(new ReporterArgsRule(rec).check(name, cu));
         out.addAll(new SkipRule().check(name, cu));
+        out.addAll(UnusedBindings.check(name, content, cu));
         return out;
     }
 

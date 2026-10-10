@@ -1,0 +1,19 @@
+import java.io.ByteArrayInputStream;
+import java.util.List;
+
+class UnusedForcedBindings {
+    void run(List<String> items) throws Exception {
+        for (String _item : items) {
+            System.out.println("item");
+        }
+        for (String ignoredItem : items) { // want "JV011"
+            System.out.println("item");
+        }
+        try (ByteArrayInputStream _resource = new ByteArrayInputStream(new byte[0])) {
+            System.out.println("opened");
+        }
+        try (ByteArrayInputStream unusedResource = new ByteArrayInputStream(new byte[0])) { // want "JV011"
+            System.out.println("opened");
+        }
+    }
+}

@@ -415,8 +415,8 @@ test('the real JavaScript adapter round trips through the local Python CLI', asy
 })
 test('post write and pruned move details round trip through the local Python CLI', async () => {
   const repo = localRepository('post-roundtrip')
-  writeFileSync(path.join(repo, 'written.js'), 'const written = true\n')
-  writeFileSync(path.join(repo, 'moved.js'), 'const moved = true\n')
+  writeFileSync(path.join(repo, 'written.js'), 'export const written = true\n')
+  writeFileSync(path.join(repo, 'moved.js'), 'export const moved = true\n')
   const command = localCliCommand()
   const writeResult = await toolResult(command, {
     toolName: 'write',
@@ -431,7 +431,7 @@ test('post write and pruned move details round trip through the local Python CLI
   assert.equal(writeResult, undefined)
   const moveResult = await toolResult(command, {
     input: {
-      input: '*** Begin Patch\n*** Delete File: gone.js\n*** Update File: old.js\n*** Move to: moved.js\n@@\n-const old = true\n+const moved = true\n*** End Patch\n',
+      input: '*** Begin Patch\n*** Delete File: gone.js\n*** Update File: old.js\n*** Move to: moved.js\n@@\n-export const old = true\n+export const moved = true\n*** End Patch\n',
     },
     details: {
       snapshotsPruned: true,

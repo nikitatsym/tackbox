@@ -1,0 +1,15 @@
+package com.consumer;
+
+import com.external.*;
+import static com.external.Helpers.*;
+import java.util.*;
+import static java.util.Collections.*;
+import java.util.*; // want "JV014: Duplicate import 'java.util.\*'"
+import java.util.Map; // want "JV014: Unused import 'java.util.Map'"
+
+class UnusedWildcardImports {
+    Object run() {
+        ExternalHelper.run();
+        return externalHelper();
+    }
+}

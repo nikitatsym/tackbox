@@ -28,9 +28,8 @@ ENGINES_DIR = REPO / "engines"
 PY_DIR = REPO / "py"
 
 sys.path.insert(0, str(PY_DIR))
-from tackbox.cache import sha256_tree  # noqa: E402
 from tackbox.engines import engines_payload_tree_sha256  # noqa: E402
-from tackbox.hashing import sha256_file  # noqa: E402
+from tackbox.hashing import sha256_file, sha256_tree  # noqa: E402
 JS_ROOT = REPO
 CACHE_DIR = Path(os.environ.get("TACKBOX_BUILD_CACHE", str(Path.home() / ".cache" / "tackbox-build")))
 
@@ -140,6 +139,34 @@ def build_javalint_jar() -> Path:
     if not jar.is_file():
         raise SystemExit(f"expected shaded jar at {jar} after mvn package")
     return jar
+
+
+def stage_engine_licenses(thin_root: Path, engine: str) -> list[dict]:
+    source = ENGINES_DIR / "licenses" / engine
+    destination = thin_root / "third_party" / "licenses" / engine
+    shutil.copytree(source, destination)
+    inventory = json.loads((source / "inventory.json").read_text())
+    entries = []
+    for component in inventory["components"]:
+        license_file = destination / component["license_path"]
+        if not license_file.is_file():
+            raise SystemExit(f"missing license for {component['id']}: {license_file}")
+        notice_path = component.get("notice_path")
+        if notice_path and not (destination / notice_path).is_file():
+            raise SystemExit(f"missing notice for {component['id']}: {notice_path}")
+        entries.append({
+            "id": f"{engine}-dependency/{component['id']}",
+            "kind": "dependency",
+            "version": component["version"],
+            "sha256": sha256_file(license_file),
+            "path": f"tackbox/{license_file.relative_to(thin_root).as_posix()}",
+            "license": component["license"],
+            "license_path": f"tackbox/{license_file.relative_to(thin_root).as_posix()}",
+            "source": component["source"],
+            "notice_path": f"tackbox/{(destination / notice_path).relative_to(thin_root).as_posix()}"
+                if notice_path else "",
+        })
+    return entries
 
 
 def _stage_fat_project(staging_root: Path) -> Path:
@@ -339,6 +366,8 @@ def prepare_thin(
     }[pl.key]
 
     thin_entries: list[dict] = []
+    thin_entries.extend(stage_engine_licenses(thin_root, "go"))
+    thin_entries.extend(stage_engine_licenses(thin_root, "javalint"))
 
     for cmd in ("erclint", "erclint-opengrep", "tackbox-jscpd"):
         out = thin_root / "bin" / f"{cmd}{exe_suffix}"
@@ -360,8 +389,8 @@ def prepare_thin(
             "version": version,
             "sha256": sha256_file(out),
             "path": f"tackbox/bin/{cmd}{exe_suffix}",
-            "license": "MIT",
-            "license_path": "tackbox/third_party/licenses/tackbox.LICENSE.txt",
+            "license": "MIT AND BSD-3-Clause",
+            "license_path": "tackbox/third_party/licenses/go/NOTICE.txt",
         })
 
     # javalint is a JVM engine: one platform-independent shaded jar run via
@@ -376,8 +405,8 @@ def prepare_thin(
         "version": version,
         "sha256": sha256_file(jar_dest),
         "path": "tackbox/bin/javalint.jar",
-        "license": "MIT",
-        "license_path": "tackbox/third_party/licenses/tackbox.LICENSE.txt",
+        "license": "MIT AND Apache-2.0 AND BSD-3-Clause AND LicenseRef-PMD",
+        "license_path": "tackbox/third_party/licenses/javalint/NOTICE.txt",
     })
 
     # Rules layout mirrors the dev tree so the bundled node scripts keep
@@ -417,6 +446,7 @@ def prepare_thin(
             })
 
     all_entries = engines_entries + thin_entries
+    all_entries.extend(python_rule_entries(PY_DIR))
     payload_sha = compute_payload_sha(all_entries)
 
     engines_json = {
@@ -473,6 +503,21 @@ def verify_wheel_payload(wheel: Path, pkg_root: Path, pkg_name: str) -> None:
             f"wheel {wheel.name} is missing {len(missing)} staged files, "
             f"first: {missing[:5]}"
         )
+
+
+def python_rule_entries(py_dir: Path) -> list[dict]:
+    entries = [
+        {
+            "id": f"pyrules/{source.name}", "kind": "rules",
+            "path": f"tackbox/pyrules/{source.name}", "sha256": sha256_file(source),
+            "license": "MIT", "license_path": "tackbox/third_party/licenses/tackbox.LICENSE.txt",
+        }
+        for source in sorted((py_dir / "tackbox" / "pyrules").glob("*.py"))
+    ]
+    # Dependency pins change findings even when the plugin source is unchanged.
+    entries.append({"id": "pyrules/dependency-pins", "kind": "dependency",
+                    "sha256": sha256_file(py_dir / "setup.py")})
+    return entries
 
 
 def compute_payload_sha(entries: list[dict]) -> str:

@@ -9,7 +9,7 @@ class LambdaBoundaryUseless {
         try {
             risky();
         } catch (Exception e) { // want "JV001"
-            Supplier<Integer> s = () -> {
+            Supplier<Integer> s = () -> { // want "JV011"
                 throw e;
             };
         }

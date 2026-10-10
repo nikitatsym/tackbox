@@ -13,7 +13,7 @@ from conftest import count_calls
 from tackbox import doctor
 from tackbox import engines as engines_mod
 from tackbox import gitfiles
-from tackbox.cache import sha256_tree
+from tackbox.hashing import sha256_tree
 
 
 def _needs_git():

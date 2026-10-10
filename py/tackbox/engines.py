@@ -34,7 +34,7 @@ from urllib.request import urlopen
 
 from . import callable_zones, proc
 from .hashing import sha256_file, sha256_tree
-from .pyrules.codes import CODE_TO_ID
+from .pyrules.codes import CODE_TO_ID, PYFLAKES_CODES
 from .source_set import (
     files_to_go_packages,
     group_go_packages_by_module,
@@ -660,22 +660,87 @@ def _run_per_module(run: EngineRun) -> EngineResult:
             errs.append(proc.decode(completed.stderr))
     for pkg in orphans:
         errs.append(f"no enclosing go.mod, skipped: {pkg}\n")
-    return EngineResult(
+    result = EngineResult(
         engine_id=run.engine.id,
         exit_code=max_code,
         stdout="".join(outs),
         stderr="".join(errs),
     )
+    return normalize_erclint_result(result) if result.engine_id == "erclint" else result
 
 
-def parse_erclint_findings(raw: str) -> list[dict]:
+def normalize_erclint_result(result: EngineResult) -> EngineResult:
+    """Prefer ERC011's loaded internal-test variant over its plain variant.
+
+    Presence records use exact package paths so external tests cannot
+    suppress production findings. Analyzer failures remain in stdout and
+    make the engine result fail.
+    """
+    try:
+        docs = list(iter_json_objects(result.stdout))
+        widest: set[str] = set()
+        errors: dict[str, dict[str, set[str]]] = {}
+        for doc in docs:
+            if not isinstance(doc, dict):
+                raise ValueError("expected a package object")
+            for pkg, analyzers in doc.items():
+                if not isinstance(analyzers, dict):
+                    raise ValueError(f"expected analyzers for {pkg!r}")
+                for analyzer, payload in analyzers.items():
+                    if isinstance(payload, dict) and isinstance(payload.get("error"), str):
+                        errors.setdefault(erclint_base_import_path(pkg), {}).setdefault(payload["error"], set()).add(analyzer)
+                        continue
+                    if not isinstance(payload, list) or any(not isinstance(item, dict) for item in payload):
+                        raise ValueError(f"invalid {analyzer!r} payload for {pkg!r}")
+                    if analyzer != "unusedparams":
+                        continue
+                    for item in payload:
+                        if "record" in item:
+                            if item != {"record": "erc011-package-variant-v1", "variant": "internal-test"}:
+                                raise ValueError(f"invalid ERC011 presence record for {pkg!r}")
+                            widest.add(pkg)
+                        elif item.get("variant") not in ("plain", "internal-test", "external-test"):
+                            raise ValueError(f"invalid ERC011 variant for {pkg!r}")
+                        elif not isinstance(item.get("posn"), str) or not isinstance(item.get("message"), str):
+                            raise ValueError(f"invalid ERC011 diagnostic for {pkg!r}")
+        normalized: dict = {}
+        for doc in docs:
+            for pkg, analyzers in doc.items():
+                for analyzer, payload in analyzers.items():
+                    if analyzer == "unusedparams" and isinstance(payload, list):
+                        payload = [{key: value for key, value in item.items() if key != "variant"}
+                                   for item in payload if "record" not in item
+                                   and not (item["variant"] == "plain" and pkg in widest)]
+                    if not payload:
+                        continue
+                    merged = normalized.setdefault(pkg, {})
+                    if analyzer not in merged:
+                        merged[analyzer] = payload
+                    elif isinstance(payload, list) and isinstance(merged[analyzer], list):
+                        merged[analyzer].extend(payload)
+                    elif merged[analyzer] != payload:
+                        raise ValueError(f"conflicting {analyzer!r} payloads for {pkg!r}")
+    except ValueError as error:
+        # no-report: malformed engine output returns a failing result with the parse error on stderr
+        return EngineResult(result.engine_id, max(result.exit_code, 2), "",
+                            result.stderr + f"tackbox: invalid erclint output: {error}\n")
+    stderr = result.stderr
+    for pkg, failures in errors.items():
+        details = "; ".join(f"{', '.join(sorted(analyzers))}: {' '.join(error.split())}"
+                            for error, analyzers in failures.items())
+        stderr += f"tackbox: erclint analyzers failed for {pkg!r}: {details}\n"
+    stdout = json.dumps(normalized, indent="\t") + "\n" if normalized else ""
+    return EngineResult(result.engine_id, max(result.exit_code, int(bool(errors))), stdout, stderr)
+
+
+def parse_erclint_findings(raw: str, *, allow_errors: bool = False) -> list[dict]:
     """Flatten erclint's -json output into a list of findings.
 
     Empty input, blank input, or JSON `{}` yield an empty list. Multiple
     concatenated JSON objects (one per module run) are merged - import
-    paths are globally unique. Analyzer load errors (`{"error": "..."}`
-    in place of a finding list) bubble up as ValueError - dev mode never
-    silently drops them.
+    paths are globally unique. Analyzer load errors raise ValueError by default;
+    located renderers pass allow_errors after the raw engine boundary has
+    already made the run fail and reported the error.
     """
     text = raw.strip()
     if not text:
@@ -685,6 +750,8 @@ def parse_erclint_findings(raw: str) -> list[dict]:
         for pkg, analyzers in doc.items():
             for analyzer, payload in analyzers.items():
                 if isinstance(payload, dict) and "error" in payload:
+                    if allow_errors:
+                        continue
                     raise ValueError(
                         f"erclint analyzer {analyzer!r} failed for {pkg!r}: "
                         f"{payload['error']}"
@@ -813,7 +880,7 @@ def erclint_located_findings(stdout: str, repo_root: Path) -> list[Finding]:
     """
     out: list[Finding] = []
     seen: set[tuple[str, str, str]] = set()
-    for f in parse_erclint_findings(stdout):
+    for f in parse_erclint_findings(stdout, allow_errors=True):
         rule, posn = f.get("analyzer", ""), f.get("posn", "")
         message = f.get("message") or None
         key = (rule, posn, message or "")
@@ -854,15 +921,15 @@ def javalint_located_findings(stdout: str, _repo_root: Path) -> list[Finding]:
     return out
 
 
-# flake8's `path:row:col: CODE msg`. file is non-greedy so a windows drive colon
-# stays with the path; only the TBX code is tokenized (the message carries colons).
-_FLAKE8_LINE = re.compile(r"^(?P<file>.+?):(?P<line>\d+):\d+: (?P<code>TBX\d+) (?P<msg>.*)$")
+# The path is non-greedy so a Windows drive colon stays with the file.
+_FLAKE8_LINE = re.compile(
+    r"^(?P<file>.+?):(?P<line>\d+):\d+: (?P<code>TBX\d+|"
+    + "|".join(re.escape(code) for code in PYFLAKES_CODES) + r") (?P<msg>.*)$"
+)
 
 
 def pyrules_located_findings(stdout: str, _repo_root: Path) -> list[Finding]:
-    """Parse flake8's `path:row:col: TBXNNN <id>: <msg>` lines. The rule id comes
-    from the TBX code via CODE_TO_ID; the leading `<id>: ` echo is stripped from
-    the message so downstream `rule: message` lines do not repeat the id."""
+    """Map selected flake8 codes to rule ids and remove repeated ids from messages."""
     out: list[Finding] = []
     for line in stdout.splitlines():
         if line.lstrip().startswith("{"):
@@ -1358,11 +1425,11 @@ def _tackbox_mdlint_argv(
 def _pyrules_argv(
     _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=(), paths_dir: Path | None = None
 ) -> list[str]:
-    """flake8 in closed form, driven through our checker CLI. The checker reads
-    the file list via --files-from (ARG_MAX safety) and hands it to flake8 in
-    process. It runs under the same interpreter as tackbox (dev: the uv env;
-    hermetic: the uvx venv), so flake8 discovers the TBX plugin entry point in
-    both. Shared by the dev and hermetic registries."""
+    """Build the flake8 invocation shared by dev and hermetic engines.
+
+    A file list avoids ARG_MAX; the current interpreter provides flake8
+    and the TBX plugin in the same environment.
+    """
     flag = _reporters_flag(reporters, _PY_EXTS, lambda f: f)
     listfile = _write_paths_file(paths_dir, files)
     return [
@@ -1373,7 +1440,7 @@ def _pyrules_argv(
         "-W", "ignore::RuntimeWarning:runpy",
         "-m", "tackbox.pyrules.checker",
         "--files-from", listfile,
-        "--isolated", "--disable-noqa", "--select=TBX",
+        "--isolated", "--disable-noqa", "--select=" + ",".join(("TBX", *PYFLAKES_CODES)),
         *flag,
     ]
 

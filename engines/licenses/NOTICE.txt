@@ -1,0 +1,15 @@
+Bundled engine dependency licenses
+
+The javalint/ and go/ directories contain pinned dependency inventories
+and verbatim upstream license/notice texts for the Java and Go engines.
+Their contents ship in thin wheels under tackbox/third_party/licenses;
+javalint/ also ships inside javalint.jar under META-INF/third-party.
+
+Each engine directory's NOTICE.txt identifies the applicable license terms
+and acknowledgments. Component versions, source URLs, and license paths are
+owned by that directory's inventory.json.
+
+Dependency upgrades must update the affected inventory entries and any
+changed license or notice texts. The Java inventory also records original
+jar hashes. Maven runtime dependencies come from java/pom.xml; linked Go
+modules come from `go list -deps` for the three bundled commands.

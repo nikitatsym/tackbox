@@ -239,18 +239,18 @@ def test_jscpd_machine_location(machine_findings):
      "python-swallowed-exception", 4),
     ("javalint", "Marked.java",
      "class Marked { void f() {\ntry { work(); } catch (Exception e) {\n"
-     "// no-report: caller tolerates this failure\nint x = 1;\n}\n} }\n",
+     "// no-report: caller tolerates this failure\nint _x = 1;\n}\n} }\n",
      "JV001", 3),
     ("tackbox-eslint", "marked.js",
-     "// no-report: caller tolerates this failure\ntry { work() } catch (e) {}\n",
+     "// no-report: caller tolerates this failure\ntry { work() } catch {}\n",
      "tackbox/no-swallow-catch", 1),
     ("tackbox-eslint", "Marked.svelte",
      '<!-- no-report: caller tolerates this failure -->\n'
-     '<button onclick={() => { try { work() } catch (e) {} }}>go</button>\n',
+     '<button onclick={() => { try { work() } catch {} }}>go</button>\n',
      "tackbox/no-swallow-catch", 1),
     ("tackbox-eslint", "Multiline.svelte",
      '<!--\n  no-report: caller tolerates this failure\n-->\n'
-     '<button onclick={() => { try { work() } catch (e) {} }}>go</button>\n',
+     '<button onclick={() => { try { work() } catch {} }}>go</button>\n',
      "tackbox/no-swallow-catch", 2),
 ])
 def test_machine_suppression_preserves_the_underlying_violation(

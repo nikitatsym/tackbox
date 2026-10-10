@@ -16,7 +16,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from conftest import commit_all, count_calls, git, init_repo
+from conftest import count_calls, git, init_repo
 
 from tackbox import gitfiles
 from tackbox.gitfiles import (

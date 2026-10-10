@@ -23,9 +23,8 @@ from typing import TextIO
 from . import engines as engines_mod
 from . import proc
 from . import scopes
-from .cache import sha256_tree
 from .gitfiles import collect_snapshot
-from .hashing import sha256_file
+from .hashing import sha256_file, sha256_tree
 from .source_set import EXCLUSION_ATTRIBUTES, Snapshot
 
 

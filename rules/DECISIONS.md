@@ -28,7 +28,9 @@ uniform in intent across languages:
   match the character repertoire it declares (D017);
 - document link integrity - a relative Markdown link or image must
   resolve to an existing in-repo target, and a fragment into a target
-  Markdown file must name a real heading or HTML anchor (D018).
+  Markdown file must name a real heading or HTML anchor (D018);
+- unused bindings - unused imports, local bindings, selected parameters, and
+  private declarations, using language analyzers and reference checks (D021).
 
 Inclusion test for a candidate rule in the failure-handling / test lanes:
 
@@ -823,3 +825,116 @@ to every tool result trains agents to ignore feedback and falsely claims
 to undo writes. The pre refusal stops unrelated edits while leaving a
 human-gated route to repair the current debt. Commits do not approve
 markers; they only change which debt belongs to the session.
+
+## D021 - unused bindings are a mandatory lane (2026-10-10)
+
+Rules affected: `@typescript-eslint/no-unused-vars` and
+`no-unused-private-class-members` (JS/TS/Svelte), F401 /
+`python-unused-import`, F841 / `python-unused-variable`, TBX012 /
+`python-unused-private` (Python), ERC010 / U1000 and ERC011 / unusedparams
+(Go), JV011-014 (Java).
+
+Decision: the fixed bundle runs unused-binding checks for every consumer,
+including tests, through the existing human, machine, CodeClimate, and hook
+channels. Rule coverage is documented in the [Python and Java reference](../README.md#what-the-rules-enforce),
+[Go reference](../go/README.md#unused-declarations-erc010), and
+[JS/TS/Svelte reference](../js/README.md#rules). Python re-exports are declared
+in `__all__`; redundant import aliases and strings recognized by TBX012 do
+not exempt F401. Flake8 and pyflakes versions are pinned; changing either
+is a reviewed rule change.
+
+TBX012 checks whether module-private names are referenced in their own file;
+it does not prove whole-program reachability. Candidates are module-scope
+`_`-prefixed functions, classes, type aliases, single-name assignments, and
+annotated assignments with values. Module scope includes control-flow bodies
+but excludes function and class bodies. Imports belong to F401. Unpacking,
+loop, with, except, walrus, and match targets, annotation-only declarations,
+and dunders are excluded. Bare `_` is allowed as an assignment target, not as
+a replacement name for a dead function, class, or type alias. Each name gets
+one finding at its first binding. A recognized reference counts for every
+binding of that name.
+
+Loads, deletes, and augmented assignments count as uses without resolving
+scope or control flow. References inside a declaration's own body or a type
+alias's own value do not make that name used. Decorators, defaults,
+annotations, bases, and class keyword arguments can establish a use.
+Decorated declarations and classes with possible definition-time effects
+count as used. The class check includes non-object bases, class
+keywords, member decorators, global/nonlocal statements, non-literal field
+values (including descriptors), calls in definition-time parts, and writes or
+deletes through attributes or subscripts; nested class bodies are inspected.
+Exact strings count only in explicit name-access positions (`getattr` and
+related calls, `globals`/`vars` keys, and module-level literal `__all__` lists
+or tuples, including concatenation and augmented assignment). Forward-reference
+strings are parsed in annotations, subscript slices, explicit type aliases,
+`cast` type arguments, and `TypeVar` bounds/constraints. Recognized `Literal`
+values and `Annotated` metadata are excluded; import aliases are recognized.
+Comments, docstrings, and ordinary strings do not count.
+
+A private name used by another production module loses its leading underscore;
+an unused declaration is deleted while preserving assignment or
+definition-time effects. Imports from tests do not establish production use.
+Tests reset state in fixtures rather than through test-only production hooks.
+`__all__` declares a production API, not permission to retain a test-only hook.
+For object lifetimes, prefer an explicit owner to a discard binding; the
+checks do not establish whether an unread binding keeps an object alive.
+
+ERC011 checks parameters of unexported functions and methods. Its exclusions,
+argument-removal requirements, and JSON package-variant selection are defined
+in the [Go rule reference](../go/README.md#unused-parameters-erc011).
+
+Python parameters are not checked. Parameter names and callable signatures
+are part of the API and may be required by frameworks, overrides, or access
+to local variables through a frame. File-local analysis cannot establish
+that a private callable has no external signature constraints, and Python
+does not compiler-check parameter removal.
+
+A naming convention applies only when a signature or binding form requires
+an unused binding; otherwise the binding is removed. JS/TS/Svelte permit `_`
+prefixes on required unused parameters, caught-error bindings, and array
+destructuring targets, not general variables or imports. A loop binding required
+by syntax can use bare `_`; object destructuring can omit unused keys when
+the rest binding is used.
+Side-effect imports are binding-free. Java permits `_` prefixes only for
+enhanced-for targets and try-with-resources bindings; ordinary unused locals
+are reported regardless of name, including `_`, `ignored*`, and `unused*`.
+Discarded Java return values use a call without an assignment. Python locals
+use only bare `_`, not an `_name` prefix; side-effect imports use
+underscore-prefixed aliases on plain imports, not from-imports. Optional caught
+bindings are omitted. Go uses the blank identifier, including for side-effect
+imports. Java unnecessary imports are removed. Dead private declarations and
+members have no name exemption. The lane has no suppression marker,
+approval-manifest entry, opt-in, transition mode, or per-rule switch.
+
+Rationale: abandoned bindings and omitted uses are structural concerns.
+Existing language analyzers check reachability; Python's module-private check
+uses references within one file and can run in the edit hook. Required-binding
+conventions do not add another approval path.
+
+Named gaps: TBX012 can miss shadowed loads, unreachable branches, rebindings,
+mutually recursive dead groups, callees reached only from dead private code,
+same-file test-function references, non-registering decorators, inert subclasses
+of non-object bases, write-only augmented counters, unrelated-object name-access
+strings, dictionary-key strings parsed as types, and non-protocol dunders.
+Dynamic discovery is not resolved: nonliteral access can still produce a
+finding, requiring a production API name. The class check does not prove
+the absence of all definition-time effects. Pyflakes excludes public
+module-level assignments and some loop and destructuring bindings.
+Go's test-reference, build-configuration, and overlapping-rule limits are
+documented in the [Go reference](../go/README.md#unused-declarations-erc010).
+PMD retains framework and serialization exemptions and resolves only JDK
+classes, not javalint's bundled libraries. Without a consumer classpath,
+unused type and static wildcard imports are not diagnosed, but duplicate
+and redundant imports are checked. JV013 keeps a private overload when
+its declaring class has another method with the same name and the file
+has a call with that name and matching arity; dead overloads with the same
+arity can therefore remain undiagnosed. None of these checks proves
+reflective reachability.
+
+The [hook contract](../README.md#agent-hook) and [D020](#d020---hooks-enforce-session-debt-not-existing-tree-debt-2026-09-06)
+define diff-scoped presentation. Pure deletions and whole-file writes lint
+the whole file; replacements with nonempty additions can miss newly unused
+declarations on untouched lines. Go package analysis can find an unused
+sibling declaration that the hook's target and line filters omit.
+`dev.py check` and CI are the full-source gate within the stated language
+and build-configuration limits.

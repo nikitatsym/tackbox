@@ -346,7 +346,7 @@ def test_post_finding_off_the_touched_lines_allows(tmp_path):
     # the file is `dev.py check`'s business, not this event's.
     target = tmp_path / "src" / "app.svelte"
     target.parent.mkdir()
-    target.write_text("<script>\ntry { f() } catch (e) {}\nconst kept = 1\n</script>\n")
+    target.write_text("<script>\ntry { f() } catch (e) {}\nconst kept = 1\n</script>\n<p>{kept}</p>\n")
     _repo(tmp_path)
     payload = _decide(
         _event("post", tmp_path, "edit",
@@ -808,11 +808,11 @@ def test_excluded_target_with_unavailable_attribute_child_is_unverified(tmp_path
 def test_session_debt_blocks_only_outside_the_fix_set(tmp_path):
     _repo(tmp_path)
     (tmp_path / "debt.js").write_text("// no-report: old debt belongs to CI\ntry { f() } catch (e) {}\n")
-    (tmp_path / "other.js").write_text("const value = 1\n")
+    (tmp_path / "other.js").write_text("export const value = 1\n")
     commit_all(tmp_path)
-    other = _edit_target(tmp_path, "other.js", ["const value = 2"])
+    other = _edit_target(tmp_path, "other.js", ["export const value = 2"])
     assert _decide(_event("pre", tmp_path, "edit", [other]))["decision"] == "allow"
-    (tmp_path / "other.js").write_text("const value = 2\n")
+    (tmp_path / "other.js").write_text("export const value = 2\n")
     assert _decide(_event("post", tmp_path, "edit", [other]))["decision"] == "allow"
     (tmp_path / "new.js").write_text("// no-report: caller tolerates this failure\ntry { f() } catch (e) {}\n")
     git(tmp_path, "add", "new.js")
@@ -1089,7 +1089,7 @@ def test_post_uses_only_actual_target_repository_despite_launch_debt(tmp_path):
 
 
 def test_claude_relative_path_is_resolved_from_launch_cwd_to_target_repository(tmp_path):
-    root = _child_repo(tmp_path, "target")
+    _child_repo(tmp_path, "target")
     event = {
         "hook_event_name": "PreToolUse", "tool_name": "Write", "cwd": str(tmp_path),
         "tool_input": {"file_path": "target/.tackbox/approvals", "content": MANIFEST_ENTRY + "\n"},

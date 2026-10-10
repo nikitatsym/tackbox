@@ -178,7 +178,6 @@ def test_signature_change_in_b_invalidates_a(go_repo, tmp_path):
     """
     cache_home = tmp_path / "cache"
     assert run_lint(go_repo, cache_home).returncode == 0
-    before = {p.name for p in _all_markers(cache_home)}
     erclint_before = {p.name for p in _all_markers(cache_home) if p.name.endswith(".erclint")}
 
     (go_repo / "pkg_b" / "b.go").write_text(GO_PKG_B_ADD3)

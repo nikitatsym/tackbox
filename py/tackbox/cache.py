@@ -22,11 +22,10 @@ Unit granularity:
   policy change invalidates the package.
 
 engines-hash:
-- Dev mode digests the engine payload sources (go/, js/, bin/, the eslint
-  preset, npm manifest and lockfile), so editing any rule invalidates prior
-  markers and stale clean-results can never mask new findings. The
-  orchestrator under py/ is deliberately outside the payload. Hermetic
-  wheels (step 6) replace this with the bundled-payload digest.
+- Dev mode digests Go, Java, frontend, and pyrules engine sources plus their
+  dependency manifests, so rule and dependency changes invalidate prior markers.
+  Python orchestration outside pyrules is not engine payload. Hermetic wheels
+  include pyrules sources and analyzer pins in the bundled-payload digest.
 """
 
 from __future__ import annotations
@@ -39,7 +38,7 @@ from pathlib import Path
 
 from . import proc
 from .engines import iter_json_objects
-from .hashing import sha256_file, sha256_tree
+from .hashing import sha256_file
 from .source_set import group_go_packages_by_module, module_relative
 
 
@@ -74,6 +73,10 @@ class CacheKey:
 # the built jar is a pure function of those.
 _DEV_PAYLOAD = (
     "go",
+    "go.mod",
+    "go.sum",
+    "py/tackbox/pyrules",
+    "py/setup.py",
     "js",
     "bin",
     "eslint.config.preset.js",

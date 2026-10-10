@@ -487,13 +487,6 @@ def _publish_thin_job(jobs: dict) -> dict:
     raise AssertionError("no publish job found for thin (tackbox) wheels")
 
 
-def _publish_thin_job_name(jobs: dict) -> str:
-    for name, job in jobs.items():
-        if _pypi_publish_packages_dir(job) == "thin":
-            return name
-    raise AssertionError("no publish job found for thin wheels")
-
-
 def _smoke_job_name(jobs: dict) -> str:
     for name, job in jobs.items():
         text = _steps_text((job or {}).get("steps", []))

@@ -33,6 +33,20 @@ def log() -> logging.Logger:
 def records(lg: logging.Logger) -> list[logging.LogRecord]:
     return lg.handlers[0].records  # type: ignore[attr-defined]
 
+@pytest.fixture(autouse=True)
+def reset_report_state():
+    def reset():
+        with report._lock:
+            report._last_sent.clear()
+        report._ready = False
+        report._rate_window = 60.0
+        report._flush_timeout = 2.0
+
+    reset()
+    yield reset
+    reset()
+
+
 
 @pytest.fixture
 def events(log: logging.Logger):
@@ -44,7 +58,6 @@ def events(log: logging.Logger):
         captured.append(event)
         return None
 
-    report._reset_for_test()
     report.init(
         _FAKE_DSN,
         release="test",
@@ -54,4 +67,3 @@ def events(log: logging.Logger):
     )
     yield captured
     report.flush(0.1)
-    report._reset_for_test()

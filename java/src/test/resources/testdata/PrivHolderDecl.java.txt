@@ -4,5 +4,5 @@ package com.consumer.priv;
 // visibility. See Tier2PrivateQualifiedCapture.java.txt for the real call-site
 // capture this drives (cal4-parity: unexported/private sinks still resolve).
 public class PrivHolder {
-    private void reportPriv(Throwable cause) {}
+    private void reportPriv(Throwable cause) {} // want "JV013: unused private method"
 }

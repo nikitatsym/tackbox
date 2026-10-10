@@ -13,6 +13,7 @@ seeded violations drive both this session and the wheels CI matrix.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
@@ -24,11 +25,29 @@ from pathlib import Path
 import pytest
 
 from tackbox import engines
-from tackbox.cache import sha256_tree
+from tackbox.hashing import sha256_tree
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+from build_wheels import compute_payload_sha, python_rule_entries
 
 REPO = Path(__file__).resolve().parents[2]
 BUILD_SCRIPT = REPO / "scripts" / "build_wheels.py"
 MATERIALIZE_SCRIPT = REPO / "scripts" / "materialize_fixture.py"
+
+
+def test_hermetic_hash_changes_with_only_python_rule_or_dependency_pin(tmp_path):
+    pyrules = tmp_path / 'tackbox' / 'pyrules'
+    pyrules.mkdir(parents=True)
+    checker = pyrules / 'checker.py'
+    checker.write_text('first rule\n')
+    setup = tmp_path / 'setup.py'
+    setup.write_text('flake8==7.3.0; pyflakes==3.4.0\n')
+    before = compute_payload_sha(python_rule_entries(tmp_path))
+    checker.write_text('second rule\n')
+    after_rule = compute_payload_sha(python_rule_entries(tmp_path))
+    assert after_rule != before
+    setup.write_text('flake8==7.3.0; pyflakes==next\n')
+    assert compute_payload_sha(python_rule_entries(tmp_path)) != after_rule
 
 
 def _needs(cmd: str) -> None:
@@ -104,6 +123,18 @@ def fixture_repo(tmp_path_factory) -> Path:
         [sys.executable, str(MATERIALIZE_SCRIPT), str(root)],
         check=True, capture_output=True, text=True,
     )
+    sources = {
+        "unused.py": "import os\ndef public():\n    unused = 1\n    return 2\ndef _dead():\n    pass\n",
+        "clean.py": "import json as _json\ndef public():\n    return 1\n",
+        "pkga/unused.go": "package pkga\nfunc deadPrivate() {}\nfunc called(unused int) int { return 1 }\nfunc PublicUse() int { return called(3) }\n",
+        "Unused.java": "import java.util.Map;\nclass Unused {\n    private int deadField;\n    private void deadMethod() {}\n    int publicUse() { int deadLocal = 1; return 2; }\n}\n",
+        "unused.js": "const deadJs = 1;\nexport function publicJs() { return 2; }\n",
+        "unused.ts": "type DeadType = number;\nexport const publicTs = 2;\n",
+        "Unused.svelte": "<script>const deadSvelte = 1; const visible = 2;</script>\n<p>{visible}</p>\n",
+    }
+    for name, source in sources.items():
+        (root / name).write_text(source, encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True)
     return root
 
 
@@ -129,7 +160,8 @@ def _hermetic_env(engines_payload: Path) -> dict:
         p for p in os.environ.get("PATH", "").split(os.pathsep)
         if p and not _carries_ast_grep(p)
     )
-    return {**os.environ, "PATH": path, "TACKBOX_ENGINES_DIR": str(engines_payload)}
+    env = {key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "PYTHONHOME"}}
+    return {**env, "PATH": path, "TACKBOX_ENGINES_DIR": str(engines_payload)}
 
 
 def test_thin_and_fat_wheels_built(wheels):
@@ -164,6 +196,76 @@ def test_thin_wheel_carries_javalint_jar(wheels):
     assert entry is not None, "engines.json is missing the javalint entry"
     assert entry["path"] == "tackbox/bin/javalint.jar"
     assert entry.get("sha256"), "javalint entry must carry a sha256 for doctor"
+    python_entries = python_rule_entries(REPO / 'py')
+    by_id = {component['id']: component for component in ej['engines']}
+    for component in python_entries:
+        assert by_id[component['id']]['sha256'] == component['sha256']
+        if component.get('path'):
+            assert component['path'] in names
+
+
+def test_thin_wheel_preserves_engine_dependency_licenses(wheels, tmp_path):
+    dependency_file = tmp_path / "maven-runtime.txt"
+    subprocess.run([
+        "mvn", "-q", "-B", "-f", str(REPO / "java" / "pom.xml"),
+        "dependency:list", "-DincludeScope=runtime", f"-DoutputFile={dependency_file}",
+    ], check=True, capture_output=True, text=True)
+    maven_dependencies = set()
+    for line in dependency_file.read_text().splitlines():
+        fields = line.strip().split(":")
+        if len(fields) >= 5 and fields[-1].split()[0] in {"compile", "runtime"}:
+            maven_dependencies.add((fields[0] + ":" + fields[1], fields[-2]))
+    assert maven_dependencies
+    assert not any("Saxon" in name or "xmlresolver" in name for name, _ in maven_dependencies)
+    with zipfile.ZipFile(wheels["thin"]) as wheel:
+        names = set(wheel.namelist())
+        metadata = json.loads(wheel.read("tackbox/engines.json"))
+        inventories = {}
+        for engine in ("go", "javalint"):
+            prefix = f"tackbox/third_party/licenses/{engine}/"
+            inventory = json.loads(wheel.read(prefix + "inventory.json"))
+            inventories[engine] = inventory["components"]
+            assert wheel.read(prefix + "NOTICE.txt") == (REPO / "engines" / "licenses" / engine / "NOTICE.txt").read_bytes()
+            for component in inventory["components"]:
+                entry = next(e for e in metadata["engines"]
+                             if e["id"] == f"{engine}-dependency/{component['id']}")
+                assert entry["version"] == component["version"]
+                assert entry["license"] == component["license"]
+                assert entry["license_path"] == prefix + component["license_path"]
+                source = REPO / "engines" / "licenses" / engine / component["license_path"]
+                assert wheel.read(entry["license_path"]) == source.read_bytes()
+                if component.get("notice_path"):
+                    assert entry["notice_path"] == prefix + component["notice_path"]
+                    assert wheel.read(entry["notice_path"]) == (source.parent / component["notice_path"]).read_bytes()
+        assert {(c["id"], c["version"]) for c in inventories["javalint"]} == maven_dependencies
+        linked_modules = set()
+        for command in ("erclint", "erclint-opengrep", "tackbox-jscpd"):
+            path = next(n for n in names if n in {f"tackbox/bin/{command}", f"tackbox/bin/{command}.exe"})
+            binary = tmp_path / Path(path).name
+            binary.write_bytes(wheel.read(path))
+            info = subprocess.run(["go", "version", "-m", str(binary)], check=True, capture_output=True, text=True).stdout
+            for line in info.splitlines():
+                fields = line.split()
+                if fields and fields[0] == "dep":
+                    linked_modules.add((fields[1], fields[2]))
+        recorded_modules = {(c["id"], c["version"]) for c in inventories["go"]
+                            if c.get("kind") != "runtime" and not c.get("vendored_source")}
+        recorded_modules.update((c["id"], c["version"]) for c in inventories["go"]
+                                if c.get("vendored_source") and c["id"] in dict(linked_modules))
+        assert recorded_modules == linked_modules
+        vendored = [c for c in inventories["go"] if c.get("vendored_source") and c["id"] not in dict(linked_modules)]
+        assert {c["id"] for c in vendored} == {"golang.org/x/tools/gopls"}
+        assert all((REPO / c["local_path"]).is_file() for c in vendored)
+        version = next(line.split()[1] for line in (REPO / "go.mod").read_text().splitlines() if line.startswith("go "))
+        assert [(c["id"], c["version"]) for c in inventories["go"] if c.get("kind") == "runtime"] == [("go", version)]
+        with zipfile.ZipFile(io.BytesIO(wheel.read("tackbox/bin/javalint.jar"))) as jar:
+            prefix = "tackbox/third_party/licenses/javalint/"
+            for filename in (REPO / "engines" / "licenses" / "javalint").iterdir():
+                assert jar.read("META-INF/third-party/" + filename.name) == wheel.read(prefix + filename.name)
+            assert not any(n.startswith(("net/sf/saxon/", "org/xmlresolver/")) for n in jar.namelist())
+            assert "META-INF/LICENSE.txt" not in jar.namelist()
+            assert "META-INF/NOTICE.txt" not in jar.namelist()
+            assert "META-INF/LICENSE" in jar.namelist()
 
 
 def test_thin_wheel_does_not_depend_on_fat(wheels):
@@ -178,7 +280,8 @@ def test_thin_wheel_does_not_depend_on_fat(wheels):
     )
     # flake8 stays a real dependency (hosts the pyrules plugin); ast-grep-cli is
     # the pinned outline engine (D015), a thin runtime dep like flake8.
-    assert any("flake8" in r for r in requires), f"thin must still require flake8: {requires}"
+    for analyzer, version in (("flake8", "7.3.0"), ("pyflakes", "3.4.0")):
+        assert any(analyzer in r and f"=={version}" in r for r in requires), requires
     assert any("ast-grep-cli" in r or "ast_grep_cli" in r for r in requires), (
         f"thin must pin the outline engine ast-grep-cli: {requires}"
     )
@@ -251,6 +354,31 @@ def test_hermetic_lint_finds_all_engine_violations(hermetic_venv, fixture_repo, 
     assert "no-swallow-catch" in result.stdout
     # markdownlint declared-chars (MD-CHARS) on notes.md, under its chars=ascii carrier
     assert "MD-CHARS" in result.stdout or "declared-chars" in result.stdout
+    for rule in ("python-unused-import", "python-unused-variable", "python-unused-private",
+                 "ERC010", "ERC011", "JV011", "JV012", "JV013", "JV014",
+                 "@typescript-eslint/no-unused-vars"):
+        assert rule in result.stdout, result.stdout + result.stderr
+
+    report_path = fixture_repo / "quality.json"
+    quality = _run(
+        [str(_tackbox(hermetic_venv)), "lint", ".", "--no-cache", "--codequality", str(report_path)],
+        cwd=fixture_repo, env=_hermetic_env(engines_payload),
+    )
+    assert quality.returncode == 1, quality.stdout + quality.stderr
+    issues = json.loads(report_path.read_text(encoding="utf-8"))
+    locations = {(i['check_name'], i['location']['path'], i['location']['lines']['begin']) for i in issues}
+    assert {
+        ('python-unused-import', 'unused.py', 1),
+        ('python-unused-variable', 'unused.py', 3),
+        ('python-unused-private', 'unused.py', 5),
+        ('unused', 'pkga/unused.go', 2), ('unusedparams', 'pkga/unused.go', 3),
+        ('JV011', 'Unused.java', 5), ('JV012', 'Unused.java', 3),
+        ('JV013', 'Unused.java', 4), ('JV014', 'Unused.java', 1),
+        ('@typescript-eslint/no-unused-vars', 'unused.js', 1),
+        ('@typescript-eslint/no-unused-vars', 'unused.ts', 1),
+        ('@typescript-eslint/no-unused-vars', 'Unused.svelte', 1),
+    } <= locations
+    assert not any(i['location']['path'] == 'clean.py' for i in issues)
 
 
 def test_doctor_fails_on_patched_vendored_transitive_dep(hermetic_venv, fixture_repo, engines_payload):

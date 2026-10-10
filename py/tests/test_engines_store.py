@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 
 from tackbox import engines
-from tackbox.cache import sha256_tree
+from tackbox.hashing import sha256_tree
 
 
 # -- fixture wheel builder -------------------------------------------------

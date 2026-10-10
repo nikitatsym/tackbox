@@ -56,7 +56,7 @@ def _arg_defaults(args: ast.arguments):
             yield d
 
 
-def _target_names(target: ast.expr) -> list[str]:
+def target_names(target: ast.expr) -> list[str]:
     """Names bound by an assignment / for / with / del target (any ctx),
     flattening tuple/list/starred targets. Attribute/subscript bind no name."""
     out: list[str] = []
@@ -84,7 +84,7 @@ def _pattern_names(pattern: ast.pattern) -> list[str]:
     return out
 
 
-def _enclosing_exec_parts(node: ast.AST):
+def enclosing_exec_parts(node: ast.AST):
     """Sub-expressions of a def/class/lambda that execute in the ENCLOSING scope
     (decorators, argument defaults, class bases/keywords): their calls resolve
     with the enclosing state, not the new scope's."""
@@ -110,7 +110,7 @@ def _survey(roots) -> tuple[list[ast.Call], list[ast.AST]]:
     def visit(node: ast.AST) -> None:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
             scopes.append(node)
-            for part in _enclosing_exec_parts(node):
+            for part in enclosing_exec_parts(node):
                 visit(part)
             return
         if isinstance(node, ast.Call):
@@ -133,11 +133,11 @@ def _collect_shadows(stmts: list[ast.stmt]) -> set[str]:
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 names.add(child.name)
-                for part in _enclosing_exec_parts(child):
+                for part in enclosing_exec_parts(child):
                     visit(part)
                 continue
             if isinstance(child, ast.Lambda):
-                for part in _enclosing_exec_parts(child):
+                for part in enclosing_exec_parts(child):
                     visit(part)
                 continue
             if isinstance(child, (ast.Import, ast.ImportFrom)):
@@ -264,11 +264,11 @@ class _Resolver:
             _apply_import(stmt, state)
             return
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            self._resolve_parts(_enclosing_exec_parts(stmt), state)
+            self._resolve_parts(enclosing_exec_parts(stmt), state)
             self._bind_def(stmt.name, state)
             return
         if isinstance(stmt, ast.ClassDef):
-            self._resolve_parts(_enclosing_exec_parts(stmt), state)
+            self._resolve_parts(enclosing_exec_parts(stmt), state)
             state.pop(stmt.name, None)
             return
         if isinstance(stmt, ast.If):
@@ -278,7 +278,7 @@ class _Resolver:
             return
         if isinstance(stmt, (ast.For, ast.AsyncFor)):
             self._resolve_here(stmt.iter, state)
-            self._kill(_target_names(stmt.target), state)
+            self._kill(target_names(stmt.target), state)
             self._scan(stmt.body, state)
             self._scan(stmt.orelse, state)
             return
@@ -291,7 +291,7 @@ class _Resolver:
             for item in stmt.items:
                 self._resolve_here(item.context_expr, state)
                 if item.optional_vars is not None:
-                    self._kill(_target_names(item.optional_vars), state)
+                    self._kill(target_names(item.optional_vars), state)
             self._scan(stmt.body, state)
             return
         if isinstance(stmt, _TRY_TYPES):
@@ -308,19 +308,19 @@ class _Resolver:
         if isinstance(stmt, ast.Assign):
             self._resolve_here(stmt.value, state)
             for tgt in stmt.targets:
-                self._kill(_target_names(tgt), state)
+                self._kill(target_names(tgt), state)
             return
         if isinstance(stmt, ast.AnnAssign):
             self._resolve_here(stmt.value, state)
-            self._kill(_target_names(stmt.target), state)
+            self._kill(target_names(stmt.target), state)
             return
         if isinstance(stmt, ast.AugAssign):
             self._resolve_here(stmt.value, state)
-            self._kill(_target_names(stmt.target), state)
+            self._kill(target_names(stmt.target), state)
             return
         if isinstance(stmt, ast.Delete):
             for tgt in stmt.targets:
-                self._kill(_target_names(tgt), state)
+                self._kill(target_names(tgt), state)
             return
         if isinstance(stmt, ast.Match):
             self._resolve_here(stmt.subject, state)

@@ -37,7 +37,6 @@ def test_public_api_is_reporting_only():
 
 # -- init: empty DSN = log-only no-op
 def test_init_empty_dsn_is_log_only_noop(log):
-    report._reset_for_test()
     report.init("", logger=log)
     assert report.is_ready() is False
 
@@ -48,7 +47,6 @@ def test_init_empty_dsn_is_log_only_noop(log):
 
 
 def test_init_empty_dsn_silent_missing(log):
-    report._reset_for_test()
     report.init("", logger=log, silent_missing=True)
     assert records(log) == []  # no WARN line
 
@@ -177,7 +175,6 @@ def notices():
 
 
 def test_report_error_dispatches_user_lane_when_not_ready(log, notices):
-    report._reset_for_test()  # leaves the fixture's notifier in place
     report.init("", logger=log, silent_missing=True)
     assert report.is_ready() is False
     report.report_error("connection lost mid-stream", RuntimeError("boom"), {"area": "net"}, "net.conn")

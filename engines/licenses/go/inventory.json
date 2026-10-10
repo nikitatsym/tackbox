@@ -1,0 +1,81 @@
+{
+  "components": [
+    {
+      "id": "go",
+      "version": "1.27.0",
+      "license": "BSD-3-Clause",
+      "license_path": "go.LICENSE.txt",
+      "source": "https://go.dev/dl/go1.27.0.src.tar.gz",
+      "kind": "runtime"
+    },
+    {
+      "id": "github.com/getsentry/sentry-go",
+      "version": "v0.47.0",
+      "license": "MIT",
+      "license_path": "github.com_getsentry_sentry-go.LICENSE.txt",
+      "source": "https://proxy.golang.org/github.com/getsentry/sentry-go/@v/v0.47.0.zip"
+    },
+    {
+      "id": "golang.org/x/tools",
+      "version": "v0.51.0",
+      "license": "BSD-3-Clause",
+      "license_path": "golang.org_x_tools.LICENSE.txt",
+      "source": "https://proxy.golang.org/golang.org/x/tools/@v/v0.51.0.zip",
+      "vendored_source": "internal/typesinternal/classify_call.go (UsedIdent)",
+      "local_path": "go/analyzers/unusedparams/unusedparams.go",
+      "adaptations": "UsedIdent inlined with explicit optional-result boolean"
+    },
+    {
+      "id": "golang.org/x/tools/gopls",
+      "version": "v0.23.0",
+      "license": "BSD-3-Clause",
+      "license_path": "golang.org_x_tools.LICENSE.txt",
+      "source": "https://proxy.golang.org/golang.org/x/tools/gopls/@v/v0.23.0.zip",
+      "vendored_source": "internal/analysis/unusedparams/unusedparams.go",
+      "local_path": "go/analyzers/unusedparams/unusedparams.go",
+      "adaptations": "FuncDecl only; Origin canonicalization; ABI and no-use exclusions; ERC011 messages; JSON variant records; UsedIdent and EnclosingFile equivalents inlined; FuncLit and gopls fix-command scaffolding removed"
+    },
+    {
+      "id": "honnef.co/go/tools",
+      "version": "v0.8.1",
+      "license": "MIT",
+      "license_path": "honnef.co_go_tools.LICENSE.txt",
+      "source": "https://proxy.golang.org/honnef.co/go/tools/@v/v0.8.1.zip"
+    },
+    {
+      "id": "golang.org/x/exp/typeparams",
+      "version": "v0.0.0-20231108232855-2478ac86f678",
+      "license": "BSD-3-Clause",
+      "license_path": "golang.org_x_exp_typeparams.LICENSE.txt",
+      "source": "https://proxy.golang.org/golang.org/x/exp/typeparams/@v/v0.0.0-20231108232855-2478ac86f678.zip"
+    },
+    {
+      "id": "golang.org/x/mod",
+      "version": "v0.41.0",
+      "license": "BSD-3-Clause",
+      "license_path": "golang.org_x_mod.LICENSE.txt",
+      "source": "https://proxy.golang.org/golang.org/x/mod/@v/v0.41.0.zip"
+    },
+    {
+      "id": "golang.org/x/sync",
+      "version": "v0.23.0",
+      "license": "BSD-3-Clause",
+      "license_path": "golang.org_x_sync.LICENSE.txt",
+      "source": "https://proxy.golang.org/golang.org/x/sync/@v/v0.23.0.zip"
+    },
+    {
+      "id": "golang.org/x/sys",
+      "version": "v0.48.0",
+      "license": "BSD-3-Clause",
+      "license_path": "golang.org_x_sys.LICENSE.txt",
+      "source": "https://proxy.golang.org/golang.org/x/sys/@v/v0.48.0.zip"
+    },
+    {
+      "id": "golang.org/x/text",
+      "version": "v0.37.0",
+      "license": "BSD-3-Clause",
+      "license_path": "golang.org_x_text.LICENSE.txt",
+      "source": "https://proxy.golang.org/golang.org/x/text/@v/v0.37.0.zip"
+    }
+  ]
+}

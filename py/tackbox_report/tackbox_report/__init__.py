@@ -415,12 +415,3 @@ def _mask_dsn(dsn: str) -> str:
         return "<malformed>"
     return f"{u.hostname}{u.path}"
 
-
-def _reset_for_test() -> None:
-    """Test-only: clear rate-limit state and readiness between cases."""
-    global _ready, _rate_window, _flush_timeout
-    with _lock:
-        _last_sent.clear()
-    _ready = False
-    _rate_window = 60.0
-    _flush_timeout = 2.0

@@ -129,6 +129,12 @@
         "license": "MIT",
         "purpose": "TypeScript ESLint parser"
       },
+      "@typescript-eslint/eslint-plugin": {
+        "constraint": "^8.0.0",
+        "kind": "npm",
+        "license": "MIT",
+        "purpose": "Unused JS/TS/Svelte bindings"
+      },
       "svelte-eslint-parser": {
         "constraint": "^1.6.0",
         "kind": "npm",

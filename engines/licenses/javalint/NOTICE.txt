@@ -1,0 +1,14 @@
+javalint third-party notices
+
+This product includes software developed in part by support from the
+Defense Advanced Research Project Agency (DARPA).
+
+JavaParser is used under its Apache-2.0 license option. PMD is distributed
+under its BSD-style license with the acknowledgment requirement above.
+The bundled libraries are unmodified; shaded packaging combines their
+classes and service descriptors. Saxon-HE and XML resolver are excluded,
+so this jar does not contain MPL-2.0 components.
+
+Component versions, source URLs, original jar hashes, and license paths
+are recorded in inventory.json. Full upstream licenses and notices are
+in the sibling *.LICENSE.txt and *.NOTICE.txt files.
