@@ -38,9 +38,10 @@ type Options struct {
 	VerifyTimeout time.Duration // zero keeps defaultVerifyTimeout
 	// SilentMissing suppresses the WARN log on empty DSN.
 	SilentMissing bool
-	// Logger overrides the local log sink. Nil uses a JSON handler on
-	// stderr. Every capture logs here before it ships, so log-only mode
-	// (empty DSN) keeps the full msg + tags context.
+	// Logger overrides the local log sink. When Logger is nil, a JSON handler
+	// writes to LogWriter if set, otherwise to stderr. Every capture logs here
+	// before it ships, so log-only mode (empty DSN) keeps the full msg + tags
+	// context.
 	Logger *slog.Logger
 	// LogWriter redirects the default JSON local log; Init errors if Logger is also set.
 	LogWriter io.Writer

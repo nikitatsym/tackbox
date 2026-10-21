@@ -58,8 +58,8 @@ disables transmission.
 - `VerifyTimeout` (`time.Duration`, default `3s`) - timeout for
   `Verify`.
 - `SilentMissing` (`bool`) - suppress the WARN log on an empty DSN.
-- `Logger` (`*slog.Logger`) - override the local sink; nil uses a JSON
-  handler on stderr.
+- `Logger` (`*slog.Logger`) - override the local sink; when nil, a JSON
+  handler writes to `LogWriter` if set, otherwise to stderr.
 - `LogWriter` (`io.Writer`) - keep the default JSON local sink but write
   it here instead of stderr. Setting both `Logger` and `LogWriter` makes
   `Init` return an error.
