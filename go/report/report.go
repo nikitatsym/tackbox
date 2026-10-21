@@ -42,6 +42,8 @@ type Options struct {
 	// stderr. Every capture logs here before it ships, so log-only mode
 	// (empty DSN) keeps the full msg + tags context.
 	Logger *slog.Logger
+	// LogWriter redirects the default JSON local log; Init errors if Logger is also set.
+	LogWriter io.Writer
 }
 
 var (
@@ -84,8 +86,14 @@ func renameFatalLevel(_ []string, a slog.Attr) slog.Attr {
 }
 
 func Init(opts Options) error {
-	if opts.Logger != nil {
+	if opts.Logger != nil && opts.LogWriter != nil {
+		return errors.New("report.Init: Logger and LogWriter are mutually exclusive")
+	}
+	switch {
+	case opts.Logger != nil:
 		logger = opts.Logger
+	case opts.LogWriter != nil:
+		logger = newJSONLogger(opts.LogWriter)
 	}
 	if opts.DSN == "" {
 		if !opts.SilentMissing {

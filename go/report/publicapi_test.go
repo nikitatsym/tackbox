@@ -48,6 +48,7 @@ func TestPublicAPIIsReportingOnly(t *testing.T) {
 			{"VerifyTimeout", "time.Duration"},
 			{"SilentMissing", "bool"},
 			{"Logger", "*log/slog.Logger"},
+			{"LogWriter", "io.Writer"},
 		},
 		"Notice": {
 			{"Msg", "string"},

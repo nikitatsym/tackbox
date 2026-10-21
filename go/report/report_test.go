@@ -95,6 +95,56 @@ func TestPanicLogsFatalLevel(t *testing.T) {
 	}
 }
 
+// LogWriter keeps tackbox's own JSON format, FATAL level name included, on a
+// caller-owned writer instead of stderr.
+func TestLogWriterReceivesJSONLines(t *testing.T) {
+	prevLogger := logger
+	t.Cleanup(func() { logger = prevLogger })
+	var buf bytes.Buffer
+	if err := Init(Options{LogWriter: &buf, SilentMissing: true}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	Error(context.Background(), "unlock failed", errors.New("bad passphrase"),
+		map[string]string{"item": "work-key"}, "vault.unlock")
+	Panic("tray-loop", "boom")
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2: %q", len(lines), buf.String())
+	}
+	errRec := decodeLine(t, []byte(lines[0]))
+	if _, ok := errRec["time"].(string); !ok {
+		t.Errorf("time = %v, want an ISO 8601 string", errRec["time"])
+	}
+	if errRec["level"] != "ERROR" || errRec["msg"] != "unlock failed" || errRec["err"] != "bad passphrase" {
+		t.Errorf("error line = %s, want level=ERROR msg=unlock failed err=bad passphrase", lines[0])
+	}
+	if tags, ok := errRec["tags"].(map[string]any); !ok || tags["item"] != "work-key" {
+		t.Errorf("tags = %v, want item=work-key", errRec["tags"])
+	}
+	panicRec := decodeLine(t, []byte(lines[1]))
+	if panicRec["level"] != "FATAL" || panicRec["recovered"] != "boom" {
+		t.Errorf("panic line = %s, want level=FATAL recovered=boom", lines[1])
+	}
+}
+
+func TestInitRejectsLoggerWithLogWriter(t *testing.T) {
+	prevLogger := logger
+	t.Cleanup(func() { logger = prevLogger })
+	var buf bytes.Buffer
+	err := Init(Options{Logger: newJSONLogger(io.Discard), LogWriter: &buf})
+	if err == nil {
+		t.Fatal("init with both Logger and LogWriter returned nil error")
+	}
+	if logger != prevLogger {
+		t.Error("rejected Init replaced the local logger")
+	}
+	if buf.Len() != 0 {
+		t.Errorf("rejected Init wrote to LogWriter: %q", buf.String())
+	}
+}
+
 func decodeLine(t *testing.T, b []byte) map[string]any {
 	t.Helper()
 	var rec map[string]any

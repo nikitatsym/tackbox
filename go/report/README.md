@@ -60,6 +60,9 @@ disables transmission.
 - `SilentMissing` (`bool`) - suppress the WARN log on an empty DSN.
 - `Logger` (`*slog.Logger`) - override the local sink; nil uses a JSON
   handler on stderr.
+- `LogWriter` (`io.Writer`) - keep the default JSON local sink but write
+  it here instead of stderr. Setting both `Logger` and `LogWriter` makes
+  `Init` return an error.
 
 ## API
 
@@ -137,7 +140,9 @@ Every `Error` / `Warn` / `Quiet` / `Notify` / `Panic` writes one
 structured JSON line via `log/slog` *before* the readiness and rate-limit
 checks, so nothing is lost when capture is disabled. The default sink is
 a JSON handler on stderr (ISO 8601 timestamp, level, message); pass
-`Options.Logger` to redirect it or reuse an existing `*slog.Logger`.
+`Options.LogWriter` to send the same JSON lines to another writer (a
+per-run file, a stream), or `Options.Logger` to replace the sink with
+an existing `*slog.Logger`.
 
 One physical line, shown wrapped:
 
