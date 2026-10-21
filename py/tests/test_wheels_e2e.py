@@ -432,7 +432,7 @@ def test_hermetic_banner_carries_engines_sha_and_versions(hermetic_venv, fixture
             break
     assert banner is not None, f"no banner on stderr:\n{result.stderr}"
     assert "engines=sha256:" in banner
-    assert "opengrep=1.25.0" in banner
+    assert "opengrep=1.30.0" in banner
     assert "node=22.18.0" in banner
     assert "eslint=" in banner
     assert "markdownlint=" in banner
