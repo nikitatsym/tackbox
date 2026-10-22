@@ -1,11 +1,13 @@
-"""engines/VERSION + engines/lock.json contract for step 6c publish gating.
+"""engines/VERSION, engines/opengrep/VERSION + engines/lock.json contract
+for publish gating.
 
-Fat wheel version comes from engines/VERSION; drift detection comes from
-engines/lock.json, which pins sha256 of the engine sources
-(manifest.json + vendor/package-lock.json). The publish workflow refuses
-to push if VERSION was bumped without regenerating lock.json (or vice
-versa), so engineers cannot silently ship new engines under a stale
-fat version and pin thin to the wrong payload.
+The tackbox-engines version comes from engines/VERSION and the
+tackbox-opengrep version from engines/opengrep/VERSION; drift detection
+comes from engines/lock.json, which pins both versions and sha256 of the
+engine sources (manifest.json + vendor/package-lock.json). The publish
+workflow refuses to push if a VERSION was bumped without regenerating
+lock.json (or vice versa), so engineers cannot silently ship new engines
+under a stale payload version and pin thin to the wrong payload.
 
 scripts/lock_engines.py is the single source of truth: `--check`
 verifies the committed lock matches current sources; `--write`
@@ -21,11 +23,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 
 from tackbox.hashing import sha256_file
 
 REPO = Path(__file__).resolve().parents[2]
 VERSION_FILE = REPO / "engines" / "VERSION"
+OPENGREP_VERSION_FILE = REPO / "engines" / "opengrep" / "VERSION"
 LOCK_FILE = REPO / "engines" / "lock.json"
 MANIFEST_FILE = REPO / "engines" / "manifest.json"
 VENDOR_LOCK_FILE = REPO / "engines" / "vendor" / "package-lock.json"
@@ -34,22 +38,24 @@ LOCK_SCRIPT = REPO / "scripts" / "lock_engines.py"
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
 
-def test_engines_version_file_exists_and_is_semver():
-    assert VERSION_FILE.is_file(), f"missing {VERSION_FILE.relative_to(REPO)}"
-    raw = VERSION_FILE.read_text()
+@pytest.mark.parametrize("path", [VERSION_FILE, OPENGREP_VERSION_FILE], ids=lambda p: p.parent.name)
+def test_payload_version_file_exists_and_is_semver(path):
+    rel = path.relative_to(REPO).as_posix()
+    assert path.is_file(), f"missing {rel}"
+    raw = path.read_text()
     stripped = raw.strip()
     assert SEMVER_RE.match(stripped), (
-        f"engines/VERSION must be strict semver (major.minor.patch), got {stripped!r}"
+        f"{rel} must be strict semver (major.minor.patch), got {stripped!r}"
     )
-    assert raw.endswith("\n"), "engines/VERSION must end with a trailing newline"
-    assert raw.count("\n") == 1, "engines/VERSION must contain exactly one line"
+    assert raw.endswith("\n"), f"{rel} must end with a trailing newline"
+    assert raw.count("\n") == 1, f"{rel} must contain exactly one line"
 
 
 def test_engines_lock_file_exists_and_is_valid_json():
     assert LOCK_FILE.is_file(), f"missing {LOCK_FILE.relative_to(REPO)}"
     data = json.loads(LOCK_FILE.read_text())
     assert data.get("schema") == 1, "engines/lock.json must declare schema: 1"
-    for key in ("version", "manifest_sha256", "vendor_lock_sha256"):
+    for key in ("version", "opengrep_version", "manifest_sha256", "vendor_lock_sha256"):
         assert key in data, f"engines/lock.json missing required key {key!r}"
 
 
@@ -60,6 +66,10 @@ def test_engines_lock_version_matches_version_file():
         f"engines/lock.json version {data['version']!r} != "
         f"engines/VERSION {version_content!r}. Run "
         f"`python scripts/lock_engines.py --write` after bumping engines/VERSION."
+    )
+    assert data["opengrep_version"] == OPENGREP_VERSION_FILE.read_text().strip(), (
+        "engines/lock.json opengrep_version != engines/opengrep/VERSION. Run "
+        "`python scripts/lock_engines.py --write` after bumping engines/opengrep/VERSION."
     )
 
 
@@ -101,9 +111,11 @@ def test_lock_engines_write_reproduces_committed_lock(tmp_path):
     scratch_engines = scratch_repo / "engines"
     scratch_scripts = scratch_repo / "scripts"
     (scratch_engines / "vendor").mkdir(parents=True)
+    (scratch_engines / "opengrep").mkdir()
     scratch_scripts.mkdir()
     shutil.copyfile(LOCK_SCRIPT, scratch_scripts / "lock_engines.py")
     shutil.copyfile(VERSION_FILE, scratch_engines / "VERSION")
+    shutil.copyfile(OPENGREP_VERSION_FILE, scratch_engines / "opengrep" / "VERSION")
     shutil.copyfile(MANIFEST_FILE, scratch_engines / "manifest.json")
     shutil.copyfile(VENDOR_LOCK_FILE, scratch_engines / "vendor" / "package-lock.json")
     result = subprocess.run(
@@ -134,6 +146,19 @@ def test_lock_engines_check_fails_when_version_file_changes(tmp_path):
         "lock_engines --check must fail when VERSION drifts from lock.version"
     )
     assert "version" in (result.stdout + result.stderr).lower()
+
+
+def test_lock_engines_check_fails_when_opengrep_version_file_changes(tmp_path):
+    scratch = _stage_tree(tmp_path)
+    (scratch / "engines" / "opengrep" / "VERSION").write_text("9.9.9\n")
+    result = subprocess.run(
+        [sys.executable, "scripts/lock_engines.py", "--check"],
+        cwd=scratch, capture_output=True, text=True,
+    )
+    assert result.returncode != 0, (
+        "lock_engines --check must fail when engines/opengrep/VERSION drifts from lock"
+    )
+    assert "engines/opengrep/VERSION" in result.stderr
 
 
 def test_lock_engines_check_fails_when_manifest_changes(tmp_path):
@@ -210,13 +235,15 @@ def test_lock_engines_check_fails_on_non_semver_version(tmp_path):
 
 
 def _stage_tree(tmp_path: Path) -> Path:
-    """Copy the four files lock_engines cares about into an isolated dir
+    """Copy the files lock_engines cares about into an isolated dir
     so mutation tests do not disturb the working repo."""
     scratch = tmp_path / "repo"
     (scratch / "engines" / "vendor").mkdir(parents=True)
+    (scratch / "engines" / "opengrep").mkdir()
     (scratch / "scripts").mkdir()
     shutil.copyfile(LOCK_SCRIPT, scratch / "scripts" / "lock_engines.py")
     shutil.copyfile(VERSION_FILE, scratch / "engines" / "VERSION")
+    shutil.copyfile(OPENGREP_VERSION_FILE, scratch / "engines" / "opengrep" / "VERSION")
     shutil.copyfile(MANIFEST_FILE, scratch / "engines" / "manifest.json")
     shutil.copyfile(LOCK_FILE, scratch / "engines" / "lock.json")
     shutil.copyfile(VENDOR_LOCK_FILE, scratch / "engines" / "vendor" / "package-lock.json")

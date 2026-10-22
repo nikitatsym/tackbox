@@ -122,11 +122,11 @@ def test_hermetic_opengrep_argv_uses_paths_from(tmp_path):
     os.name == "nt", reason="jscpd test stubs require POSIX shell execution"
 )
 def test_hermetic_jscpd_argv_uses_paths_from(monkeypatch, tmp_path):
-    # env override makes hermetic_engines_root() resolve without engines.json.
+    # env override makes payload_root() resolve without engines.json.
     store = tmp_path / "store"
     (store / "bin").mkdir(parents=True)
     _write_empty_jscpd_stub(store / "bin" / engines.exe_name("jscpd"))
-    monkeypatch.setenv(engines.ENGINES_DIR_ENV, str(store))
+    monkeypatch.setenv(engines.ENGINES.dir_env, str(store))
     repo = tmp_path / "repo"
     repo.mkdir()
     argv = _herm("tackbox-jscpd").build_argv(
@@ -375,7 +375,7 @@ def test_dev_mdlint_argv_uses_files_from_not_positional(tmp_path):
 
 
 def test_hermetic_eslint_argv_uses_files_from(monkeypatch, tmp_path):
-    monkeypatch.setenv(engines.ENGINES_DIR_ENV, str(tmp_path / "store"))
+    monkeypatch.setenv(engines.ENGINES.dir_env, str(tmp_path / "store"))
     argv = _herm("tackbox-eslint").build_argv(
         Path("/repo"), Path("/tb"), ["a.js"], (), tmp_path
     )
@@ -385,7 +385,7 @@ def test_hermetic_eslint_argv_uses_files_from(monkeypatch, tmp_path):
 
 
 def test_hermetic_mdlint_argv_uses_files_from(monkeypatch, tmp_path):
-    monkeypatch.setenv(engines.ENGINES_DIR_ENV, str(tmp_path / "store"))
+    monkeypatch.setenv(engines.ENGINES.dir_env, str(tmp_path / "store"))
     argv = _herm("tackbox-mdlint").build_argv(
         Path("/repo"), Path("/tb"), ["a.md"], (), tmp_path
     )

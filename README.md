@@ -53,8 +53,8 @@ uvx tackbox@latest lint .
 
 The wheel is hermetic: a consumer needs only `git` on PATH (plus a Go
 toolchain if the repo has `.go` files, and a Java 17+ runtime if it
-has `.java` files) and, the first time a given engine version runs,
-network access to fetch the engine payload once.
+has `.java` files) and, the first time a given engine payload version
+runs, network access to fetch that payload once.
 Rules roll out via `@latest` - a new safety rule reaches every repo on
 its next run.
 
@@ -183,7 +183,7 @@ past (argparse misuse, and the per-command cases below).
 
 ## Distribution
 
-`uvx tackbox@latest` installs one small wheel; the engine payload is
+`uvx tackbox@latest` installs one small wheel; the engine payloads are
 fetched separately and cached per version:
 
 - `tackbox` (thin) - the Python CLI (including the `pyrules` flake8
@@ -191,30 +191,38 @@ fetched separately and cached per version:
   `javalint.jar`, the opengrep rule yamls, and the ESLint and
   markdownlint plugins and presets. Platform-specific, bumped on every
   push.
-- `tackbox-engines` (fat, ~350 MB unpacked) - the bundled Node
-  runtime, the `opengrep` binary, and the vendored third-party
-  `node_modules`. Published as a PyPI wheel but **not** a pip
-  dependency of thin. On the first run for a given engine version,
-  tackbox resolves the wheel via the PyPI JSON API, verifies its
-  unpacked payload against the tree sha256 pinned in the thin
-  wheel's `engines.json`, and
-  unpacks it once into `$XDG_DATA_HOME/tackbox/engines/<version>/`
-  (default `~/.local/share/...`; override `TACKBOX_ENGINES_DIR`).
-  A machine-wide per-version lock makes concurrent first runs share
-  one download: one process fetches and verifies while every other
-  process waits and then reuses the committed store. Every later thin
-  version reuses that one copy, so a stream of `@latest` patch bumps
-  never re-materializes the engines. Installed engine versions coexist
-  rather than deleting one another during normal commands, so an older
-  thin client cannot force a re-download. Bumped only when an engine
-  changes.
+- `tackbox-engines` (fat) - the bundled Node runtime, the `jscpd`
+  binary, and the vendored third-party `node_modules`. Version in
+  `engines/VERSION`; bumped only when one of these changes.
+- `tackbox-opengrep` - only the `opengrep` binary and its license
+  notice. It is its own project because one wheel carrying both
+  payloads exceeds PyPI's 100 MiB per-file limit. Version in
+  `engines/opengrep/VERSION`; bumped only when opengrep changes.
 
-After the first fetch tackbox runs fully offline until the engine
+Both payload wheels are published to PyPI but are **not** pip
+dependencies of thin. The thin wheel's `engines.json` pins each one
+exactly (project, version, wheel file name, and the sha256 of its
+unpacked tree). On the first run for a given payload version, tackbox
+resolves the pinned wheel via the PyPI JSON API, verifies its unpacked
+payload against the pinned tree sha256, and unpacks it once into
+`$XDG_DATA_HOME/tackbox/engines/<version>/` or
+`$XDG_DATA_HOME/tackbox/opengrep/<version>/` (default
+`~/.local/share/...`; override with `TACKBOX_ENGINES_DIR` /
+`TACKBOX_OPENGREP_DIR`, each naming an already-unpacked payload). A
+machine-wide per-version lock makes concurrent first runs share one
+download: one process fetches and verifies while every other process
+waits and then reuses the committed store. Every later thin version
+reuses those copies, so a stream of `@latest` patch bumps never
+re-materializes the payloads. Installed payload versions coexist
+rather than deleting one another during normal commands, so an older
+thin client cannot force a re-download.
+
+After the first fetch tackbox runs fully offline until a payload
 version changes. Platform wheels cover Linux x86_64/arm64 (manylinux),
 macOS arm64, and Windows x86_64. `engines.json` in the thin
 wheel records the source, version, sha256, and license of every
-bundled binary and dependency; `tackbox doctor` fetches the store if
-absent and verifies the payload against it.
+bundled binary and dependency; `tackbox doctor` fetches each store if
+absent and verifies it (`engines-store`, `opengrep-store`).
 
 Third-party license texts and dependency inventories ship in the jar under
 `META-INF/third-party` and in the wheel under `tackbox/third_party/licenses`;

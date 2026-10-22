@@ -1,10 +1,10 @@
-"""F6: the machine-versioned engines store (fetch, verify, atomic install).
+"""F6: the machine-versioned payload stores (fetch, verify, atomic install).
 
-The store replaces the tackbox-engines pip dependency. The thin wheel no
-longer ships fat as a Requires-Dist; instead `ensure_engines()` resolves the
-fat wheel from PyPI once per engines version, pins it by sha256, unpacks it
-to `$XDG_DATA_HOME/tackbox/engines/<version>/`, and reuses that copy across
-every thin version.
+The thin wheel ships no payload as a Requires-Dist; instead `ensure_payload()`
+resolves each payload wheel (tackbox-engines, tackbox-opengrep) from PyPI once
+per payload version, pins it by its unpacked tree sha256, unpacks it to
+`$XDG_DATA_HOME/tackbox/<payload key>/<version>/`, and reuses that copy
+across every thin version.
 
 Every test here injects a `file://`-style fetcher so no test touches the
 network; the default PyPI fetcher is exercised separately with a stubbed
@@ -35,12 +35,17 @@ from tackbox.hashing import sha256_tree
 # so the unpack-restores-mode assertion has something to check.
 _PAYLOAD = {
     "bin/node": b"#!/bin/sh\necho node\n",
-    "bin/opengrep": b"opengrep-binary-bytes\n",
+    "bin/jscpd": b"jscpd-binary-bytes\n",
     "vendor/node_modules/eslint/index.js": b"module.exports = {}\n",
     "vendor/node_modules/.bin/eslint": b"#!/bin/sh\n",
     "third_party/licenses/node.LICENSE.txt": b"MIT\n",
 }
-_EXEC = {"bin/node", "bin/opengrep", "vendor/node_modules/.bin/eslint"}
+_EXEC = {"bin/node", "bin/jscpd", "vendor/node_modules/.bin/eslint"}
+
+_OPENGREP_PAYLOAD = {
+    "bin/opengrep": b"opengrep-binary-bytes\n",
+    "third_party/licenses/opengrep.LICENSE.txt": b"LGPL-2.1\n",
+}
 
 
 def _detected_platform() -> str:
@@ -49,19 +54,25 @@ def _detected_platform() -> str:
     return key
 
 
-def _build_fat_wheel(dest_dir: Path, version: str, payload: dict[str, bytes]) -> Path:
-    """A minimal fat wheel: a zip whose members live under `tackbox_engines/`.
+def _build_payload_wheel(
+    dest_dir: Path,
+    version: str,
+    payload: dict[str, bytes],
+    package: str = "tackbox_engines",
+) -> Path:
+    """A minimal payload wheel: a zip whose members live under `<package>/`.
 
     Only the payload subtree matters to the unpacker; no dist-info is needed.
-    Members in `_EXEC` get mode 0o755 recorded so the unpacker can restore it.
+    Members in `_EXEC` (and bin/opengrep) get mode 0o755 recorded so the
+    unpacker can restore it.
     """
     plat = _detected_platform()
-    name = f"tackbox_engines-{version}-py3-none-{plat.replace('-', '_')}.whl"
+    name = f"{package}-{version}-py3-none-{plat.replace('-', '_')}.whl"
     wheel = dest_dir / name
     with zipfile.ZipFile(wheel, "w") as zf:
         for rel, content in sorted(payload.items()):
-            info = zipfile.ZipInfo(f"tackbox_engines/{rel}")
-            mode = 0o755 if rel in _EXEC else 0o644
+            info = zipfile.ZipInfo(f"{package}/{rel}")
+            mode = 0o755 if rel in _EXEC or rel == "bin/opengrep" else 0o644
             info.external_attr = mode << 16
             zf.writestr(info, content)
     return wheel
@@ -69,7 +80,7 @@ def _build_fat_wheel(dest_dir: Path, version: str, payload: dict[str, bytes]) ->
 
 def _expected_store_sha(payload: dict[str, bytes], tmp: Path) -> str:
     """sha256_tree of the payload as it will appear unpacked in the store."""
-    src = tmp / "expected-store"
+    src = tmp / f"expected-store-{len(list(tmp.glob('expected-store-*')))}"
     for rel, content in payload.items():
         p = src / rel
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -77,50 +88,56 @@ def _expected_store_sha(payload: dict[str, bytes], tmp: Path) -> str:
     return sha256_tree(src)
 
 
-def _engines_json(
-    version: str,
-    wheel: Path,
-    store_sha: str,
-    *,
-    platform: str | None = None,
-) -> dict:
+def _pin(payload: engines.Payload, version: str, wheel: Path, store_sha: str) -> dict:
+    return {
+        "project": payload.project,
+        "version": version,
+        "wheel": wheel.name,
+        "store_sha256": store_sha,
+    }
+
+
+def _engines_json(pins: dict[str, dict], *, platform: str | None = None) -> dict:
     plat = platform or _detected_platform()
     return {
-        "schema": 1,
-        "engines_version": version,
         "payload_sha256": "unused-in-store-tests",
         "platform": plat,
         "wheel_plat": plat.replace("-", "_"),
-        "fat_wheel": {
-            "platform": plat,
-            "wheel": wheel.name,
-        },
-        "store_sha256": store_sha,
+        "payloads": pins,
         "engines": [],
     }
 
 
 @pytest.fixture
 def store_env(tmp_path, monkeypatch):
-    """Redirect the store base to a tmp dir and clear the override.
+    """Redirect the store base to a tmp dir and clear the overrides.
 
-    Returns a small namespace with the crafted engines.json and a fetcher
-    factory that copies the fixture wheel into the caller-provided workdir
-    (mimicking a download) and counts its calls.
+    Returns a small namespace with the crafted engines.json (pins for both
+    payloads) and a fetcher that copies the engines fixture wheel into the
+    caller-provided workdir (mimicking a download) and counts its calls.
     """
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
     monkeypatch.delenv("TACKBOX_ENGINES_DIR", raising=False)
+    monkeypatch.delenv("TACKBOX_OPENGREP_DIR", raising=False)
 
     version = "0.9.0"
     payload = dict(_PAYLOAD)
-    wheel = _build_fat_wheel(tmp_path, version, payload)
+    wheel = _build_payload_wheel(tmp_path, version, payload)
     store_sha = _expected_store_sha(payload, tmp_path)
-    data = _engines_json(version, wheel, store_sha)
+    pin = _pin(engines.ENGINES, version, wheel, store_sha)
+
+    og_version = "0.3.0"
+    og_wheel = _build_payload_wheel(tmp_path, og_version, _OPENGREP_PAYLOAD, "tackbox_opengrep")
+    og_pin = _pin(
+        engines.OPENGREP, og_version, og_wheel, _expected_store_sha(_OPENGREP_PAYLOAD, tmp_path)
+    )
+
+    data = _engines_json({"engines": pin, "opengrep": og_pin})
     monkeypatch.setattr(engines, "load_engines_json", lambda: data)
 
     calls = {"n": 0}
 
-    def fetcher(engines_json: dict, workdir: Path) -> Path:
+    def fetcher(pin_arg: dict, workdir: Path) -> Path:
         calls["n"] += 1
         out = workdir / wheel.name
         out.write_bytes(wheel.read_bytes())
@@ -133,20 +150,28 @@ def store_env(tmp_path, monkeypatch):
     ns.version = version
     ns.wheel = wheel
     ns.data = data
+    ns.pin = pin
     ns.store_sha = store_sha
     ns.payload = payload
     ns.fetcher = fetcher
     ns.calls = calls
     ns.store_dir = tmp_path / "xdg" / "tackbox" / "engines" / version
+    ns.og_wheel = og_wheel
+    ns.og_pin = og_pin
+    ns.og_store_dir = tmp_path / "xdg" / "tackbox" / "opengrep" / og_version
     ns.tmp = tmp_path
     return ns
+
+
+def _ensure_engines(fetcher) -> Path:
+    return engines.ensure_payload(engines.ENGINES, fetcher=fetcher)
 
 
 # -- ensure: happy path ----------------------------------------------------
 
 
 def test_ensure_absent_fetches_verifies_and_atomically_installs(store_env):
-    root = engines.ensure_engines(fetcher=store_env.fetcher)
+    root = _ensure_engines(store_env.fetcher)
     assert root == store_env.store_dir
     assert root.is_dir()
     assert store_env.calls["n"] == 1
@@ -161,7 +186,7 @@ def test_ensure_absent_fetches_verifies_and_atomically_installs(store_env):
     os.name == "nt", reason="Windows does not preserve POSIX executable bits"
 )
 def test_ensure_restores_executable_bit_on_binaries(store_env):
-    root = engines.ensure_engines(fetcher=store_env.fetcher)
+    root = _ensure_engines(store_env.fetcher)
     for rel in _EXEC:
         assert os.access(root / rel, os.X_OK), f"{rel} lost its exec bit through the store"
     assert not os.access(
@@ -170,19 +195,19 @@ def test_ensure_restores_executable_bit_on_binaries(store_env):
 
 
 def test_existing_store_does_not_call_fetcher(store_env):
-    def explode(engines_json, workdir):
+    def explode(pin, workdir):
         raise AssertionError("fetcher must not run when the store already exists")
 
     store_env.store_dir.mkdir(parents=True)
     (store_env.store_dir / "bin").mkdir()
     (store_env.store_dir / "bin" / "node").write_bytes(b"already here\n")
-    root = engines.ensure_engines(fetcher=explode)
+    root = _ensure_engines(explode)
     assert root == store_env.store_dir
 
 
 def test_double_ensure_yields_one_valid_store(store_env):
-    first = engines.ensure_engines(fetcher=store_env.fetcher)
-    second = engines.ensure_engines(fetcher=store_env.fetcher)
+    first = _ensure_engines(store_env.fetcher)
+    second = _ensure_engines(store_env.fetcher)
     assert first == second == store_env.store_dir
     assert store_env.calls["n"] == 1  # second call short-circuits on existence
     base = store_env.store_dir.parent
@@ -195,7 +220,7 @@ def test_concurrent_ensure_fetches_once(store_env):
     start = threading.Barrier(workers)
     calls_lock = threading.Lock()
 
-    def slow_fetcher(engines_json: dict, workdir: Path) -> Path:
+    def slow_fetcher(pin: dict, workdir: Path) -> Path:
         with calls_lock:
             store_env.calls["n"] += 1
         # Delay fetch so every caller contends on the install lock.
@@ -206,7 +231,7 @@ def test_concurrent_ensure_fetches_once(store_env):
 
     def ensure() -> Path:
         start.wait()
-        return engines.ensure_engines(fetcher=slow_fetcher)
+        return _ensure_engines(slow_fetcher)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
         roots = list(pool.map(lambda _i: ensure(), range(workers)))
@@ -230,7 +255,7 @@ def test_ensure_waits_for_long_held_install_lock(store_env, capsys):
     assert entered.wait(timeout=30), "holder did not acquire the install lock"
 
     started = time.monotonic()
-    root = engines.ensure_engines(fetcher=store_env.fetcher)
+    root = _ensure_engines(store_env.fetcher)
     elapsed = time.monotonic() - started
 
     holder.join(timeout=10)
@@ -244,6 +269,66 @@ def test_ensure_waits_for_long_held_install_lock(store_env, capsys):
         )
 
 
+# -- ensure: the opengrep payload ------------------------------------------
+
+
+def test_opengrep_payload_installs_into_its_own_store(store_env):
+    """tackbox-opengrep resolves through the same mechanism as tackbox-engines
+    but by its own pin, wheel prefix, and store directory."""
+    seen: list[dict] = []
+
+    def og_fetcher(pin: dict, workdir: Path) -> Path:
+        seen.append(pin)
+        out = workdir / store_env.og_wheel.name
+        out.write_bytes(store_env.og_wheel.read_bytes())
+        return out
+
+    root = engines.ensure_payload(engines.OPENGREP, fetcher=og_fetcher)
+    assert root == store_env.og_store_dir
+    assert seen == [store_env.og_pin]
+    for rel, content in _OPENGREP_PAYLOAD.items():
+        assert (root / rel).read_bytes() == content
+    assert sha256_tree(root) == store_env.og_pin["store_sha256"]
+    assert not store_env.store_dir.exists(), "opengrep must not touch the engines store"
+    assert engines.payload_root(engines.OPENGREP) == store_env.og_store_dir
+
+
+def test_opengrep_refuses_an_engines_wheel(store_env):
+    """A wheel without the `tackbox_opengrep/` subtree is not an opengrep
+    payload, whatever its name; nothing is committed to the store."""
+    with pytest.raises(engines.EnginesStoreError, match="tackbox_opengrep/"):
+        engines.ensure_payload(engines.OPENGREP, fetcher=store_env.fetcher)
+    assert not store_env.og_store_dir.exists()
+
+
+def test_ensure_payloads_materializes_both_stores(store_env, monkeypatch):
+    fetchers = {
+        "tackbox-engines": store_env.wheel,
+        "tackbox-opengrep": store_env.og_wheel,
+    }
+
+    def by_project(pin: dict, workdir: Path) -> Path:
+        src = fetchers[pin["project"]]
+        out = workdir / src.name
+        out.write_bytes(src.read_bytes())
+        return out
+
+    monkeypatch.setattr(engines, "_download_wheel", by_project)
+    engines.ensure_payloads()
+    assert store_env.store_dir.is_dir()
+    assert store_env.og_store_dir.is_dir()
+
+
+def test_hermetic_env_puts_both_payload_bins_on_path(store_env, monkeypatch, tmp_path):
+    monkeypatch.setenv("TACKBOX_ENGINES_DIR", str(tmp_path / "eng"))
+    monkeypatch.setenv("TACKBOX_OPENGREP_DIR", str(tmp_path / "og"))
+    env = engines.hermetic_env({"PATH": "/usr/bin"})
+    assert env["PATH"].split(os.pathsep) == [
+        str(tmp_path / "eng" / "bin"), str(tmp_path / "og" / "bin"), "/usr/bin",
+    ]
+    assert env["NODE_PATH"] == str(tmp_path / "eng" / "vendor" / "node_modules")
+
+
 # -- ensure: override ------------------------------------------------------
 
 
@@ -252,12 +337,26 @@ def test_override_dir_short_circuits_fetch(store_env, monkeypatch, tmp_path):
     override.mkdir()
     monkeypatch.setenv("TACKBOX_ENGINES_DIR", str(override))
 
-    def explode(engines_json, workdir):
+    def explode(pin, workdir):
         raise AssertionError("override must skip the fetcher entirely")
 
-    root = engines.ensure_engines(fetcher=explode)
+    root = _ensure_engines(explode)
     assert root == override
-    assert engines.hermetic_engines_root() == override
+    assert engines.payload_root(engines.ENGINES) == override
+
+
+def test_opengrep_override_dir_short_circuits_fetch(store_env, monkeypatch, tmp_path):
+    override = tmp_path / "unpacked-dist-opengrep"
+    override.mkdir()
+    monkeypatch.setenv("TACKBOX_OPENGREP_DIR", str(override))
+
+    def explode(pin, workdir):
+        raise AssertionError("override must skip the fetcher entirely")
+
+    assert engines.ensure_payload(engines.OPENGREP, fetcher=explode) == override
+    assert engines.payload_root(engines.OPENGREP) == override
+    # One payload's override never redirects the other.
+    assert engines.payload_root(engines.ENGINES) == store_env.store_dir
 
 
 # -- ensure: adversarial (attack the guarantee) ---------------------------
@@ -268,8 +367,8 @@ def test_repacked_container_with_identical_tree_installs(store_env):
     # comment) around the same payload: rebuilds are not zip-reproducible and
     # PyPI keeps the first upload. Only the payload tree is the pin; the
     # container bytes must not matter.
-    def repack_fetcher(engines_json: dict, workdir: Path) -> Path:
-        out = workdir / store_env.data["fat_wheel"]["wheel"]
+    def repack_fetcher(pin: dict, workdir: Path) -> Path:
+        out = workdir / pin["wheel"]
         with zipfile.ZipFile(out, "w") as zf:
             zf.comment = b"repacked container, same tree"
             for rel, content in sorted(store_env.payload.items(), reverse=True):
@@ -278,21 +377,19 @@ def test_repacked_container_with_identical_tree_installs(store_env):
                 zf.writestr(info, content)
         return out
 
-    root = engines.ensure_engines(fetcher=repack_fetcher)
+    root = _ensure_engines(repack_fetcher)
     assert root == store_env.store_dir
     assert sha256_tree(root) == store_env.store_sha
 
 
-def test_corrupt_tree_after_unpack_hard_errors(store_env, monkeypatch):
+def test_corrupt_tree_after_unpack_hard_errors(store_env):
     # The tree pin is the integrity barrier: a wheel whose payload does not
     # match store_sha256 must be refused, and nothing committed to the store.
-    bad = dict(store_env.data)
-    bad["store_sha256"] = "bb" * 32
-    monkeypatch.setattr(engines, "load_engines_json", lambda: bad)
+    store_env.pin["store_sha256"] = "bb" * 32
 
     with pytest.raises(engines.EnginesStoreError) as ei:
-        engines.ensure_engines(fetcher=store_env.fetcher)
-    assert "tree" in str(ei.value) or "store_sha256" in str(ei.value) or "bb" * 32 in str(ei.value)
+        _ensure_engines(store_env.fetcher)
+    assert "bb" * 32 in str(ei.value) and "tackbox-engines" in str(ei.value)
     assert not store_env.store_dir.exists()
     # No half-written temp siblings survive a failed install. The advisory lock
     # file persists deliberately: unlinking it could split current waiters and
@@ -302,43 +399,40 @@ def test_corrupt_tree_after_unpack_hard_errors(store_env, monkeypatch):
     assert [p.name for p in entries] == [f".{store_env.version}.install.lock"]
 
 
-def test_platform_drift_hard_errors_with_both_values_before_fetch(store_env, monkeypatch):
-    # The Rosetta / wrong-wheel case: engines.json pins a fat wheel for a
+def test_platform_drift_hard_errors_with_both_values_before_fetch(store_env):
+    # The Rosetta / wrong-wheel case: engines.json pins payload wheels for a
     # different platform than the one we are running on. ensure must refuse
     # loudly, naming both platforms, and must never reach the fetcher.
     detected = _detected_platform()
     foreign = "linux-x86_64" if detected != "linux-x86_64" else "macos-aarch64"
-    drift = dict(store_env.data)
-    drift_fat = dict(drift["fat_wheel"])
-    drift_fat["platform"] = foreign
-    drift["fat_wheel"] = drift_fat
-    drift["platform"] = foreign
-    monkeypatch.setattr(engines, "load_engines_json", lambda: drift)
+    store_env.data["platform"] = foreign
 
-    def explode(engines_json, workdir):
+    def explode(pin, workdir):
         raise AssertionError("platform drift must be caught before any fetch")
 
-    with pytest.raises(engines.EnginesStoreError) as ei:
-        engines.ensure_engines(fetcher=explode)
-    msg = str(ei.value)
-    assert foreign in msg and detected in msg
+    for payload in engines.PAYLOADS:
+        with pytest.raises(engines.EnginesStoreError) as ei:
+            engines.ensure_payload(payload, fetcher=explode)
+        msg = str(ei.value)
+        assert foreign in msg and detected in msg
     assert not store_env.store_dir.exists()
+    assert not store_env.og_store_dir.exists()
 
 
 def test_fetch_failure_propagates_loudly_and_leaves_no_store(store_env):
-    def failing(engines_json, workdir):
+    def failing(pin, workdir):
         raise engines.EnginesStoreError(
             "cannot download https://pypi.org/.../tackbox_engines.whl: timed out"
         )
 
     with pytest.raises(engines.EnginesStoreError) as ei:
-        engines.ensure_engines(fetcher=failing)
+        _ensure_engines(failing)
     assert "https://pypi.org" in str(ei.value)
     assert not store_env.store_dir.exists()
 
     # Advisory locks are kernel-owned: a failed/crashed first attempt must not
     # strand later hooks behind stale lock state.
-    assert engines.ensure_engines(fetcher=store_env.fetcher) == store_env.store_dir
+    assert _ensure_engines(store_env.fetcher) == store_env.store_dir
     assert store_env.calls["n"] == 1
 
 
@@ -355,25 +449,25 @@ def test_install_preserves_other_versions_and_inflight_state(store_env):
     inflight.mkdir()
     (inflight / "partial").write_text("mid-unpack")
 
-    engines.ensure_engines(fetcher=store_env.fetcher)
+    _ensure_engines(store_env.fetcher)
 
     assert store_env.store_dir.is_dir()
     assert previous.is_dir(), "an older client must not be forced to re-download its engines"
     assert inflight.is_dir(), "one installer must not disturb another version's state"
 
 
-# -- hermetic_engines_root -------------------------------------------------
+# -- payload_root ----------------------------------------------------------
 
 
-def test_hermetic_engines_root_resolves_versioned_store(store_env):
-    assert engines.hermetic_engines_root() == store_env.store_dir
+def test_payload_root_resolves_versioned_store(store_env):
+    assert engines.payload_root(engines.ENGINES) == store_env.store_dir
 
 
-def test_hermetic_engines_root_prefers_override(store_env, monkeypatch, tmp_path):
+def test_payload_root_prefers_override(store_env, monkeypatch, tmp_path):
     override = tmp_path / "override"
     override.mkdir()
     monkeypatch.setenv("TACKBOX_ENGINES_DIR", str(override))
-    assert engines.hermetic_engines_root() == override
+    assert engines.payload_root(engines.ENGINES) == override
 
 
 # -- default PyPI fetcher (stubbed urlopen, no network) --------------------
@@ -401,10 +495,27 @@ def test_default_fetcher_resolves_wheel_by_pypi_json(store_env, monkeypatch):
     monkeypatch.setattr(engines, "urlopen", fake_urlopen)
     workdir = store_env.tmp / "dl"
     workdir.mkdir()
-    got = engines._download_fat_wheel(store_env.data, workdir)
+    got = engines._download_wheel(store_env.pin, workdir)
     assert got.read_bytes() == wheel_bytes
     assert seen[0] == "https://pypi.org/pypi/tackbox-engines/0.9.0/json"
     assert download_url in seen
+
+
+def test_default_fetcher_queries_the_pinned_project(store_env, monkeypatch):
+    seen: list[str] = []
+    index = {"urls": [{"filename": store_env.og_wheel.name, "url": "https://x/og"}]}
+
+    def fake_urlopen(url, timeout=None):
+        seen.append(url)
+        if url.endswith("/json"):
+            return io.BytesIO(json.dumps(index).encode())
+        return io.BytesIO(store_env.og_wheel.read_bytes())
+
+    monkeypatch.setattr(engines, "urlopen", fake_urlopen)
+    workdir = store_env.tmp / "dl-og"
+    workdir.mkdir()
+    engines._download_wheel(store_env.og_pin, workdir)
+    assert seen[0] == "https://pypi.org/pypi/tackbox-opengrep/0.3.0/json"
 
 
 def test_default_fetcher_missing_wheel_in_index_hard_errors(store_env, monkeypatch):
@@ -415,7 +526,7 @@ def test_default_fetcher_missing_wheel_in_index_hard_errors(store_env, monkeypat
     workdir = store_env.tmp / "dl2"
     workdir.mkdir()
     with pytest.raises(engines.EnginesStoreError) as ei:
-        engines._download_fat_wheel(store_env.data, workdir)
+        engines._download_wheel(store_env.pin, workdir)
     assert store_env.wheel.name in str(ei.value)
 
 
@@ -443,7 +554,7 @@ def test_default_fetcher_rejects_download_mismatching_index_digest(store_env, mo
     workdir = store_env.tmp / "dl3"
     workdir.mkdir()
     with pytest.raises(engines.EnginesStoreError) as ei:
-        engines._download_fat_wheel(store_env.data, workdir)
+        engines._download_wheel(store_env.pin, workdir)
     assert "cc" * 32 in str(ei.value)
 
 
@@ -472,7 +583,7 @@ def test_default_fetcher_retries_a_truncated_download(store_env, monkeypatch):
     monkeypatch.setattr(engines, "_DOWNLOAD_BACKOFF_SECONDS", 0)
     workdir = store_env.tmp / "dl4"
     workdir.mkdir()
-    got = engines._download_fat_wheel(store_env.data, workdir)
+    got = engines._download_wheel(store_env.pin, workdir)
     assert got.read_bytes() == wheel_bytes
     assert bodies == []
 
@@ -494,7 +605,7 @@ def test_default_fetcher_gives_up_after_the_attempt_budget(store_env, monkeypatc
     workdir = store_env.tmp / "dl5"
     workdir.mkdir()
     with pytest.raises(engines.EnginesStoreError) as ei:
-        engines._download_fat_wheel(store_env.data, workdir)
+        engines._download_wheel(store_env.pin, workdir)
     assert len(attempts) == engines._DOWNLOAD_ATTEMPTS
     assert "truncated download" in str(ei.value)
 
@@ -506,7 +617,7 @@ def test_default_fetcher_gives_up_after_the_attempt_budget(store_env, monkeypatc
 # extraction over the files that landed inside dest - a member written outside
 # dest is invisible to it. So an escaping member must be refused BEFORE any
 # write, not after. These build wheels whose member names are written verbatim
-# (an escaping name cannot be produced by the prefix-forcing _build_fat_wheel).
+# (an escaping name cannot be produced by the prefix-forcing _build_payload_wheel).
 
 
 def _build_wheel_with_members(
@@ -535,7 +646,7 @@ def test_unpack_rejects_dotdot_member_and_writes_nothing_outside_dest(tmp_path):
         },
     )
     with pytest.raises(engines.EnginesStoreError) as ei:
-        engines._unpack_tackbox_engines(wheel, dest)
+        engines._unpack_payload(wheel, dest, "tackbox_engines")
     assert "escape" in str(ei.value).lower()
     # The escaping member resolves to outer/escaped.txt: it must not exist, and
     # nothing may have been planted alongside dest.
@@ -560,7 +671,7 @@ def test_unpack_rejects_absolute_member_and_writes_nothing_outside_dest(tmp_path
         },
     )
     with pytest.raises(engines.EnginesStoreError) as ei:
-        engines._unpack_tackbox_engines(wheel, dest)
+        engines._unpack_payload(wheel, dest, "tackbox_engines")
     assert "absolute" in str(ei.value).lower()
     assert not abs_target.exists()
 
@@ -573,7 +684,7 @@ def test_unpack_valid_payload_lands_entirely_inside_dest(tmp_path):
         "tackbox_engines/vendor/node_modules/eslint/index.js": b"module.exports={}\n",
     }
     wheel = _build_wheel_with_members(tmp_path, "clean.whl", payload)
-    engines._unpack_tackbox_engines(wheel, dest)
+    engines._unpack_payload(wheel, dest, "tackbox_engines")
     assert (dest / "bin" / "node").read_bytes() == b"#!/bin/sh\necho node\n"
     assert (
         dest / "vendor" / "node_modules" / "eslint" / "index.js"

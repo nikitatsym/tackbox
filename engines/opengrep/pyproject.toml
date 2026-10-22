@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tackbox-opengrep"
+dynamic = ["version"]
+description = "The opengrep binary used by the tackbox CLI."
+requires-python = ">=3.11"
+license = { text = "LGPL-2.1" }
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"tackbox_opengrep" = [
+    "bin/*",
+    "third_party/**/*",
+]

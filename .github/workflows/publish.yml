@@ -58,7 +58,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3 # v8.3.0
 
-      - name: Resolve versions from tag and engines/VERSION
+      - name: Resolve versions from tag and the payload VERSION files
         id: ver
         shell: bash
         run: |
@@ -66,9 +66,11 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           thin_version="${tag#v}"
           engines_version="$(cat engines/VERSION | tr -d '[:space:]')"
-          echo "thin=$thin_version"        >> "$GITHUB_OUTPUT"
-          echo "engines=$engines_version"  >> "$GITHUB_OUTPUT"
-          echo "thin version=$thin_version, engines version=$engines_version"
+          opengrep_version="$(cat engines/opengrep/VERSION | tr -d '[:space:]')"
+          echo "thin=$thin_version"          >> "$GITHUB_OUTPUT"
+          echo "engines=$engines_version"    >> "$GITHUB_OUTPUT"
+          echo "opengrep=$opengrep_version"  >> "$GITHUB_OUTPUT"
+          echo "thin version=$thin_version, engines version=$engines_version, opengrep version=$opengrep_version"
 
       - name: Build wheels for ${{ matrix.platform }}
         shell: bash
@@ -78,6 +80,7 @@ jobs:
             --outdir dist \
             --version "${{ steps.ver.outputs.thin }}" \
             --engines-version "${{ steps.ver.outputs.engines }}" \
+            --opengrep-version "${{ steps.ver.outputs.opengrep }}" \
             --platform ${{ matrix.platform }}
           ls -lh dist/
 
@@ -143,23 +146,27 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Install thin wheel; stage engines payload from the built fat wheel
+      - name: Install thin wheel; stage both payloads from the built payload wheels
         shell: bash
         run: |
           set -euo pipefail
           # ubuntu-22.04 ships Python 3.10; tackbox requires >=3.11.
           uv venv --python 3.11 .smoke-venv
           fat=$(ls dist/tackbox_engines-*.whl | head -n1)
-          thin=$(ls dist/tackbox-*.whl | grep -v tackbox_engines | head -n1)
+          opengrep=$(ls dist/tackbox_opengrep-*.whl | head -n1)
+          thin=$(ls dist/tackbox-*.whl | head -n1)
           echo "fat=$fat"
+          echo "opengrep=$opengrep"
           echo "thin=$thin"
-          # Thin installs alone: F6 dropped the fat pip dependency.
+          # Thin installs alone: the payloads are store fetches, not pip dependencies.
           uv pip install --python .smoke-venv "$thin"
-          # The store can't fetch an unpublished version; supply the payload by
-          # unpacking the just-built fat wheel and overriding TACKBOX_ENGINES_DIR.
+          # The store can't fetch an unpublished version; supply each payload by
+          # unpacking its just-built wheel and overriding its store directory.
           python -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall('engines-payload')" "$fat"
-          chmod -R u+x engines-payload/tackbox_engines/bin || true
+          python -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall('opengrep-payload')" "$opengrep"
+          chmod -R u+x engines-payload/tackbox_engines/bin opengrep-payload/tackbox_opengrep/bin || true
           echo "TACKBOX_ENGINES_DIR=$PWD/engines-payload/tackbox_engines" >> "$GITHUB_ENV"
+          echo "TACKBOX_OPENGREP_DIR=$PWD/opengrep-payload/tackbox_opengrep" >> "$GITHUB_ENV"
 
       - name: Materialize fixture repo
         shell: bash
@@ -281,7 +288,7 @@ jobs:
         run: |
           set -euo pipefail
           version="$(cat engines/VERSION | tr -d '[:space:]')"
-          python scripts/guard_engines_publish.py --fat-dir fat --version "$version"
+          python scripts/guard_engines_publish.py --payload engines --wheel-dir fat --version "$version"
 
       # A thin-only patch bump reuploads the same fat version; PyPI 409s
       # on identical version, and skip-existing turns that 409 into success.
@@ -291,9 +298,54 @@ jobs:
           packages-dir: fat
           skip-existing: true
 
+  publish-opengrep:
+    name: publish tackbox_opengrep to PyPI
+    needs: smoke
+    runs-on: ubuntu-latest
+    # Own environment for the same Trusted Publisher reason as pypi-engines.
+    environment: pypi-opengrep
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Download all opengrep wheels
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+
+      - name: Isolate opengrep wheels
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir opengrep
+          for w in dist/tackbox_opengrep-*.whl; do
+            mv "$w" opengrep/
+          done
+          ls -lh opengrep/
+
+      # Same skip-existing hazard as the fat guard above, keyed on
+      # engines/opengrep/VERSION.
+      - name: Guard opengrep payload against the already-published wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cat engines/opengrep/VERSION | tr -d '[:space:]')"
+          python scripts/guard_engines_publish.py --payload opengrep --wheel-dir opengrep --version "$version"
+
+      # A release that does not bump opengrep reuploads the same version; PyPI
+      # 409s on identical version, and skip-existing turns that 409 into success.
+      - name: Publish tackbox-opengrep via Trusted Publisher (OIDC)
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0 (release/v1 @ 2026-02-18)
+        with:
+          packages-dir: opengrep
+          skip-existing: true
+
   publish-thin:
     name: publish tackbox to PyPI
-    needs: publish-fat
+    needs: [publish-fat, publish-opengrep]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -313,8 +365,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir thin
-          # dist/tackbox-*.whl does not match tackbox_engines-*.whl (underscore
-          # separator after the package name), so no fat filter is needed.
+          # dist/tackbox-*.whl does not match tackbox_engines-*.whl or
+          # tackbox_opengrep-*.whl (underscore separator after the package
+          # name), so no payload filter is needed.
           for w in dist/tackbox-*.whl; do
             mv "$w" thin/
           done

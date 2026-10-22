@@ -1,16 +1,17 @@
 """Verify or regenerate engines/lock.json.
 
-The lock pins engines/VERSION together with sha256 of the two files that
-describe the engine payload:
+The lock pins the two payload versions - engines/VERSION (tackbox-engines)
+and engines/opengrep/VERSION (tackbox-opengrep) - together with sha256 of
+the two files that describe the payloads:
 
-- engines/manifest.json             (node/opengrep versions + urls)
+- engines/manifest.json             (node/opengrep/jscpd versions + urls)
 - engines/vendor/package-lock.json  (npm resolution)
 
-Bumping either without bumping engines/VERSION would silently change the
-payload under the same fat wheel version pin in thin's METADATA - new
-engines shipping under an unchanged Requires-Dist. `--check` runs in the
-publish workflow before any wheel touches PyPI; `--write` regenerates the
-lock after a version bump or engine-source edit.
+Changing either without bumping the affected payload's VERSION would
+silently change that payload under the same version thin pins - new
+engines shipping under an unchanged pin. `--check` runs in the publish
+workflow before any wheel touches PyPI; `--write` regenerates the lock
+after a version bump or engine-source edit.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 VERSION_FILE = REPO / "engines" / "VERSION"
+OPENGREP_VERSION_FILE = REPO / "engines" / "opengrep" / "VERSION"
 LOCK_FILE = REPO / "engines" / "lock.json"
 MANIFEST_FILE = REPO / "engines" / "manifest.json"
 VENDOR_LOCK_FILE = REPO / "engines" / "vendor" / "package-lock.json"
@@ -33,20 +35,21 @@ from tackbox.hashing import sha256_file  # noqa: E402
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
 
-def read_version() -> str:
-    if not VERSION_FILE.is_file():
-        raise SystemExit(f"missing {VERSION_FILE.relative_to(REPO)}")
-    raw = VERSION_FILE.read_text()
-    stripped = raw.strip()
+def read_version(path: Path) -> str:
+    rel = path.relative_to(REPO).as_posix()
+    if not path.is_file():
+        raise SystemExit(f"missing {rel}")
+    stripped = path.read_text().strip()
     if not SEMVER_RE.match(stripped):
         raise SystemExit(
-            f"engines/VERSION must be strict semver (major.minor.patch), got {stripped!r}"
+            f"{rel} must be strict semver (major.minor.patch), got {stripped!r}"
         )
     return stripped
 
 
 def compute_lock() -> dict:
-    version = read_version()
+    version = read_version(VERSION_FILE)
+    opengrep_version = read_version(OPENGREP_VERSION_FILE)
     if not MANIFEST_FILE.is_file():
         raise SystemExit(f"missing {MANIFEST_FILE.relative_to(REPO)}")
     if not VENDOR_LOCK_FILE.is_file():
@@ -54,6 +57,7 @@ def compute_lock() -> dict:
     return {
         "schema": 1,
         "version": version,
+        "opengrep_version": opengrep_version,
         "manifest_sha256": sha256_file(MANIFEST_FILE),
         "vendor_lock_sha256": sha256_file(VENDOR_LOCK_FILE),
     }
@@ -66,7 +70,10 @@ def render(data: dict) -> str:
 def cmd_write() -> int:
     lock = compute_lock()
     LOCK_FILE.write_text(render(lock))
-    print(f"wrote {LOCK_FILE.relative_to(REPO)} for version {lock['version']}")
+    print(
+        f"wrote {LOCK_FILE.relative_to(REPO)} for version {lock['version']}, "
+        f"opengrep_version {lock['opengrep_version']}"
+    )
     return 0
 
 
@@ -93,6 +100,11 @@ def cmd_check() -> int:
             f"version drift: engines/VERSION is {expected['version']!r}, "
             f"lock.version is {current.get('version')!r}"
         )
+    if current.get("opengrep_version") != expected["opengrep_version"]:
+        fails.append(
+            f"version drift: engines/opengrep/VERSION is {expected['opengrep_version']!r}, "
+            f"lock.opengrep_version is {current.get('opengrep_version')!r}"
+        )
     if current.get("manifest_sha256") != expected["manifest_sha256"]:
         fails.append(
             "manifest_sha256 drift: engines/manifest.json changed "
@@ -112,7 +124,10 @@ def cmd_check() -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"engines/lock.json ok (version {current['version']})")
+    print(
+        f"engines/lock.json ok (version {current['version']}, "
+        f"opengrep_version {current['opengrep_version']})"
+    )
     return 0
 
 

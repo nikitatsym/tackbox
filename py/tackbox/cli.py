@@ -35,7 +35,7 @@ from .engines import (
     active_engines,
     dispatch,
     engines_hash_hermetic,
-    ensure_engines,
+    ensure_payloads,
     erclint_base_import_path,
     erclint_compile_broken_pkgs,
     is_hermetic,
@@ -333,10 +333,10 @@ def _lint_results(
     if any(engine.wants_link_targets for engine, _ in plan):
         link_targets = tuple(collect_link_targets(repo_root))
 
-    # Materialize the engine store once before the parallel run so worker
-    # threads find it in place (dev mode has no store).
+    # Materialize the payload stores once before the parallel run so worker
+    # threads find them in place (dev mode has no store).
     if is_hermetic():
-        ensure_engines()
+        ensure_payloads()
 
     # Self-lint: tackbox never self-caches its own bugs.
     if tackbox_root.resolve() == repo_root.resolve():

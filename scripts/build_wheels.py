@@ -1,8 +1,10 @@
-"""Build tackbox thin/fat wheels for the current platform.
+"""Build the tackbox wheels for the current platform.
 
-Populates engines/src/tackbox_engines/ and py/tackbox/ from local sources
-plus assets fetched per engines/manifest.json, then runs
-`python -m build --wheel` per package with platform tagging.
+Three platform wheels: thin `tackbox` (built in-tree from py/) and the two
+payload wheels the thin store fetches at runtime - `tackbox-engines` (node,
+jscpd, vendored node_modules) and `tackbox-opengrep` (the opengrep binary),
+each staged in a temp project from assets fetched per engines/manifest.json
+and built with `python -m build --wheel` and platform tagging.
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ ENGINES_DIR = REPO / "engines"
 PY_DIR = REPO / "py"
 
 sys.path.insert(0, str(PY_DIR))
-from tackbox.engines import engines_payload_tree_sha256  # noqa: E402
+from tackbox.engines import ENGINES, OPENGREP, Payload, payload_tree_sha256  # noqa: E402
 from tackbox.hashing import sha256_file, sha256_tree  # noqa: E402
 JS_ROOT = REPO
 CACHE_DIR = Path(os.environ.get("TACKBOX_BUILD_CACHE", str(Path.home() / ".cache" / "tackbox-build")))
@@ -169,16 +171,15 @@ def stage_engine_licenses(thin_root: Path, engine: str) -> list[dict]:
     return entries
 
 
-def _stage_fat_project(staging_root: Path) -> Path:
-    for name in ("pyproject.toml", "setup.py", "VERSION", "manifest.json", "lock.json"):
-        shutil.copy2(ENGINES_DIR / name, staging_root / name)
-    fat_root = staging_root / "src" / "tackbox_engines"
-    fat_root.mkdir(parents=True)
-    shutil.copy2(
-        ENGINES_DIR / "src" / "tackbox_engines" / "__init__.py",
-        fat_root / "__init__.py",
-    )
-    return fat_root
+def _stage_project(
+    staging_root: Path, project_dir: Path, project_files: tuple[str, ...], package: str
+) -> Path:
+    for name in project_files:
+        shutil.copy2(project_dir / name, staging_root / name)
+    pkg_root = staging_root / "src" / package
+    pkg_root.mkdir(parents=True)
+    shutil.copy2(project_dir / "src" / package / "__init__.py", pkg_root / "__init__.py")
+    return pkg_root
 
 
 def _cleanup_staging_root(staging_root: Path) -> None:
@@ -192,7 +193,7 @@ def _reset_generated_dir(path: Path) -> None:
 
 def prepare_fat(
     pl: Platform, manifest: dict, engines_version: str, fat_root: Path
-) -> tuple[Path, list[dict]]:
+) -> list[dict]:
     (fat_root / "bin").mkdir(parents=True)
     (fat_root / "third_party" / "licenses").mkdir(parents=True)
 
@@ -213,34 +214,6 @@ def prepare_fat(
         "license": node_notice["spdx"],
         "license_path": "tackbox_engines/third_party/licenses/node.LICENSE.txt",
         "path": f"tackbox_engines/bin/{pl.node['bin_name']}",
-    })
-
-    opengrep_archive = fetch(pl.opengrep["source_url"], pl.opengrep["archive_sha256"])
-    opengrep_bin = fat_root / "bin" / pl.opengrep["bin_name"]
-    if pl.opengrep["source_url"].endswith(".tar.gz"):
-        with tarfile.open(opengrep_archive, "r:gz") as tf:
-            members = [m for m in tf.getmembers() if m.name.endswith("opengrep-core") and m.isfile()]
-            if not members:
-                raise SystemExit("opengrep-core binary not found in tarball")
-            src = tf.extractfile(members[0])
-            with opengrep_bin.open("wb") as out:
-                shutil.copyfileobj(src, out)
-    else:
-        copy_binary(opengrep_archive, opengrep_bin)
-    st = opengrep_bin.stat().st_mode
-    opengrep_bin.chmod(st | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    og_notice = manifest["licenses"]["opengrep"]
-    (fat_root / "third_party" / "licenses" / "opengrep.LICENSE.txt").write_text(og_notice["notice"] + "\n")
-    entries.append({
-        "id": "opengrep",
-        "kind": "binary",
-        "version": pl.opengrep["version"],
-        "source_url": pl.opengrep["source_url"],
-        "archive_sha256": pl.opengrep["archive_sha256"],
-        "sha256": sha256_file(opengrep_bin),
-        "license": og_notice["spdx"],
-        "license_path": "tackbox_engines/third_party/licenses/opengrep.LICENSE.txt",
-        "path": f"tackbox_engines/bin/{pl.opengrep['bin_name']}",
     })
 
     # jscpd rides as an npm platform-package tarball (.tgz) with the binary
@@ -333,15 +306,84 @@ def prepare_fat(
         "path": "tackbox_engines/vendor",
     })
 
-    return fat_root, entries
+    return entries
+
+
+def prepare_opengrep(pl: Platform, manifest: dict, og_root: Path) -> list[dict]:
+    (og_root / "bin").mkdir(parents=True)
+    (og_root / "third_party" / "licenses").mkdir(parents=True)
+    opengrep_archive = fetch(pl.opengrep["source_url"], pl.opengrep["archive_sha256"])
+    opengrep_bin = og_root / "bin" / pl.opengrep["bin_name"]
+    copy_binary(opengrep_archive, opengrep_bin)
+    og_notice = manifest["licenses"]["opengrep"]
+    (og_root / "third_party" / "licenses" / "opengrep.LICENSE.txt").write_text(og_notice["notice"] + "\n")
+    return [{
+        "id": "opengrep",
+        "kind": "binary",
+        "version": pl.opengrep["version"],
+        "source_url": pl.opengrep["source_url"],
+        "archive_sha256": pl.opengrep["archive_sha256"],
+        "sha256": sha256_file(opengrep_bin),
+        "license": og_notice["spdx"],
+        "license_path": "tackbox_opengrep/third_party/licenses/opengrep.LICENSE.txt",
+        "path": f"tackbox_opengrep/bin/{pl.opengrep['bin_name']}",
+    }]
+
+
+@dataclass(frozen=True)
+class PayloadProject:
+    payload: Payload
+    project_dir: Path
+    project_files: tuple[str, ...]
+    version_env: str  # env var the project's setup.py reads its version from
+
+
+ENGINES_PROJECT = PayloadProject(
+    ENGINES, ENGINES_DIR,
+    ("pyproject.toml", "setup.py", "VERSION", "manifest.json", "lock.json"),
+    "TACKBOX_ENGINES_VERSION",
+)
+OPENGREP_PROJECT = PayloadProject(
+    OPENGREP, ENGINES_DIR / "opengrep",
+    ("pyproject.toml", "setup.py", "VERSION"),
+    "TACKBOX_OPENGREP_VERSION",
+)
+
+
+def build_payload_wheel(
+    project: PayloadProject, version: str, pl: Platform, outdir: Path, prepare
+) -> tuple[Path, list[dict], dict]:
+    """Stage one payload project in a temp dir, fill its package via
+    `prepare(pkg_root) -> entries`, and build the platform wheel. Returns the
+    wheel, its engines.json entries, and the pin the thin store resolves it by."""
+    payload = project.payload
+    stage = Path(tempfile.mkdtemp(prefix=f"{payload.project}-"))
+    try:
+        pkg_root = _stage_project(stage, project.project_dir, project.project_files, payload.package)
+        entries = prepare(pkg_root)
+        wheel = build_wheel(stage, pl.wheel_plat, outdir, env_extras={project.version_env: version})
+        print(f"{payload.project} wheel: {wheel.name}", file=sys.stderr)
+        verify_wheel_payload(wheel, pkg_root, payload.package)
+    finally:
+        _cleanup_staging_root(stage)
+    # The store fetches this exact wheel by name and verifies the unpacked
+    # payload against store_sha256. No wheel-file sha pin: a rebuild of a
+    # published payload version is not zip-reproducible and PyPI keeps the
+    # first upload (skip-existing), so container bytes legitimately differ.
+    pin = {
+        "project": payload.project,
+        "version": version,
+        "wheel": wheel.name,
+        "store_sha256": payload_tree_sha256(wheel, payload.package),
+    }
+    return wheel, entries, pin
 
 
 def prepare_thin(
     pl: Platform,
-    engines_entries: list[dict],
+    payload_entries: list[dict],
     version: str,
-    engines_version: str,
-    fat_wheel: Path,
+    pins: dict[str, dict],
 ) -> tuple[Path, list[dict], str]:
     thin_root = PY_DIR / "tackbox"
     _reset_generated_dir(thin_root / "bin")
@@ -447,27 +489,18 @@ def prepare_thin(
                 "license_path": "tackbox/third_party/licenses/tackbox.LICENSE.txt",
             })
 
-    all_entries = engines_entries + thin_entries
+    all_entries = payload_entries + thin_entries
     all_entries.extend(python_rule_entries(PY_DIR))
     payload_sha = compute_payload_sha(all_entries)
 
     engines_json = {
         "schema": 1,
-        "engines_version": engines_version,
         "payload_sha256": payload_sha,
+        # Both payload wheels carry this platform; the store refuses a
+        # wrong-arch install before downloading.
         "platform": pl.key,
         "wheel_plat": pl.wheel_plat,
-        # The store fetches this exact fat wheel by name and verifies the
-        # unpacked payload against store_sha256. No wheel-file sha pin: a
-        # rebuild of a published engines version is not zip-reproducible and
-        # PyPI keeps the first upload (skip-existing), so container bytes
-        # legitimately differ. `platform` lets the store refuse a wrong-arch
-        # wheel before downloading.
-        "fat_wheel": {
-            "platform": pl.key,
-            "wheel": fat_wheel.name,
-        },
-        "store_sha256": engines_payload_tree_sha256(fat_wheel),
+        "payloads": pins,
         "engines": all_entries,
     }
     (thin_root / "engines.json").write_text(json.dumps(engines_json, indent=2, sort_keys=True))
@@ -576,9 +609,11 @@ def restore_thin_tree() -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--version", default=os.environ.get("TACKBOX_VERSION", "0.0.0"),
-                    help="version for both wheels")
+                    help="version for all wheels")
     ap.add_argument("--engines-version", default=None,
-                    help="fat wheel version (defaults to --version)")
+                    help="tackbox-engines wheel version (defaults to --version)")
+    ap.add_argument("--opengrep-version", default=None,
+                    help="tackbox-opengrep wheel version (defaults to --version)")
     ap.add_argument("--outdir", default=str(REPO / "dist"))
     ap.add_argument("--platform", default=None,
                     help="platform key override (linux-x86_64|linux-aarch64|macos-aarch64|windows-x86_64)")
@@ -592,38 +627,26 @@ def main() -> int:
 
     version = args.version
     engines_version = args.engines_version or version
+    opengrep_version = args.opengrep_version or version
     # `python -m build --outdir` resolves against subprocess cwd, not ours.
     outdir = Path(args.outdir).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
 
-    fat_stage = Path(tempfile.mkdtemp(prefix="tackbox-engines-"))
-    try:
-        fat_root = _stage_fat_project(fat_stage)
-        _, engines_entries = prepare_fat(
-            pl, manifest, engines_version, fat_root
-        )
-        fat_wheel = build_wheel(
-            fat_stage,
-            pl.wheel_plat,
-            outdir,
-            env_extras={"TACKBOX_ENGINES_VERSION": engines_version},
-        )
-        print(f"fat wheel: {fat_wheel.name}", file=sys.stderr)
-        verify_wheel_payload(fat_wheel, fat_root, "tackbox_engines")
-    finally:
-        _cleanup_staging_root(fat_stage)
-
-    prepare_thin(pl, engines_entries, version, engines_version, fat_wheel)
-
-    thin_wheel = build_wheel(
-        PY_DIR,
-        pl.wheel_plat,
-        outdir,
-        env_extras={
-            "TACKBOX_VERSION": version,
-            "TACKBOX_ENGINES_VERSION": engines_version,
-        },
+    fat_wheel, engines_entries, engines_pin = build_payload_wheel(
+        ENGINES_PROJECT, engines_version, pl, outdir,
+        lambda root: prepare_fat(pl, manifest, engines_version, root),
     )
+    opengrep_wheel, opengrep_entries, opengrep_pin = build_payload_wheel(
+        OPENGREP_PROJECT, opengrep_version, pl, outdir,
+        lambda root: prepare_opengrep(pl, manifest, root),
+    )
+
+    prepare_thin(
+        pl, engines_entries + opengrep_entries, version,
+        {ENGINES.key: engines_pin, OPENGREP.key: opengrep_pin},
+    )
+
+    thin_wheel = build_wheel(PY_DIR, pl.wheel_plat, outdir, env_extras={"TACKBOX_VERSION": version})
     print(f"thin wheel: {thin_wheel.name}", file=sys.stderr)
     verify_wheel_payload(thin_wheel, PY_DIR / "tackbox", "tackbox")
 
@@ -634,7 +657,9 @@ def main() -> int:
         "wheel_plat": pl.wheel_plat,
         "version": version,
         "engines_version": engines_version,
+        "opengrep_version": opengrep_version,
         "fat": str(fat_wheel),
+        "opengrep": str(opengrep_wheel),
         "thin": str(thin_wheel),
     }, indent=2))
     return 0

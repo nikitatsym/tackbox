@@ -1,15 +1,16 @@
-"""Pre-publish fat-payload integrity guard (scripts/guard_engines_publish.py).
+"""Pre-publish payload integrity guard (scripts/guard_engines_publish.py).
 
-publish-fat uploads with skip-existing: true, so a re-run under an unchanged
-engines/VERSION skips the upload. That is safe only while the payload is byte-
-identical: thin pins store_sha256 = the fat payload tree-sha, and install-time
-verification refuses a fetched fat whose tree-sha differs. If a fat input changes
-without an engines/VERSION bump, skip-existing keeps the OLD fat on PyPI while the
-new thin ships pointing at the NEW tree-sha - every fresh install then bricks.
+Each payload publish job uploads with skip-existing: true, so a re-run under an
+unchanged payload VERSION skips the upload. That is safe only while the payload
+is byte-identical: thin pins store_sha256 = the payload tree-sha, and
+install-time verification refuses a fetched wheel whose tree-sha differs. If a
+payload input changes without a VERSION bump, skip-existing keeps the OLD wheel
+on PyPI while the new thin ships pointing at the NEW tree-sha - every fresh
+install then bricks.
 
-The guard compares each local fat wheel against its same-platform already-
+The guard compares each local payload wheel against its same-platform already-
 published wheel (matched by exact filename, the skip-existing key) using
-engines_payload_tree_sha256 - the exact digest install-time verification uses.
+payload_tree_sha256 - the exact digest install-time verification uses.
 These tests drive the pure compare core and the driver with no network.
 """
 
@@ -23,6 +24,8 @@ from pathlib import Path
 
 import pytest
 
+from tackbox.engines import ENGINES, OPENGREP
+
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "scripts"))
 import guard_engines_publish as guard  # noqa: E402
@@ -30,26 +33,33 @@ import guard_engines_publish as guard  # noqa: E402
 VERSION = "1.0.0"
 MAC = f"tackbox_engines-{VERSION}-py3-none-macosx_11_0_arm64.whl"
 LINUX = f"tackbox_engines-{VERSION}-py3-none-manylinux_2_28_x86_64.whl"
+OG_LINUX = f"tackbox_opengrep-{VERSION}-py3-none-manylinux_2_28_x86_64.whl"
+ENGINES_JSON_URL = "https://pypi.org/pypi/tackbox-engines/json"
 
 # One representative file per payload subtree; the platform-specific bytes are in
-# bin/ (node/opengrep), which is exactly what differs across platform wheels.
+# bin/, which is exactly what differs across platform wheels.
 _PAYLOAD = {
     "bin/node": b"#!/bin/sh\necho node\n",
-    "bin/opengrep": b"opengrep-binary-bytes\n",
+    "bin/jscpd": b"jscpd-binary-bytes\n",
     "vendor/node_modules/eslint/index.js": b"module.exports = {}\n",
     "third_party/licenses/node.LICENSE.txt": b"MIT\n",
 }
+_OG_PAYLOAD = {
+    "bin/opengrep": b"opengrep-binary-bytes\n",
+    "third_party/licenses/opengrep.LICENSE.txt": b"LGPL-2.1\n",
+}
 
 
-def _build_fat_wheel(
+def _build_wheel(
     dest_dir: Path,
     name: str,
     payload: dict[str, bytes],
     *,
+    package: str = "tackbox_engines",
     reverse: bool = False,
     date_time: tuple[int, int, int, int, int, int] = (1980, 1, 1, 0, 0, 0),
 ) -> Path:
-    """A minimal fat wheel: a zip whose members live under tackbox_engines/.
+    """A minimal payload wheel: a zip whose members live under <package>/.
     `reverse`/`date_time` vary only the container (member order, timestamps) so a
     same-payload wheel can be built with different bytes - proving the guard pins
     the payload tree, not the container (rebuilds are not zip-reproducible)."""
@@ -57,7 +67,7 @@ def _build_fat_wheel(
     wheel = dest_dir / name
     with zipfile.ZipFile(wheel, "w") as zf:
         for rel, content in sorted(payload.items(), reverse=reverse):
-            info = zipfile.ZipInfo(f"tackbox_engines/{rel}", date_time=date_time)
+            info = zipfile.ZipInfo(f"{package}/{rel}", date_time=date_time)
             info.external_attr = 0o644 << 16
             zf.writestr(info, content)
     return wheel
@@ -65,7 +75,8 @@ def _build_fat_wheel(
 
 def _changed(payload: dict[str, bytes]) -> dict[str, bytes]:
     out = dict(payload)
-    out["bin/opengrep"] = out["bin/opengrep"] + b"tampered\n"
+    first = sorted(out)[0]
+    out[first] = out[first] + b"tampered\n"
     return out
 
 
@@ -73,29 +84,29 @@ def _changed(payload: dict[str, bytes]) -> dict[str, bytes]:
 
 
 def test_absent_publish_is_fresh(tmp_path):
-    local = _build_fat_wheel(tmp_path, MAC, _PAYLOAD)
-    result = guard.compare_fat_wheel(local, None)
+    local = _build_wheel(tmp_path, MAC, _PAYLOAD)
+    result = guard.compare_wheel(ENGINES, local, None)
     assert result.status == guard.FRESH
     assert result.published_sha is None
     assert result.local_sha
 
 
 def test_identical_payload_different_container_matches(tmp_path):
-    local = _build_fat_wheel(tmp_path / "local", MAC, _PAYLOAD)
+    local = _build_wheel(tmp_path / "local", MAC, _PAYLOAD)
     # Same payload, deliberately different container (reversed member order,
     # different timestamps) - the pin must ignore container bytes.
-    published = _build_fat_wheel(
+    published = _build_wheel(
         tmp_path / "pub", MAC, _PAYLOAD, reverse=True, date_time=(2021, 6, 7, 8, 9, 10)
     )
-    result = guard.compare_fat_wheel(local, published)
+    result = guard.compare_wheel(ENGINES, local, published)
     assert result.status == guard.MATCH
     assert result.local_sha == result.published_sha
 
 
 def test_changed_payload_mismatches(tmp_path):
-    local = _build_fat_wheel(tmp_path / "local", MAC, _PAYLOAD)
-    published = _build_fat_wheel(tmp_path / "pub", MAC, _changed(_PAYLOAD))
-    result = guard.compare_fat_wheel(local, published)
+    local = _build_wheel(tmp_path / "local", MAC, _PAYLOAD)
+    published = _build_wheel(tmp_path / "pub", MAC, _changed(_PAYLOAD))
+    result = guard.compare_wheel(ENGINES, local, published)
     assert result.status == guard.MISMATCH
     assert result.local_sha != result.published_sha
 
@@ -103,15 +114,15 @@ def test_changed_payload_mismatches(tmp_path):
 # -- driver over local wheels (injected seams) ----------------------------
 
 
-def _fat_dir(tmp_path: Path, wheels: dict[str, dict[str, bytes]]) -> Path:
-    d = tmp_path / "fat"
+def _wheel_dir(tmp_path: Path, wheels: dict[str, dict[str, bytes]], package: str = "tackbox_engines") -> Path:
+    d = tmp_path / "wheels"
     d.mkdir()
     for name, payload in wheels.items():
-        _build_fat_wheel(d, name, payload)
+        _build_wheel(d, name, payload, package=package)
     return d
 
 
-def _http_get_for(version: str, filenames: list[str]):
+def _http_get_for(version: str, filenames: list[str], url: str = ENGINES_JSON_URL):
     index = {
         "releases": {
             version: [
@@ -122,8 +133,8 @@ def _http_get_for(version: str, filenames: list[str]):
     }
     body = json.dumps(index).encode()
 
-    def http_get(url: str) -> tuple[int, bytes]:
-        assert url == guard.PYPI_ENGINES_JSON
+    def http_get(got_url: str) -> tuple[int, bytes]:
+        assert got_url == url
         return 200, body
 
     return http_get
@@ -137,7 +148,7 @@ def _download_from(mapping: dict[str, Path]):
 
 
 def test_guard_wheels_fresh_on_404(tmp_path):
-    fat = _fat_dir(tmp_path, {MAC: _PAYLOAD})
+    wheels = _wheel_dir(tmp_path, {MAC: _PAYLOAD})
 
     def http_get(url: str) -> tuple[int, bytes]:
         return 404, b""
@@ -145,27 +156,27 @@ def test_guard_wheels_fresh_on_404(tmp_path):
     def download(entry, workdir):
         raise AssertionError("download must not run when nothing is published")
 
-    results = guard.guard_wheels(fat, VERSION, tmp_path, http_get=http_get, download=download)
+    results = guard.guard_wheels(ENGINES, wheels, VERSION, tmp_path, http_get=http_get, download=download)
     assert [r.status for r in results] == [guard.FRESH]
 
 
 def test_guard_wheels_fresh_when_version_absent(tmp_path):
-    fat = _fat_dir(tmp_path, {MAC: _PAYLOAD})
+    wheels = _wheel_dir(tmp_path, {MAC: _PAYLOAD})
     # Package exists on PyPI, but not this version -> nothing to verify.
     http_get = _http_get_for("0.9.9", [MAC])
 
     def download(entry, workdir):
         raise AssertionError("download must not run for an unpublished version")
 
-    results = guard.guard_wheels(fat, VERSION, tmp_path, http_get=http_get, download=download)
+    results = guard.guard_wheels(ENGINES, wheels, VERSION, tmp_path, http_get=http_get, download=download)
     assert [r.status for r in results] == [guard.FRESH]
 
 
 def test_guard_wheels_match_when_published_identical(tmp_path):
-    fat = _fat_dir(tmp_path, {MAC: _PAYLOAD})
-    published = _build_fat_wheel(tmp_path / "pub", MAC, _PAYLOAD, reverse=True)
+    wheels = _wheel_dir(tmp_path, {MAC: _PAYLOAD})
+    published = _build_wheel(tmp_path / "pub", MAC, _PAYLOAD, reverse=True)
     results = guard.guard_wheels(
-        fat, VERSION, tmp_path,
+        ENGINES, wheels, VERSION, tmp_path,
         http_get=_http_get_for(VERSION, [MAC]),
         download=_download_from({MAC: published}),
     )
@@ -176,11 +187,11 @@ def test_guard_wheels_per_platform_mismatch_fails_even_if_other_matches(tmp_path
     """The per-platform contract: each local wheel is compared only against its
     same-platform published wheel. A payload change on ONE platform must fail
     even while another platform's wheel is byte-identical."""
-    fat = _fat_dir(tmp_path, {MAC: _PAYLOAD, LINUX: _PAYLOAD})
-    pub_mac = _build_fat_wheel(tmp_path / "pub", MAC, _PAYLOAD, reverse=True)
-    pub_linux = _build_fat_wheel(tmp_path / "pub", LINUX, _changed(_PAYLOAD))
+    wheels = _wheel_dir(tmp_path, {MAC: _PAYLOAD, LINUX: _PAYLOAD})
+    pub_mac = _build_wheel(tmp_path / "pub", MAC, _PAYLOAD, reverse=True)
+    pub_linux = _build_wheel(tmp_path / "pub", LINUX, _changed(_PAYLOAD))
     results = guard.guard_wheels(
-        fat, VERSION, tmp_path,
+        ENGINES, wheels, VERSION, tmp_path,
         http_get=_http_get_for(VERSION, [MAC, LINUX]),
         download=_download_from({MAC: pub_mac, LINUX: pub_linux}),
     )
@@ -189,11 +200,25 @@ def test_guard_wheels_per_platform_mismatch_fails_even_if_other_matches(tmp_path
     assert by_name[LINUX] == guard.MISMATCH
 
 
+def test_guard_wheels_opengrep_queries_its_project_and_reads_its_prefix(tmp_path):
+    """The opengrep guard looks up tackbox-opengrep on PyPI and digests the
+    tackbox_opengrep/ subtree; an engines wheel in the same dir is ignored."""
+    wheels = _wheel_dir(tmp_path, {OG_LINUX: _OG_PAYLOAD}, package="tackbox_opengrep")
+    _build_wheel(wheels, LINUX, _PAYLOAD)
+    pub = _build_wheel(tmp_path / "pub", OG_LINUX, _changed(_OG_PAYLOAD), package="tackbox_opengrep")
+    results = guard.guard_wheels(
+        OPENGREP, wheels, VERSION, tmp_path,
+        http_get=_http_get_for(VERSION, [OG_LINUX], "https://pypi.org/pypi/tackbox-opengrep/json"),
+        download=_download_from({OG_LINUX: pub}),
+    )
+    assert [(r.wheel, r.status) for r in results] == [(OG_LINUX, guard.MISMATCH)]
+
+
 def test_guard_wheels_no_local_wheels_hard_errors(tmp_path):
-    empty = tmp_path / "fat"
+    empty = tmp_path / "wheels"
     empty.mkdir()
     with pytest.raises(SystemExit) as ei:
-        guard.guard_wheels(empty, VERSION, tmp_path, http_get=_http_get_for(VERSION, []))
+        guard.guard_wheels(ENGINES, empty, VERSION, tmp_path, http_get=_http_get_for(VERSION, []))
     assert "tackbox_engines-" in str(ei.value)
 
 
@@ -202,7 +227,7 @@ def test_published_release_files_hard_errors_on_5xx():
         return 503, b"upstream unavailable"
 
     with pytest.raises(SystemExit) as ei:
-        guard.published_release_files(VERSION, http_get=http_get)
+        guard.published_release_files(ENGINES, VERSION, http_get=http_get)
     assert "503" in str(ei.value)
 
 
@@ -222,21 +247,29 @@ def test_default_download_rejects_digest_mismatch(tmp_path, monkeypatch):
 
 
 def test_main_returns_0_when_all_ok(tmp_path, monkeypatch, capsys):
-    fat = _fat_dir(tmp_path, {MAC: _PAYLOAD})
-    published = _build_fat_wheel(tmp_path / "pub", MAC, _PAYLOAD, reverse=True)
+    wheels = _wheel_dir(tmp_path, {MAC: _PAYLOAD})
+    published = _build_wheel(tmp_path / "pub", MAC, _PAYLOAD, reverse=True)
     monkeypatch.setattr(guard, "_default_http_get", _http_get_for(VERSION, [MAC]))
     monkeypatch.setattr(guard, "_default_download", _download_from({MAC: published}))
-    rc = guard.main(["--fat-dir", str(fat), "--version", VERSION])
+    rc = guard.main(["--payload", "engines", "--wheel-dir", str(wheels), "--version", VERSION])
     assert rc == 0
     assert "ok" in capsys.readouterr().out
 
 
-def test_main_returns_1_on_mismatch(tmp_path, monkeypatch, capsys):
-    fat = _fat_dir(tmp_path, {MAC: _PAYLOAD})
-    published = _build_fat_wheel(tmp_path / "pub", MAC, _changed(_PAYLOAD))
-    monkeypatch.setattr(guard, "_default_http_get", _http_get_for(VERSION, [MAC]))
-    monkeypatch.setattr(guard, "_default_download", _download_from({MAC: published}))
-    rc = guard.main(["--fat-dir", str(fat), "--version", VERSION])
+@pytest.mark.parametrize(
+    ("key", "name", "payload", "package", "version_file"),
+    [
+        ("engines", MAC, _PAYLOAD, "tackbox_engines", "engines/VERSION"),
+        ("opengrep", OG_LINUX, _OG_PAYLOAD, "tackbox_opengrep", "engines/opengrep/VERSION"),
+    ],
+)
+def test_main_returns_1_on_mismatch(tmp_path, monkeypatch, capsys, key, name, payload, package, version_file):
+    wheels = _wheel_dir(tmp_path, {name: payload}, package=package)
+    published = _build_wheel(tmp_path / "pub", name, _changed(payload), package=package)
+    url = f"https://pypi.org/pypi/tackbox-{key}/json"
+    monkeypatch.setattr(guard, "_default_http_get", _http_get_for(VERSION, [name], url))
+    monkeypatch.setattr(guard, "_default_download", _download_from({name: published}))
+    rc = guard.main(["--payload", key, "--wheel-dir", str(wheels), "--version", VERSION])
     assert rc == 1
     err = capsys.readouterr().err
-    assert "engines/VERSION was not bumped" in err
+    assert f"{version_file} was not bumped" in err

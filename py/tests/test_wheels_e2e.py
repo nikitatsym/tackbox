@@ -1,11 +1,11 @@
-"""Session-scoped e2e: build thin/fat wheels, install the thin wheel alone
-into a fresh venv, and drive tackbox against the fixture repo with the
-engine payload supplied via TACKBOX_ENGINES_DIR.
+"""Session-scoped e2e: build the thin and both payload wheels, install the
+thin wheel alone into a fresh venv, and drive tackbox against the fixture repo
+with the payloads supplied via TACKBOX_ENGINES_DIR / TACKBOX_OPENGREP_DIR.
 
 F6: the engine binaries come from the machine store, fetched from PyPI at
-runtime. A CI/e2e run can't fetch an unpublished version, so
-TACKBOX_ENGINES_DIR points at the unpacked fat wheel - the store's override
-path - which also keeps the run offline.
+runtime. A CI/e2e run can't fetch an unpublished version, so each override
+points at the unpacked payload wheel - the store's override path - which also
+keeps the run offline.
 
 Fixture materialization lives in scripts/materialize_fixture.py so the same
 seeded violations drive both this session and the wheels CI matrix.
@@ -76,7 +76,12 @@ def wheels(tmp_path_factory) -> dict:
         f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
     )
     payload = json.loads(result.stdout)
-    return {"outdir": outdir, "fat": Path(payload["fat"]), "thin": Path(payload["thin"])}
+    return {
+        "outdir": outdir,
+        "fat": Path(payload["fat"]),
+        "opengrep": Path(payload["opengrep"]),
+        "thin": Path(payload["thin"]),
+    }
 
 
 @pytest.fixture(scope="session")
@@ -111,7 +116,14 @@ def engines_payload(tmp_path_factory, wheels) -> Path:
     """The fat wheel's payload unpacked into a store-override directory, using
     the same unpack the runtime uses (exec bits restored)."""
     d = tmp_path_factory.mktemp("engines-payload") / "tackbox_engines"
-    engines._unpack_tackbox_engines(wheels["fat"], d)
+    engines._unpack_payload(wheels["fat"], d, "tackbox_engines")
+    return d
+
+
+@pytest.fixture(scope="session")
+def opengrep_payload(tmp_path_factory, wheels) -> Path:
+    d = tmp_path_factory.mktemp("opengrep-payload") / "tackbox_opengrep"
+    engines._unpack_payload(wheels["opengrep"], d, "tackbox_opengrep")
     return d
 
 
@@ -148,27 +160,50 @@ def _tackbox(venv: Path) -> Path:
     return _venv_bin(venv, "tackbox")
 
 
-def _hermetic_env(engines_payload: Path) -> dict:
-    """os.environ with every PATH dir carrying an `ast-grep` removed: the venv
-    is driven by entrypoint path, unactivated, exactly as launchers and CI
-    drive it, and must be self-sufficient - an ast-grep from the dev venv or a
-    global install would mask executable-resolution bugs."""
-    def _carries_ast_grep(d: str) -> bool:
-        return (Path(d) / "ast-grep").is_file() or (Path(d) / "ast-grep.exe").is_file()
+def _hermetic_env(engines_payload: Path, opengrep_payload: Path) -> dict:
+    """os.environ with every PATH dir carrying an `ast-grep` or `opengrep`
+    removed: the venv is driven by entrypoint path, unactivated, exactly as
+    launchers and CI drive it, and must be self-sufficient - an ast-grep from
+    the dev venv or a system opengrep would mask executable-resolution bugs and
+    let lint pass without the bundled scanner."""
+    def _carries_shadow(d: str) -> bool:
+        return any(
+            (Path(d) / name).is_file()
+            for name in ("ast-grep", "ast-grep.exe", "opengrep", "opengrep.exe")
+        )
 
     path = os.pathsep.join(
         p for p in os.environ.get("PATH", "").split(os.pathsep)
-        if p and not _carries_ast_grep(p)
+        if p and not _carries_shadow(p)
     )
     env = {key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "PYTHONHOME"}}
-    return {**env, "PATH": path, "TACKBOX_ENGINES_DIR": str(engines_payload)}
+    return {
+        **env, "PATH": path,
+        "TACKBOX_ENGINES_DIR": str(engines_payload),
+        "TACKBOX_OPENGREP_DIR": str(opengrep_payload),
+    }
 
 
-def test_thin_and_fat_wheels_built(wheels):
-    assert wheels["fat"].is_file()
-    assert wheels["thin"].is_file()
-    assert wheels["fat"].name.endswith(".whl")
-    assert wheels["thin"].name.endswith(".whl")
+def test_all_three_wheels_built_under_the_pypi_limit(wheels):
+    for key in ("fat", "opengrep", "thin"):
+        assert wheels[key].is_file() and wheels[key].name.endswith(".whl")
+        assert wheels[key].stat().st_size <= 100 * 1024 * 1024, (
+            f"{wheels[key].name} exceeds PyPI's 100 MiB per-file limit"
+        )
+
+
+def test_opengrep_lives_only_in_the_opengrep_wheel(wheels):
+    """tackbox-opengrep carries exactly the opengrep binary and its notice;
+    tackbox-engines no longer carries opengrep at all."""
+    with zipfile.ZipFile(wheels["opengrep"]) as zf:
+        payload = {n for n in zf.namelist() if n.startswith("tackbox_opengrep/")}
+    assert payload == {
+        "tackbox_opengrep/__init__.py",
+        f"tackbox_opengrep/bin/{engines.exe_name('opengrep')}",
+        "tackbox_opengrep/third_party/licenses/opengrep.LICENSE.txt",
+    }
+    with zipfile.ZipFile(wheels["fat"]) as zf:
+        assert not [n for n in zf.namelist() if "opengrep" in n]
 
 
 def test_build_restores_source_tree(wheels):
@@ -274,16 +309,18 @@ def test_thin_wheel_preserves_engine_dependency_licenses(wheels, tmp_path):
             assert "META-INF/LICENSE" in jar.namelist()
 
 
-def test_thin_wheel_does_not_depend_on_fat(wheels):
-    """F6: thin must not carry a Requires-Dist on tackbox-engines - the engine
-    payload is a machine-store fetch, not a pip dependency."""
+def test_thin_wheel_does_not_depend_on_payloads(wheels):
+    """F6: thin must not carry a Requires-Dist on tackbox-engines or
+    tackbox-opengrep - the payloads are machine-store fetches, not pip
+    dependencies."""
     with zipfile.ZipFile(wheels["thin"]) as zf:
         meta_name = next(n for n in zf.namelist() if n.endswith(".dist-info/METADATA"))
         metadata = zf.read(meta_name).decode("utf-8")
     requires = [ln for ln in metadata.splitlines() if ln.startswith("Requires-Dist:")]
-    assert not any("tackbox-engines" in r or "tackbox_engines" in r for r in requires), (
-        f"thin wheel still pins fat: {requires}"
-    )
+    assert not any(
+        p in r for r in requires
+        for p in ("tackbox-engines", "tackbox_engines", "tackbox-opengrep", "tackbox_opengrep")
+    ), f"thin wheel still pins a payload: {requires}"
     # flake8 stays a real dependency (hosts the pyrules plugin); ast-grep-cli is
     # the pinned outline engine (D015), a thin runtime dep like flake8.
     for analyzer, version in (("flake8", "7.3.0"), ("pyflakes", "3.4.0")):
@@ -296,31 +333,38 @@ def test_thin_wheel_does_not_depend_on_fat(wheels):
     )
 
 
-def test_engines_json_carries_store_pins(engines_payload, wheels):
-    """The thin wheel's engines.json must pin the fat wheel (name + this
-    platform) and the unpacked tree, and the pin must match the real payload."""
+def test_engines_json_carries_store_pins(engines_payload, opengrep_payload, wheels):
+    """The thin wheel's engines.json must pin each payload wheel (project,
+    version, exact file name) and its unpacked tree, the pins must match the
+    real payloads, and both share the host platform."""
     with zipfile.ZipFile(wheels["thin"]) as zf:
         ej = json.loads(zf.read("tackbox/engines.json"))
-    assert ej["engines_version"] == "0.0.0"
-    fw = ej["fat_wheel"]
-    assert fw["wheel"] == wheels["fat"].name
-    assert fw["platform"] == engines.detect_platform_key()
-    assert "sha256" not in fw
-    assert ej["store_sha256"] == sha256_tree(engines_payload)
+    assert ej["platform"] == engines.detect_platform_key()
+    assert ej["payloads"] == {
+        "engines": {
+            "project": "tackbox-engines", "version": "0.0.0",
+            "wheel": wheels["fat"].name, "store_sha256": sha256_tree(engines_payload),
+        },
+        "opengrep": {
+            "project": "tackbox-opengrep", "version": "0.0.0",
+            "wheel": wheels["opengrep"].name, "store_sha256": sha256_tree(opengrep_payload),
+        },
+    }
 
 
-def test_hermetic_doctor_exits_zero(hermetic_venv, fixture_repo, engines_payload):
+def test_hermetic_doctor_exits_zero(hermetic_venv, fixture_repo, engines_payload, opengrep_payload):
     result = _run(
         [str(_tackbox(hermetic_venv)), "doctor"],
-        cwd=fixture_repo, env=_hermetic_env(engines_payload),
+        cwd=fixture_repo, env=_hermetic_env(engines_payload, opengrep_payload),
     )
     assert result.returncode == 0, (
         f"doctor failed: {result.returncode}\n"
         f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
     )
-    assert "doctor: 8 checks, 0 failed" in result.stdout
+    assert "doctor: 9 checks, 0 failed" in result.stdout
     assert "ok platform:" in result.stdout
-    assert "ok engines-store:" in result.stdout
+    assert "ok engines-store: tackbox-engines 0.0.0 at" in result.stdout
+    assert "ok opengrep-store: tackbox-opengrep 0.0.0 at" in result.stdout
     assert "ok payload-checksums:" in result.stdout
     assert "ok binaries-start:" in result.stdout
     assert "ok git-in-path:" in result.stdout
@@ -331,10 +375,11 @@ def test_hermetic_doctor_exits_zero(hermetic_venv, fixture_repo, engines_payload
     assert "ok ast-grep:" in result.stdout
 
 
-def test_hermetic_lint_finds_all_engine_violations(hermetic_venv, fixture_repo, engines_payload):
+def test_hermetic_lint_finds_all_engine_violations(hermetic_venv, fixture_repo, engines_payload, opengrep_payload):
+    env = _hermetic_env(engines_payload, opengrep_payload)
     result = _run(
         [str(_tackbox(hermetic_venv)), "lint", ".", "--no-cache"],
-        cwd=fixture_repo, env=_hermetic_env(engines_payload),
+        cwd=fixture_repo, env=env,
     )
     assert result.returncode == 1, (
         f"expected exit 1, got {result.returncode}\n"
@@ -368,7 +413,7 @@ def test_hermetic_lint_finds_all_engine_violations(hermetic_venv, fixture_repo, 
     report_path = fixture_repo / "quality.json"
     quality = _run(
         [str(_tackbox(hermetic_venv)), "lint", ".", "--no-cache", "--codequality", str(report_path)],
-        cwd=fixture_repo, env=_hermetic_env(engines_payload),
+        cwd=fixture_repo, env=env,
     )
     assert quality.returncode == 1, quality.stdout + quality.stderr
     issues = json.loads(report_path.read_text(encoding="utf-8"))
@@ -378,6 +423,8 @@ def test_hermetic_lint_finds_all_engine_violations(hermetic_venv, fixture_repo, 
         ('python-unused-variable', 'unused.py', 3),
         ('python-unused-private', 'unused.py', 5),
         ('unused', 'pkga/unused.go', 2), ('unusedparams', 'pkga/unused.go', 3),
+        # Only the opengrep binary from the opengrep store can produce this one.
+        ('go-exit-in-recover', 'pkgb/recover.go', 7),
         ('JV011', 'Unused.java', 5), ('JV012', 'Unused.java', 3),
         ('JV013', 'Unused.java', 4), ('JV014', 'Unused.java', 1),
         ('@typescript-eslint/no-unused-vars', 'unused.js', 1),
@@ -387,13 +434,13 @@ def test_hermetic_lint_finds_all_engine_violations(hermetic_venv, fixture_repo, 
     assert not any(i['location']['path'] == 'clean.py' for i in issues)
 
 
-def test_doctor_fails_on_patched_vendored_transitive_dep(hermetic_venv, fixture_repo, engines_payload):
+def test_doctor_fails_on_patched_vendored_transitive_dep(hermetic_venv, fixture_repo, engines_payload, opengrep_payload):
     """A byte flipped anywhere in the store payload must turn doctor red.
 
     Targets a transitive dep specifically: only the vendor-tree entry and the
     whole-tree store_sha256 cover those."""
     tackbox = _tackbox(hermetic_venv)
-    env = _hermetic_env(engines_payload)
+    env = _hermetic_env(engines_payload, opengrep_payload)
     engines_json = json.loads((_site_packages(hermetic_venv) / "tackbox" / "engines.json").read_text())
     top_level = {
         e["path"].split("node_modules/")[-1].split("/")[0]
@@ -420,10 +467,29 @@ def test_doctor_fails_on_patched_vendored_transitive_dep(hermetic_venv, fixture_
     assert result.returncode == 0, "doctor must recover after restore"
 
 
-def test_hermetic_banner_carries_engines_sha_and_versions(hermetic_venv, fixture_repo, engines_payload):
+def test_doctor_fails_on_patched_opengrep_payload(hermetic_venv, fixture_repo, engines_payload, opengrep_payload):
+    """The opengrep store is pinned by its own tree sha: a changed file in it
+    fails opengrep-store and nothing else, and doctor recovers on restore."""
+    tackbox = _tackbox(hermetic_venv)
+    env = _hermetic_env(engines_payload, opengrep_payload)
+    notice = opengrep_payload / "third_party" / "licenses" / "opengrep.LICENSE.txt"
+    original = notice.read_bytes()
+    try:
+        notice.write_bytes(original + b"locally patched\n")
+        result = _run([str(tackbox), "doctor"], cwd=fixture_repo, env=env)
+        assert result.returncode == 1, result.stdout
+        assert "fail opengrep-store:" in result.stdout
+        assert "ok engines-store:" in result.stdout
+    finally:
+        notice.write_bytes(original)
+    result = _run([str(tackbox), "doctor"], cwd=fixture_repo, env=env)
+    assert result.returncode == 0, "doctor must recover after restore"
+
+
+def test_hermetic_banner_carries_engines_sha_and_versions(hermetic_venv, fixture_repo, engines_payload, opengrep_payload):
     result = _run(
         [str(_tackbox(hermetic_venv)), "lint", ".", "--no-cache"],
-        cwd=fixture_repo, env=_hermetic_env(engines_payload),
+        cwd=fixture_repo, env=_hermetic_env(engines_payload, opengrep_payload),
     )
     banner = None
     for line in result.stderr.splitlines():

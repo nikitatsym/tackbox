@@ -29,11 +29,12 @@ def test_dev_mode_summary_and_exit_zero():
     text = out.getvalue()
     assert rc == 0
     lines = text.strip().splitlines()
-    assert lines[-1].startswith("doctor: 8 checks, 0 failed")
+    assert lines[-1].startswith("doctor: 9 checks, 0 failed")
     ids = {ln.split(" ", 2)[1].rstrip(":") for ln in lines[:-1]}
     assert ids == {
         "platform",
         "engines-store",
+        "opengrep-store",
         "payload-checksums",
         "binaries-start",
         "git-in-path",
@@ -51,6 +52,7 @@ def test_dev_mode_skips_payload_and_binaries():
         doctor.run(out)
     text = out.getvalue()
     assert "ok engines-store: skipped (dev mode)" in text
+    assert "ok opengrep-store: skipped (dev mode)" in text
     assert "ok payload-checksums: skipped (dev mode)" in text
     assert "ok binaries-start: skipped (dev mode)" in text
 
@@ -62,13 +64,22 @@ def _foreign_platform_key() -> str:
 
 
 def _setup_hermetic(tmp_path, monkeypatch, pkg, engines_json) -> None:
-    """Point the hermetic engine store at a tmp pkg + empty payload dir so
-    doctor runs offline against the supplied engines.json."""
-    (pkg / "engines.json").write_text(json.dumps(engines_json))
+    """Point both hermetic payload stores at empty tmp payload dirs (pinned by
+    their tree sha) and the package at a tmp pkg, so doctor runs offline
+    against the supplied engines.json."""
+    pins = {}
+    for payload in engines_mod.PAYLOADS:
+        root = tmp_path / payload.package
+        (root / "bin").mkdir(parents=True)
+        monkeypatch.setenv(payload.dir_env, str(root))
+        pins[payload.key] = {
+            "project": payload.project, "version": "0.0.0",
+            "wheel": f"{payload.package}-0.0.0-py3-none-any.whl",
+            "store_sha256": sha256_tree(root),
+        }
+    (pkg / "engines.json").write_text(json.dumps({**engines_json, "payloads": pins}))
     monkeypatch.setattr(engines_mod, "_TACKBOX_PKG_ROOT", pkg)
     monkeypatch.setattr(engines_mod, "is_hermetic", lambda: True)
-    (tmp_path / "tackbox_engines" / "bin").mkdir(parents=True)
-    monkeypatch.setenv("TACKBOX_ENGINES_DIR", str(tmp_path / "tackbox_engines"))
     monkeypatch.setattr(engines_mod, "hermetic_env", lambda base=None: dict(base or {}))
 
 
@@ -82,12 +93,7 @@ def test_hermetic_platform_mismatch_flags_check(tmp_path, monkeypatch):
     }
     pkg = tmp_path / "tackbox"
     pkg.mkdir()
-    (pkg / "engines.json").write_text(json.dumps(engines_json))
-    monkeypatch.setattr(engines_mod, "_TACKBOX_PKG_ROOT", pkg)
-    monkeypatch.setattr(engines_mod, "is_hermetic", lambda: True)
-    # Override the store with a supplied payload dir so ensure never fetches.
-    (tmp_path / "tackbox_engines" / "bin").mkdir(parents=True)
-    monkeypatch.setenv("TACKBOX_ENGINES_DIR", str(tmp_path / "tackbox_engines"))
+    _setup_hermetic(tmp_path, monkeypatch, pkg, engines_json)
 
     out = io.StringIO()
     rc = doctor.run(out)
@@ -95,7 +101,8 @@ def test_hermetic_platform_mismatch_flags_check(tmp_path, monkeypatch):
     text = out.getvalue()
     assert "fail platform:" in text
     assert f"wheel built for {_foreign_platform_key()}" in text
-    assert "doctor: 8 checks, " in text
+    assert "ok engines-store:" in text and "ok opengrep-store:" in text
+    assert "doctor: 9 checks, " in text
 
 
 def test_hermetic_payload_mismatch_flags_check(tmp_path, monkeypatch):
@@ -139,7 +146,7 @@ def test_hermetic_missing_payload_flags_check(tmp_path, monkeypatch):
                 "id": "opengrep",
                 "kind": "binary",
                 "version": "1.25.0",
-                "path": "tackbox_engines/bin/opengrep",
+                "path": "tackbox_opengrep/bin/opengrep",
                 "sha256": "aa" * 32,
                 "license": "LGPL-2.1",
                 "license_path": "",
@@ -337,44 +344,53 @@ def _seed_store(tmp_path) -> Path:
     return payload
 
 
-def test_engines_store_dev_mode_skipped(monkeypatch):
+def _pins(**store_sha: str) -> dict:
+    return {"payloads": {
+        key: {"project": f"tackbox-{key}", "version": "1.2.3", "wheel": "w.whl", "store_sha256": sha}
+        for key, sha in store_sha.items()
+    }}
+
+
+@pytest.mark.parametrize("payload", engines_mod.PAYLOADS, ids=lambda p: p.key)
+def test_store_dev_mode_skipped(monkeypatch, payload):
     monkeypatch.setattr(engines_mod, "is_hermetic", lambda: False)
-    r = doctor._check_engines_store()
+    r = doctor._check_store(payload)
     assert r.ok and "skipped" in r.detail
+    assert r.check_id == f"{payload.key}-store"
 
 
-def test_engines_store_ok_when_tree_matches_pin(tmp_path, monkeypatch):
-    payload = _seed_store(tmp_path)
+@pytest.mark.parametrize("payload", engines_mod.PAYLOADS, ids=lambda p: p.key)
+def test_store_ok_when_tree_matches_pin(tmp_path, monkeypatch, payload):
+    root = _seed_store(tmp_path)
     monkeypatch.setattr(engines_mod, "is_hermetic", lambda: True)
-    monkeypatch.setenv("TACKBOX_ENGINES_DIR", str(payload))
+    monkeypatch.setenv(payload.dir_env, str(root))
     monkeypatch.setattr(
-        engines_mod, "load_engines_json", lambda: {"store_sha256": sha256_tree(payload)}
+        engines_mod, "load_engines_json", lambda: _pins(**{payload.key: sha256_tree(root)})
     )
-    r = doctor._check_engines_store()
-    assert r.ok and r.check_id == "engines-store"
+    r = doctor._check_store(payload)
+    assert r.ok and r.check_id == f"{payload.key}-store"
+    assert f"tackbox-{payload.key} 1.2.3" in r.detail
 
 
-def test_engines_store_fails_on_tree_mismatch(tmp_path, monkeypatch):
-    payload = _seed_store(tmp_path)
+def test_store_fails_on_tree_mismatch(tmp_path, monkeypatch):
+    root = _seed_store(tmp_path)
     monkeypatch.setattr(engines_mod, "is_hermetic", lambda: True)
-    monkeypatch.setenv("TACKBOX_ENGINES_DIR", str(payload))
-    monkeypatch.setattr(
-        engines_mod, "load_engines_json", lambda: {"store_sha256": "cc" * 32}
-    )
-    r = doctor._check_engines_store()
+    monkeypatch.setenv("TACKBOX_OPENGREP_DIR", str(root))
+    monkeypatch.setattr(engines_mod, "load_engines_json", lambda: _pins(opengrep="cc" * 32))
+    r = doctor._check_store(engines_mod.OPENGREP)
     assert not r.ok
     assert "mismatch" in r.detail
 
 
-def test_engines_store_reports_ensure_failure(monkeypatch):
+def test_store_reports_ensure_failure(monkeypatch):
     monkeypatch.setattr(engines_mod, "is_hermetic", lambda: True)
     monkeypatch.delenv("TACKBOX_ENGINES_DIR", raising=False)
 
-    def boom(fetcher=None):
+    def boom(payload, fetcher=None):
         raise engines_mod.EnginesStoreError("cannot download https://pypi.org/...: offline")
 
-    monkeypatch.setattr(engines_mod, "ensure_engines", boom)
-    r = doctor._check_engines_store()
+    monkeypatch.setattr(engines_mod, "ensure_payload", boom)
+    r = doctor._check_store(engines_mod.ENGINES)
     assert not r.ok
     assert "https://pypi.org" in r.detail
 
@@ -441,7 +457,7 @@ def test_attributes_section_absent_when_no_condition(tmp_path, monkeypatch):
 
 def test_doctor_exit0_with_oddities_and_count_unaffected(tmp_path, monkeypatch):
     # The informational lines never affect the exit code or the N-checks tally: a
-    # run with all four oddities present is still exit 0 with the pinned 8 checks.
+    # run with all four oddities present is still exit 0 with the pinned 9 checks.
     _needs_git()
     _attr_conditions_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -450,7 +466,7 @@ def test_doctor_exit0_with_oddities_and_count_unaffected(tmp_path, monkeypatch):
         rc = doctor.run(out)
     text = out.getvalue()
     assert rc == 0, text
-    assert "doctor: 8 checks, 0 failed" in text
+    assert "doctor: 9 checks, 0 failed" in text
     assert "attributes: local divergence conditions (informational, not a check):" in text
     assert "vendor/.gitattributes (skip-worktree)" in text
 

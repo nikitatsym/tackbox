@@ -52,7 +52,7 @@ def _run_all_checks() -> list[CheckResult]:
     snapshot = _resolve_source_snapshot()
     return [
         _check_platform(),
-        _check_engines_store(),
+        *(_check_store(payload) for payload in engines_mod.PAYLOADS),
         _check_payload_checksums(),
         _check_binaries_start(),
         _check_git_in_path(),
@@ -256,23 +256,24 @@ def _check_platform() -> CheckResult:
     return CheckResult("platform", True, resolved)
 
 
-def _check_engines_store() -> CheckResult:
-    """Presence + whole-tree checksum of the engine store. Triggers the
-    fetch-on-absence so a fresh install (and the fresh-runner canary) becomes
-    self-healing rather than failing on a cold store."""
+def _check_store(payload: engines_mod.Payload) -> CheckResult:
+    """Presence + whole-tree checksum of one payload store (`<key>-store`).
+    Triggers the fetch-on-absence so a fresh install (and the fresh-runner
+    canary) becomes self-healing rather than failing on a cold store."""
+    check_id = f"{payload.key}-store"
     if not engines_mod.is_hermetic():
-        return CheckResult("engines-store", True, "skipped (dev mode)")
+        return CheckResult(check_id, True, "skipped (dev mode)")
     try:
-        root = engines_mod.ensure_engines()
+        root = engines_mod.ensure_payload(payload)
     except engines_mod.EnginesStoreError as e:
         # no-report: doctor reports the store error via CheckResult (no short-circuit)
-        return CheckResult("engines-store", False, str(e))
+        return CheckResult(check_id, False, str(e))
     if not root.is_dir():
-        return CheckResult("engines-store", False, f"store missing: {root}")
-    want = engines_mod.load_engines_json().get("store_sha256")
-    if want and sha256_tree(root) != want:
-        return CheckResult("engines-store", False, f"payload tree mismatch at {root}")
-    return CheckResult("engines-store", True, str(root))
+        return CheckResult(check_id, False, f"store missing: {root}")
+    pin = engines_mod.payload_pin(payload)
+    if sha256_tree(root) != pin["store_sha256"]:
+        return CheckResult(check_id, False, f"payload tree mismatch at {root}")
+    return CheckResult(check_id, True, f"{payload.project} {pin['version']} at {root}")
 
 
 def _check_payload_checksums() -> CheckResult:
@@ -282,6 +283,8 @@ def _check_payload_checksums() -> CheckResult:
         )
     data = engines_mod.load_engines_json()
     entries = data.get("engines", [])
+    roots = {"tackbox": engines_mod._TACKBOX_PKG_ROOT}
+    roots.update((p.package, engines_mod.payload_root(p)) for p in engines_mod.PAYLOADS)
     mismatches: list[str] = []
     missing: list[str] = []
     for entry in entries:
@@ -292,11 +295,8 @@ def _check_payload_checksums() -> CheckResult:
         top, _, tail = rel_path.partition("/")
         if not tail:
             continue
-        if top == "tackbox":
-            root = engines_mod._TACKBOX_PKG_ROOT
-        elif top == "tackbox_engines":
-            root = engines_mod.hermetic_engines_root()
-        else:
+        root = roots.get(top)
+        if root is None:
             continue
         target = root / tail
         if target.is_dir():
@@ -329,7 +329,8 @@ def _check_binaries_start() -> CheckResult:
         return CheckResult(
             "binaries-start", True, "skipped (dev mode)"
         )
-    engines_root = engines_mod.hermetic_engines_root()
+    engines_root = engines_mod.payload_root(engines_mod.ENGINES)
+    opengrep_root = engines_mod.payload_root(engines_mod.OPENGREP)
     tackbox_root = engines_mod._TACKBOX_PKG_ROOT
     exe = engines_mod.exe_name
     probes: list[tuple[str, list[str], bool]] = [
@@ -339,7 +340,7 @@ def _check_binaries_start() -> CheckResult:
             [str(tackbox_root / "bin" / exe("erclint-opengrep")), "--version"],
             True,
         ),
-        ("opengrep", [str(engines_root / "bin" / exe("opengrep")), "--version"], True),
+        ("opengrep", [str(opengrep_root / "bin" / exe("opengrep")), "--version"], True),
         ("node", [str(engines_root / "bin" / exe("node")), "--version"], True),
         ("jscpd", [str(engines_root / "bin" / exe("jscpd")), "--version"], True),
     ]

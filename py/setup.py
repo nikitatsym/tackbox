@@ -19,10 +19,10 @@ def _long_description() -> str:
 # flake8 hosts pyrules; analyzer bumps are reviewed rule changes.
 # ast-grep-cli is the outline engine (D015): a thin pip dependency (flake8
 # precedent), pinned so a grammar bump that shifts resolved scope chains is a
-# visible, reviewed version change (residual A7). The fat engine binaries are
-# NOT pip dependencies: they come from the machine store (see
-# tackbox.engines.ensure_engines), fetched once per engines version so a thin
-# patch bump never re-materializes ~350 MB of fat under uv.
+# visible, reviewed version change (residual A7). The engine payloads
+# (tackbox-engines, tackbox-opengrep) are NOT pip dependencies: they come from
+# the machine store (see tackbox.engines.ensure_payload), fetched once per
+# payload version so a thin patch bump never re-materializes them under uv.
 setup(
     version=os.environ.get("TACKBOX_VERSION", "0.0.0"),
     install_requires=["flake8==7.3.0", "pyflakes==3.4.0", "ast-grep-cli==0.45.1"],

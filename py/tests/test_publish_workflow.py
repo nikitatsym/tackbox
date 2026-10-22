@@ -1,5 +1,6 @@
-"""Publish workflow spec: OIDC, fat->thin sequential, skip-fat-if-unchanged,
-non-cancelling concurrency; the fresh-runner canary lives in verify-release.yml.
+"""Publish workflow spec: OIDC, payloads->thin sequential, skip-payload-if-
+unchanged, non-cancelling concurrency; the fresh-runner canary lives in
+verify-release.yml.
 
 Structural fixtures for `.github/workflows/publish.yml`. The workflow can
 only be end-to-end exercised on a tag push into origin main (PyPI needs
@@ -117,6 +118,15 @@ def test_build_step_passes_engines_version_from_file(workflow):
     )
 
 
+def test_build_step_passes_opengrep_version_from_file(workflow):
+    """The tackbox-opengrep version comes from engines/opengrep/VERSION, a
+    reviewed repo edit like engines/VERSION."""
+    build_job = _find_matrix_job(workflow["jobs"], REQUIRED_PLATFORMS)
+    text = _steps_text(build_job["steps"])
+    assert "engines/opengrep/VERSION" in text
+    assert "--opengrep-version" in text
+
+
 def test_build_step_passes_tag_version(workflow):
     """Thin wheel version must be the pushed tag (with leading v stripped)."""
     jobs = workflow["jobs"]
@@ -157,6 +167,7 @@ def test_smoke_installs_built_wheels_into_fresh_venv(workflow):
         "smoke must materialize the shared fixture, not roll its own"
     )
 
+
 def test_smoke_runs_hook_protocol_against_the_built_artifact(workflow):
     smoke = _find_smoke_job(workflow["jobs"])
     assert smoke is not None
@@ -170,20 +181,21 @@ def test_smoke_runs_hook_protocol_against_the_built_artifact(workflow):
     assert "succeeded" in text and "hook-protocol" in text
 
 
-def test_publish_fat_job_uses_oidc_no_tokens(workflow):
-    fat = _publish_fat_job(workflow["jobs"])
-    perms = fat.get("permissions", {})
+@pytest.mark.parametrize("packages_dir", ["fat", "opengrep"])
+def test_payload_publish_job_uses_oidc_no_tokens(workflow, packages_dir):
+    job = _publish_job(workflow["jobs"], packages_dir)[1]
+    perms = job.get("permissions", {})
     assert perms.get("id-token") == "write", (
-        "publish-fat must request id-token: write (OIDC Trusted Publisher)"
+        f"the {packages_dir} publish job must request id-token: write (OIDC Trusted Publisher)"
     )
-    text = _steps_text(fat["steps"])
+    text = _steps_text(job["steps"])
     assert "pypa/gh-action-pypi-publish" in text, (
-        "publish-fat must use pypa/gh-action-pypi-publish (Trusted Publishers)"
+        f"the {packages_dir} publish job must use pypa/gh-action-pypi-publish (Trusted Publishers)"
     )
     lowered = text.lower()
-    assert "twine" not in lowered, "publish-fat must not shell out to twine"
+    assert "twine" not in lowered, "payload publish must not shell out to twine"
     assert "password" not in lowered, (
-        "publish-fat must not carry a password/token; OIDC only"
+        "payload publish must not carry a password/token; OIDC only"
     )
 
 
@@ -202,38 +214,39 @@ def test_publish_thin_job_uses_oidc_no_tokens(workflow):
     assert "password" not in lowered
 
 
-def test_publish_fat_and_thin_use_distinct_environments(workflow):
+def test_publish_jobs_use_distinct_environments(workflow):
     """PyPI Trusted Publishers rejects two pending TPs with the same
     (owner, repo, workflow, environment) tuple - the OIDC subject cannot
-    disambiguate between project names. If both jobs share an environment,
-    only one of tackbox / tackbox-engines can be pending at a time.
-    Each publish job must live in its own environment."""
-    fat = _publish_fat_job(workflow["jobs"])
-    thin = _publish_thin_job(workflow["jobs"])
-    fat_env = fat.get("environment")
-    thin_env = thin.get("environment")
-    assert fat_env, "publish-fat must declare an environment for OIDC subject scoping"
-    assert thin_env, "publish-thin must declare an environment for OIDC subject scoping"
-    assert fat_env != thin_env, (
-        f"publish-fat and publish-thin must use distinct environments; "
-        f"both are {fat_env!r}. PyPI pending TP would collide."
+    disambiguate between project names. If two jobs share an environment,
+    only one of tackbox / tackbox-engines / tackbox-opengrep can be pending
+    at a time. Each publish job must live in its own environment."""
+    jobs = workflow["jobs"]
+    envs = {
+        packages_dir: _publish_job(jobs, packages_dir)[1].get("environment")
+        for packages_dir in ("fat", "opengrep", "thin")
+    }
+    assert all(envs.values()), f"every publish job must declare an environment: {envs}"
+    assert len(set(envs.values())) == 3, (
+        f"publish jobs must use distinct environments, got {envs}. PyPI pending TP would collide."
     )
+    assert envs["opengrep"] == "pypi-opengrep"
 
 
-def test_publish_thin_depends_on_publish_fat(workflow):
-    """Thin no longer pins fat in Requires-Dist (F6), but the runtime store
-    fetches the fat wheel from PyPI on first use. If thin ships before fat is
-    up, the first `uvx tackbox` (and the canary) cannot resolve the engines
-    payload. Sequential fat->thin keeps the fetch target present."""
+def test_publish_thin_depends_on_both_payload_publishes(workflow):
+    """Thin pins no payload in Requires-Dist (F6), but the runtime store
+    fetches both payload wheels from PyPI on first use. If thin ships before a
+    payload is up, the first `uvx tackbox` (and the canary) cannot resolve it.
+    Sequential payloads->thin keeps every fetch target present."""
     thin = _publish_thin_job(workflow["jobs"])
     needs = thin.get("needs") or []
     if isinstance(needs, str):
         needs = [needs]
-    fat_job_name = _publish_fat_job_name(workflow["jobs"])
-    assert fat_job_name in needs, (
-        f"publish-thin must declare needs: {fat_job_name} so thin never publishes "
-        f"before fat resolves"
-    )
+    for packages_dir in ("fat", "opengrep"):
+        job_name = _publish_job(workflow["jobs"], packages_dir)[0]
+        assert job_name in needs, (
+            f"publish-thin must declare needs: {job_name} so thin never publishes "
+            f"before that payload resolves"
+        )
 
 
 def test_publish_jobs_depend_on_smoke(workflow):
@@ -242,7 +255,8 @@ def test_publish_jobs_depend_on_smoke(workflow):
     fat = _publish_fat_job(workflow["jobs"])
     thin = _publish_thin_job(workflow["jobs"])
     smoke_name = _smoke_job_name(workflow["jobs"])
-    for job_name, job in (("publish-fat", fat), ("publish-thin", thin)):
+    opengrep = _publish_job(workflow["jobs"], "opengrep")[1]
+    for job_name, job in (("publish-fat", fat), ("publish-opengrep", opengrep), ("publish-thin", thin)):
         needs = job.get("needs") or []
         if isinstance(needs, str):
             needs = [needs]
@@ -253,49 +267,58 @@ def test_publish_jobs_depend_on_smoke(workflow):
         )
 
 
-def test_publish_fat_skips_when_version_already_on_pypi(workflow):
-    """When engines/VERSION already exists on PyPI, fat publish must be a
-    no-op so a thin-only patch bump does not 409 on the fat republish.
+@pytest.mark.parametrize("packages_dir", ["fat", "opengrep"])
+def test_payload_publish_skips_when_version_already_on_pypi(workflow, packages_dir):
+    """When a payload version already exists on PyPI, its publish must be a
+    no-op so a thin-only patch bump does not 409 on the payload republish.
     Enforced via the pypa action's skip-existing input, which turns the
     409 into success at upload time - simpler than a pre-check probe and
-    removes shell interpolation of engines/VERSION into a python -c."""
-    with_args = _pypi_publish_with(_publish_fat_job(workflow["jobs"]))
-    assert with_args is not None, "no pypa/gh-action-pypi-publish step in publish-fat"
+    removes shell interpolation of the VERSION into a python -c."""
+    with_args = _pypi_publish_with(_publish_job(workflow["jobs"], packages_dir)[1])
+    assert with_args is not None, f"no pypa/gh-action-pypi-publish step for {packages_dir}"
     assert with_args.get("skip-existing") is True, (
-        "publish-fat's pypa publish step must set skip-existing: true so "
-        "an identical fat republish (thin-only patch bump) succeeds "
+        f"the {packages_dir} pypa publish step must set skip-existing: true so "
+        "an identical payload republish (thin-only patch bump) succeeds "
         "instead of crashing on a PyPI 409"
     )
 
 
-def test_publish_fat_runs_integrity_guard_before_publish(workflow):
-    """skip-existing keeps the OLD fat when a fat input changed without an
-    engines/VERSION bump, while the new thin ships pointing at the NEW payload
+@pytest.mark.parametrize(
+    ("packages_dir", "version_file", "payload_flag"),
+    [("fat", "engines/VERSION", "--payload engines"),
+     ("opengrep", "engines/opengrep/VERSION", "--payload opengrep")],
+)
+def test_payload_publish_runs_integrity_guard_before_publish(
+    workflow, packages_dir, version_file, payload_flag
+):
+    """skip-existing keeps the OLD wheel when a payload input changed without a
+    VERSION bump, while the new thin ships pointing at the NEW payload
     tree-sha - bricking every fresh install. A pre-publish guard compares the
-    local fat payload against any already-published same-version wheel and hard-
+    local payload against any already-published same-version wheel and hard-
     fails on a mismatch. It must run BEFORE the publish action (post-publish is
     too late - skip-existing has already kept the stale wheel), and skip-existing
     must stay set: the guard is what makes the idempotent re-run safe."""
-    fat = _publish_fat_job(workflow["jobs"])
-    steps = fat["steps"]
+    job = _publish_job(workflow["jobs"], packages_dir)[1]
+    steps = job["steps"]
     guard_idx = _guard_step_index(steps)
     assert guard_idx is not None, (
-        "publish-fat must run scripts/guard_engines_publish.py before publishing"
+        f"the {packages_dir} publish job must run scripts/guard_engines_publish.py before publishing"
     )
     publish_idx = _pypi_publish_step_index(steps)
-    assert publish_idx is not None, "publish-fat has no pypa/gh-action-pypi-publish step"
+    assert publish_idx is not None, f"the {packages_dir} job has no pypa/gh-action-pypi-publish step"
     assert guard_idx < publish_idx, (
         "the integrity guard must run BEFORE the pypa publish action"
     )
-    with_args = _pypi_publish_with(fat)
+    with_args = _pypi_publish_with(job)
     assert with_args is not None and with_args.get("skip-existing") is True, (
         "skip-existing must remain set; the pre-publish guard is what makes an "
-        "idempotent fat re-upload safe"
+        "idempotent payload re-upload safe"
     )
     guard_text = _steps_text([steps[guard_idx]])
-    assert "engines/VERSION" in guard_text, (
-        "guard must resolve the engines version from engines/VERSION, not an ad hoc value"
+    assert version_file in guard_text, (
+        f"guard must resolve the payload version from {version_file}, not an ad hoc value"
     )
+    assert payload_flag in guard_text and f"--wheel-dir {packages_dir}" in guard_text
 
 
 def test_publish_thin_does_not_set_skip_existing(workflow):
@@ -460,31 +483,27 @@ def _pypi_publish_with(job: dict) -> dict | None:
 
 
 def _pypi_publish_packages_dir(job: dict) -> str | None:
-    """The packages-dir arg of the job's pypa publish step - fat and thin are
-    distinguished by whether it points at the fat or thin isolate dir."""
+    """The packages-dir arg of the job's pypa publish step - fat, opengrep and
+    thin are distinguished by which isolate dir it points at."""
     with_args = _pypi_publish_with(job)
     return with_args.get("packages-dir") if with_args is not None else None
 
 
+def _publish_job(jobs: dict, packages_dir: str) -> tuple[str, dict]:
+    """(name, job) of the publish job whose pypa step uploads packages_dir:
+    `fat` (tackbox_engines), `opengrep` (tackbox_opengrep), `thin` (tackbox)."""
+    for name, job in jobs.items():
+        if _pypi_publish_packages_dir(job) == packages_dir:
+            return name, job
+    raise AssertionError(f"no publish job found for {packages_dir} wheels")
+
+
 def _publish_fat_job(jobs: dict) -> dict:
-    for name, job in jobs.items():
-        if _pypi_publish_packages_dir(job) == "fat":
-            return job
-    raise AssertionError("no publish job found for fat (tackbox_engines) wheels")
-
-
-def _publish_fat_job_name(jobs: dict) -> str:
-    for name, job in jobs.items():
-        if _pypi_publish_packages_dir(job) == "fat":
-            return name
-    raise AssertionError("no publish job found for fat wheels")
+    return _publish_job(jobs, "fat")[1]
 
 
 def _publish_thin_job(jobs: dict) -> dict:
-    for name, job in jobs.items():
-        if _pypi_publish_packages_dir(job) == "thin":
-            return job
-    raise AssertionError("no publish job found for thin (tackbox) wheels")
+    return _publish_job(jobs, "thin")[1]
 
 
 def _smoke_job_name(jobs: dict) -> str:
