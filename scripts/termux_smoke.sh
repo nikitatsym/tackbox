@@ -15,6 +15,7 @@ materialize() {
   trap 'rm -rf "$work"' EXIT
   fixture=$work/fixture-repo
   python3 "$repo/scripts/materialize_fixture.py" "$fixture"
+  touch "$fixture/dev.py"
 }
 
 hook_protocol() {
