@@ -332,6 +332,19 @@ def test_ast_grep_fails_on_version_drift(monkeypatch):
     assert "0.45.0" in r.detail and doctor._AST_GREP_VERSION in r.detail
 
 
+@pytest.mark.parametrize("version,ok", [("v24.1.0", True), ("v18.20.0", False), ("?", False)])
+def test_system_node_diagnostic_rejects_unsupported_runtime(tmp_path, monkeypatch, version, ok):
+    pkg = tmp_path / "tackbox"
+    pkg.mkdir()
+    _setup_hermetic(tmp_path, monkeypatch, pkg, {"node": "system", "engines": []})
+    monkeypatch.setattr(engines_mod.proc, "run", lambda argv, **kwargs:
+                        subprocess.CompletedProcess(argv, 0, version, ""))
+    monkeypatch.setattr(engines_mod.proc, "run_bytes", lambda argv, **kwargs:
+                        subprocess.CompletedProcess(argv, 0, b"", b""))
+    result = doctor._check_binaries_start()
+    assert result.ok == ok
+
+
 # -- engines-store check ---------------------------------------------------
 
 

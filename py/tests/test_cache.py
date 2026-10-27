@@ -120,8 +120,7 @@ def test_python_interpreter_version_invalidates_marker(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("system_node,runtime", [(True, "v24.1.0"), (False, "")])
 def test_hermetic_eslint_salted_only_by_a_system_node(monkeypatch, tmp_path, system_node, runtime):
-    """A system node (Android) can change under an unchanged engines hash, so
-    its version salts hermetic ESLint units; a bundled node is in the hash."""
+    """System runtime upgrades must invalidate otherwise identical ESLint units."""
     monkeypatch.setattr(cache, "is_hermetic", lambda: True)
     monkeypatch.setattr(cache, "uses_system_node", lambda: system_node)
     monkeypatch.setattr(cache, "hermetic_env", lambda: {})

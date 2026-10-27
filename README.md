@@ -234,18 +234,17 @@ support from the Defense Advanced Research Project Agency (DARPA).
 
 ### Android (Termux)
 
-`uvx tackbox@latest` works in Termux like anywhere else:
+Android arm64 requires Termux Python 3.13+ and a system Node.js matching
+`^20.19.0 || ^22.13.0 || >=24.0.0` for the vendored JavaScript analyzers:
 
 ```bash
 pkg install python uv git nodejs-lts   # plus golang / openjdk-17 for .go / .java
 ```
 
-Neither Node.js nor ast-grep-cli publishes an Android build, and the Linux
-builds of node, jscpd, opengrep, and ast-grep do not start on Android's libc,
-so the Android wheels differ from the Linux ones:
+The Android wheel uses the system `node` from PATH; `tackbox doctor`
+checks its version. Android binaries link against Android system libraries
+or are static:
 
-- Node.js is the system `node` from PATH, like Go and Java; the engines
-  payload carries no node, and `tackbox doctor` probes the system one.
 - The thin wheel bundles the pinned ast-grep in `tackbox/bin` instead of
   depending on `ast-grep-cli`, which is declared only off Android.
 - `jscpd` and `ast-grep` are built from their pinned crates for
@@ -257,10 +256,9 @@ so the Android wheels differ from the Linux ones:
 - The Go engines are built for `GOOS=android`: a Linux build is killed by
   Android's seccomp filter as soon as it starts `go` or `opengrep`.
 
-No Android CI runner exists: the release cross-builds the Android wheels on
-x86_64 Linux and smoke-tests them in Termux (the pinned `termux-docker`
-image) on an arm64 runner before publishing; `verify-release` repeats the
-`uvx` canary there.
+The release cross-builds Android wheels on x86_64 Linux and smoke-tests them
+in a pinned `termux-docker` image on an arm64 runner before publishing.
+`verify-release` runs the published `uvx` canary in the same image.
 
 ## What the rules enforce
 

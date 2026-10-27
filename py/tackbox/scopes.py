@@ -30,20 +30,15 @@ from pathlib import Path
 
 from . import proc
 
-# The thin wheel's own binaries; on Android it carries ast-grep here.
 _PKG_BIN = Path(__file__).parent / "bin"
 
 
 def ast_grep_exe() -> str | None:
-    """Path of the `ast-grep` executable, or None when absent.
+    """Find ast-grep beside the interpreter, in the wheel, then on PATH.
 
-    The console script installs next to the interpreter (ast-grep-cli is a pip
-    dependency), and an unactivated venv - entrypoints launched by path, as
-    uvx and CI smoke do - has no PATH entry for it, so the interpreter's dir
-    is probed first. Android has no ast-grep-cli wheel; its thin wheel bundles
-    the same pinned binary in tackbox/bin, probed next. PATH is the fallback
-    for system installs. Always `ast-grep`, never the `sg` alias (collides
-    with linux setgroups).
+    Unactivated venvs omit console scripts from PATH. Android bundles the
+    binary because ast-grep-cli has no wheel there. The sg alias is excluded
+    because it conflicts with the Linux setgroups utility.
     """
     name = "ast-grep.exe" if os.name == "nt" else "ast-grep"
     for exe in (Path(sys.executable).with_name(name), _PKG_BIN / name):

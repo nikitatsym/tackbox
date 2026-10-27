@@ -1580,18 +1580,37 @@ def _hermetic_erclint_bin(name: str) -> Path:
 
 
 def uses_system_node() -> bool:
-    """True where the engines payload carries no node (engines.json `"node":
-    "system"`, Android: Node.js publishes no Android build and a static Linux
-    node is killed by its seccomp filter). The ESLint and markdownlint wrappers
-    then run on the host's `node` from PATH, a system toolchain there like go
-    and java everywhere."""
-    return load_engines_json()["node"] == "system"
+    mode = load_engines_json()["node"]
+    if mode not in ("bundled", "system"):
+        raise EnginesStoreError(f"invalid node runtime mode: {mode!r}")
+    return mode == "system"
 
 
 def hermetic_node() -> str:
     if uses_system_node():
         return "node"
     return str(payload_root(ENGINES) / "bin" / exe_name("node"))
+
+
+def system_node_version() -> str:
+    try:
+        result = proc.run(
+            ["node", "--version"], capture_output=True, timeout=60, env=hermetic_env()
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise EnginesStoreError(f"cannot determine system Node.js version: {error}") from error
+    text = result.stdout.strip()
+    match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", text)
+    if result.returncode != 0 or match is None:
+        raise EnginesStoreError(
+            f"cannot determine system Node.js version: exit {result.returncode}; "
+            f"{result.stderr.strip() or text or 'empty version output'}"
+        )
+    version = tuple(map(int, match.groups()))
+    if not ((20, 19, 0) <= version < (21, 0, 0)
+            or (22, 13, 0) <= version < (23, 0, 0) or version >= (24, 0, 0)):
+        raise EnginesStoreError(f"unsupported system Node.js {text}: need ^20.19.0 || ^22.13.0 || >=24.0.0")
+    return text[1:]
 
 
 def _hermetic_rule_script(name: str) -> Path:
@@ -1725,8 +1744,7 @@ def resolve_hermetic_versions() -> dict[str, str]:
     return {
         "erclint": versions.get("erclint", "?"),
         "opengrep": versions.get("opengrep", "?"),
-        "node": _version_from_binary("node", ("--version",), strip_v=True)
-        if uses_system_node() else versions.get("node", "?"),
+        "node": system_node_version() if uses_system_node() else versions.get("node", "?"),
         "eslint": versions.get("eslint", "?"),
         "markdownlint": versions.get("markdownlint", "?"),
     }

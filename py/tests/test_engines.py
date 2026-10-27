@@ -360,7 +360,6 @@ def test_mdlint_is_non_cacheable_and_wants_link_targets():
 
 
 def test_android_host_resolves_its_platform_key(monkeypatch):
-    # Python built for Android (Termux) reports sys.platform "android".
     monkeypatch.setattr(engines.sys, "platform", "android")
     monkeypatch.setattr(engines.platform, "machine", lambda: "aarch64")
     assert engines.detect_platform_key() == "android-aarch64"
@@ -376,6 +375,33 @@ def test_hermetic_node_runs_the_system_node_where_engines_json_says_so(monkeypat
     for engine_id in ("tackbox-eslint", "tackbox-mdlint"):
         spec = next(e for e in HERMETIC_ENGINES if e.id == engine_id)
         assert spec.build_argv(tmp_path, tmp_path, ["a.md"], (), tmp_path)[0] == "node"
+
+
+@pytest.mark.parametrize("mode", ["", "host", None, 1])
+def test_invalid_node_runtime_mode_fails(monkeypatch, mode):
+    monkeypatch.setattr(engines, "load_engines_json", lambda: {"node": mode})
+    with pytest.raises(engines.EnginesStoreError):
+        engines.hermetic_node()
+
+
+@pytest.mark.parametrize("version", ["v20.19.0", "v22.13.0", "v24.0.0", "v26.1.0"])
+def test_system_node_version_accepts_supported_runtimes(monkeypatch, version):
+    monkeypatch.setattr(engines, "hermetic_env", lambda: {})
+    monkeypatch.setattr(engines.proc, "run", lambda *args, **kwargs:
+                        engines.subprocess.CompletedProcess(args, 0, version, ""))
+    assert engines.system_node_version() == version[1:]
+
+
+@pytest.mark.parametrize("code,version", [
+    (1, "v24.0.0"), (0, ""), (0, "?"), (0, "v24.0.0-custom"),
+    (0, "v18.20.0"), (0, "v20.18.0"), (0, "v21.1.0"), (0, "v22.12.0"), (0, "v23.0.0"),
+])
+def test_system_node_version_rejects_failed_or_unsupported_probes(monkeypatch, code, version):
+    monkeypatch.setattr(engines, "hermetic_env", lambda: {})
+    monkeypatch.setattr(engines.proc, "run", lambda *args, **kwargs:
+                        engines.subprocess.CompletedProcess(args, code, version, ""))
+    with pytest.raises(engines.EnginesStoreError):
+        engines.system_node_version()
 
 
 

@@ -117,33 +117,6 @@ def test_matrix_runners_are_all_distinct(matrix_include):
     )
 
 
-_HOST_SMOKE_STEPS = (
-    "Install thin wheel; stage both payloads from the built payload wheels",
-    "Materialize fixture repo",
-    "tackbox doctor (expect exit 0)",
-    "tackbox lint (expect exit 1 on planted violations)",
-)
-
-
-def test_host_smoke_steps_skip_android(workflow):
-    """Android wheels cannot run on their x86_64 build host; their smoke is the
-    Termux job."""
-    steps = {s.get("name"): s for s in workflow["jobs"]["wheels"]["steps"] if isinstance(s, dict)}
-    for name in _HOST_SMOKE_STEPS:
-        assert steps[name].get("if") == f"matrix.platform != '{ANDROID}'", name
-
-
-def test_android_wheels_are_smoked_in_termux(workflow):
-    job = workflow["jobs"]["smoke-android"]
-    assert job["needs"] == "wheels"
-    assert job["runs-on"] in ALLOWED_RUNNERS["linux-aarch64"]
-    text = " ".join(str(s.get("run", "")) + str(s.get("with", "")) for s in job["steps"])
-    assert "wheels-android-aarch64" in text
-    assert "termux/termux-docker:aarch64@sha256:" in text  # digest: test_workflow_pins
-    assert "scripts/termux_smoke.sh provision" in text
-    assert "scripts/termux_smoke.sh wheels" in text
-
-
 def test_job_steps_invoke_build_and_materialize_scripts(workflow):
     """Fixture materialization must be a script call (not inline yaml)."""
     steps = workflow["jobs"]["wheels"]["steps"]

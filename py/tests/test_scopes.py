@@ -41,8 +41,6 @@ def _executable(path):
 
 
 def test_ast_grep_exe_order_interpreter_dir_then_bundled_then_path(tmp_path, monkeypatch):
-    # Android's thin wheel bundles ast-grep in tackbox/bin (no ast-grep-cli
-    # wheel exists there): probed after the interpreter dir, before PATH.
     name = "ast-grep.exe" if scopes.os.name == "nt" else "ast-grep"
     monkeypatch.setattr(scopes.sys, "executable", str(tmp_path / "venv" / "bin" / "python"))
     monkeypatch.setattr(scopes, "_PKG_BIN", tmp_path / "tackbox" / "bin")

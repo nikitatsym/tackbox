@@ -17,14 +17,8 @@ def _long_description() -> str:
 
 
 # flake8 hosts pyrules; analyzer bumps are reviewed rule changes.
-# ast-grep-cli is the outline engine (D015): a thin pip dependency (flake8
-# precedent), pinned so a grammar bump that shifts resolved scope chains is a
-# visible, reviewed version change (residual A7). ast-grep-cli publishes no
-# Android wheel, so the Android thin wheel bundles the same pinned ast-grep
-# (engines/manifest.json `ast_grep`) instead. The engine payloads
-# (tackbox-engines, tackbox-opengrep) are NOT pip dependencies: they come from
-# the machine store (see tackbox.engines.ensure_payload), fetched once per
-# payload version so a thin patch bump never re-materializes them under uv.
+# Android bundles the pinned grammar because ast-grep-cli has no Android wheel.
+# Payloads use a machine store so thin releases do not duplicate them in uv.
 setup(
     version=os.environ.get("TACKBOX_VERSION", "0.0.0"),
     install_requires=[

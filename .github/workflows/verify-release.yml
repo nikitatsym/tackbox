@@ -148,9 +148,7 @@ jobs:
             exit 1
           fi
 
-  # The same canary in Termux (pinned termux-docker image), an Android
-  # userland on the arm64 runner's kernel: uvx resolves the Android wheel there
-  # as on a device.
+  # Termux supplies Android's libc and Python wheel tags on the arm64 runner.
   canary-android:
     name: canary android-aarch64 (Termux)
     needs: target

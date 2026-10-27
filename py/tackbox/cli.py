@@ -205,7 +205,7 @@ def _dispatch(argv: list[str] | None) -> int:
         try:
             _print_banner(_tackbox_root())
             return doctor.run(sys.stdout)
-        except (AttributeResolutionError, subprocess.CalledProcessError) as e:
+        except (AttributeResolutionError, subprocess.CalledProcessError, EnginesStoreError) as e:
             # no-report: CLI boundary: a resolution failure is loud (exit 1), never a traceback
             print(f"tackbox: {e}", file=sys.stderr)
             return 1

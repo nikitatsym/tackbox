@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 from conftest import commit_all, count_calls, init_repo, tackbox_env
 
-from tackbox import cli, gitfiles
+from tackbox import cli, engines, gitfiles
 
 SUMMARY = "excluded by attributes: {n} files in scope (tackbox escapes lists all)"
 
@@ -217,6 +217,17 @@ def test_doctor_dispatch_resolution_failure_is_loud_not_traceback(
     rc = cli._dispatch(["doctor"])
     assert rc == 1
     assert "tackbox: check-attr exploded" in capsys.readouterr().err
+
+
+def test_doctor_dispatch_runtime_failure_is_loud_not_traceback(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(_build(tmp_path, {"src/a.py": PY_CLEAN}, attrs=""))
+
+    def unavailable(_root):
+        raise engines.EnginesStoreError("unsupported system Node.js")
+
+    monkeypatch.setattr(cli, "_print_banner", unavailable)
+    assert cli._dispatch(["doctor"]) == 1
+    assert "unsupported system Node.js" in capsys.readouterr().err
 
 
 # -- D012 cascade: excluded file's marker orphans its manifest entry ------

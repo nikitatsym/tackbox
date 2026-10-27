@@ -44,13 +44,10 @@ CACHE_DIR = Path(os.environ.get("TACKBOX_BUILD_CACHE", str(Path.home() / ".cache
 class Platform:
     key: str
     wheel_plat: str
-    # None: the platform runs the system node (see prepare_fat).
     node: dict | None
     opengrep: dict
     jscpd: dict
-    # The ast-grep the thin wheel bundles where no ast-grep-cli wheel exists.
     ast_grep: dict | None
-    # Toolchain for the entries built from source (`cargo_bin`).
     cargo: dict | None
 
 
@@ -116,7 +113,6 @@ def extract_member(archive: Path, member: str, dest: Path) -> None:
             with zf.open(member) as src, dest.open("wb") as out:
                 shutil.copyfileobj(src, out)
     else:
-        # tarfile detects the .tar.xz / .tgz / .tar.gz compression itself.
         with tarfile.open(archive) as tf:
             src = tf.extractfile(member)
             if src is None:
@@ -185,12 +181,7 @@ def ensure_ndk(ndk: dict) -> Path:
 
 
 def cargo_build(pl: Platform, entry: dict) -> Path:
-    """Build entry's `cargo_bin` from its pinned crate (the crate's own
-    Cargo.lock, --locked) for the platform's Rust target, linked against the
-    Android system libraries by the pinned NDK's clang at the platform's API
-    level. Reproducible: source and registry paths are remapped and symbols
-    stripped, so a rebuild matches the already-published payload byte for byte
-    (guard_engines_publish holds every rebuild to that). Cached per input."""
+    """Build a pinned crate reproducibly for the Android target."""
     if detect_platform_key() != "linux-x86_64":
         raise SystemExit(f"{pl.key} cross-builds only on a linux-x86_64 host (the NDK's)")
     cargo = pl.cargo
@@ -317,9 +308,7 @@ def prepare_fat(
 
     entries: list[dict] = []
 
-    # No node entry (Android): Node.js publishes no Android build and a static
-    # Linux node is killed by Android's seccomp filter, so the platform runs the
-    # system node (engines.json "node": "system") on these vendored modules.
+    # Android requires a system Node.js because Linux binaries cannot run there.
     if pl.node is not None:
         node_bin = fat_root / "bin" / pl.node["bin_name"]
         stage_binary(pl, pl.node, node_bin)
@@ -337,8 +326,6 @@ def prepare_fat(
             "path": f"tackbox_engines/bin/{pl.node['bin_name']}",
         })
 
-    # jscpd rides as an npm platform-package tarball (.tgz) with the binary at
-    # a fixed member path; Android, which has no such package, builds the crate.
     jscpd_bin = fat_root / "bin" / pl.jscpd["bin_name"]
     stage_binary(pl, pl.jscpd, jscpd_bin)
     jscpd_notice = manifest["licenses"]["jscpd"]
@@ -424,9 +411,7 @@ def prepare_fat(
 def prepare_opengrep(pl: Platform, manifest: dict, og_root: Path) -> list[dict]:
     (og_root / "bin").mkdir(parents=True)
     (og_root / "third_party" / "licenses").mkdir(parents=True)
-    # Android's opengrep is the static opengrep-core: started under the name
-    # `opengrep` it runs the opengrep CLI, whereas the regular release binary
-    # is a libc-linked bundle that cannot start there.
+    # The static core's opengrep CLI avoids the regular CLI's libc dependency.
     opengrep_bin = og_root / "bin" / pl.opengrep["bin_name"]
     stage_binary(pl, pl.opengrep, opengrep_bin)
     og_notice = manifest["licenses"]["opengrep"]
@@ -509,9 +494,7 @@ def prepare_thin(
     (thin_root / "third_party" / "licenses").mkdir(parents=True)
 
     exe_suffix = ".exe" if pl.key == "windows-x86_64" else ""
-    # Android needs GOOS=android: a linux build's os/exec probes executables
-    # with faccessat2, which Android's seccomp filter kills (SIGSYS) the moment
-    # erclint runs `go`. CGO_ENABLED=0 still links no C library.
+    # GOOS=linux probes executables with faccessat2, which Android kills via SIGSYS.
     goos = {
         "linux-x86_64": "linux",
         "linux-aarch64": "linux",
@@ -557,9 +540,7 @@ def prepare_thin(
             "license_path": "tackbox/third_party/licenses/go/NOTICE.txt",
         })
 
-    # Android has no ast-grep-cli wheel, so setup.py drops that dependency there
-    # and the thin wheel carries the same pinned ast-grep, built from its crate;
-    # scopes.ast_grep_exe finds it in tackbox/bin.
+    # ast-grep-cli has no Android wheel, so the pinned grammar is bundled.
     if pl.ast_grep is not None:
         ast_grep = thin_root / "bin" / pl.ast_grep["bin_name"]
         stage_binary(pl, pl.ast_grep, ast_grep)
@@ -641,8 +622,6 @@ def prepare_thin(
         "platform": pl.key,
         "wheel_plat": pl.wheel_plat,
         "payloads": pins,
-        # "system": the engines payload carries no node (see prepare_fat) and
-        # the runtime runs the host's `node` instead.
         "node": "bundled" if pl.node is not None else "system",
         "engines": all_entries,
     }

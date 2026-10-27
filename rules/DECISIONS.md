@@ -513,12 +513,11 @@ yet named scopes - file scope is the coarse address.
 Rules affected: none. The tooling decision behind D014's scope
 resolution.
 
-Decision: scope outlines come from ast-grep (`ast-grep-cli==0.45.1`,
-a runtime dependency of the thin wheel; ast-grep-cli publishes no
-Android wheel, so the Android thin wheel bundles the same version
-built from its crate; the canonical executable is
-`ast-grep`, never the `sg` alias - upstream warns it collides with
-the Linux setgroups utility) invoked as a subprocess with `--json`
+Decision: scope outlines come from ast-grep 0.45.1. Host wheels depend on
+`ast-grep-cli==0.45.1`; Android bundles the same version built from its pinned
+crate because ast-grep-cli publishes no Android wheel. The canonical
+executable is `ast-grep`, never the `sg` alias, which conflicts with the Linux
+setgroups utility. It is invoked as a subprocess with `--json`
 behind an internal contract: declarations and comments with ranges
 per file, chain assembly in Python by range containment. Swapping
 the engine is a local change; the manifest format encodes nothing

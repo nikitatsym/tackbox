@@ -36,9 +36,7 @@ jobs:
             runner: macos-14
           - platform: windows-x86_64
             runner: windows-2022
-          # No Android runner exists: these wheels cross-build on x86_64 Linux,
-          # the host of the NDK that build_wheels.py pins, and smoke-android
-          # tests them in an Android userland.
+          # The NDK cross-builds on x86_64; Android binaries run in Termux smoke.
           - platform: android-aarch64
             runner: ubuntu-22.04
     steps:
@@ -253,9 +251,7 @@ jobs:
             exit 1
           fi
 
-  # Termux in the pinned termux-docker image is an Android userland (bionic,
-  # Termux's python/uv/node) on the arm64 runner's kernel: the Android wheels
-  # install and run there as on a device.
+  # Termux supplies Android's libc and Python wheel tags on the arm64 runner.
   smoke-android:
     name: smoke android-aarch64 (Termux)
     needs: build

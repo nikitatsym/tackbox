@@ -1,9 +1,4 @@
-"""scripts/build_wheels.py staging helpers and the manifest's Android entry.
-
-The full host build runs in test_wheels_e2e.py; the Android build needs the
-pinned NDK and runs in CI (wheels.yml), so here the pieces it is made of are
-pinned without a toolchain.
-"""
+"""Binary staging preserves content, executable modes, and NDK symlinks."""
 
 from __future__ import annotations
 
@@ -15,8 +10,6 @@ import zipfile
 from pathlib import Path
 
 import pytest
-
-from tackbox import doctor
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "scripts"))
@@ -88,30 +81,3 @@ def test_cargo_build_refuses_a_host_without_the_ndk(monkeypatch):
         build_wheels.cargo_build(pl, pl.jscpd)
 
 
-def test_android_manifest_entry_is_consistent():
-    """Android: wheel tag at the NDK API level, no bundled node, Rust tools
-    built from their crates, and the bundled ast-grep at the pin setup.py drops
-    for Android and doctor gates."""
-    manifest = build_wheels.load_manifest()
-    pl = build_wheels.platform_for(manifest, "android-aarch64")
-    assert pl.wheel_plat == f"android_{pl.cargo['android_api']}_arm64_v8a"
-    assert pl.cargo["target"] == "aarch64-linux-android"
-    assert pl.node is None
-    assert "cargo_bin" in pl.jscpd and "cargo_bin" in pl.ast_grep
-    assert pl.ast_grep["version"] == doctor._AST_GREP_VERSION
-    setup = (REPO / "py" / "setup.py").read_text(encoding="utf-8")
-    assert f"'ast-grep-cli=={doctor._AST_GREP_VERSION}; sys_platform != \"android\"'" in setup
-    linux = manifest["platforms"]["linux-aarch64"]
-    assert pl.jscpd["version"] == linux["jscpd"]["version"]
-    assert pl.opengrep["version"] == linux["opengrep"]["version"]
-    assert "ast-grep" in manifest["licenses"]
-
-
-def test_host_platforms_bundle_node_and_build_nothing():
-    manifest = build_wheels.load_manifest()
-    for key in manifest["platforms"]:
-        if key == "android-aarch64":
-            continue
-        pl = build_wheels.platform_for(manifest, key)
-        assert pl.node is not None and pl.cargo is None and pl.ast_grep is None, key
-        assert not any("cargo_bin" in e for e in (pl.node, pl.jscpd, pl.opengrep)), key

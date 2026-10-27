@@ -348,15 +348,16 @@ def _check_binaries_start() -> CheckResult:
     failures: list[str] = []
     for name, argv, require_zero in probes:
         try:
-            # The probe checks startability, not latency - the first exec of
-            # a binary just unpacked into the store can sit behind the
-            # Windows antivirus scan far past any interactive timeout.
+            if name == "node" and engines_mod.uses_system_node():
+                engines_mod.system_node_version()
+                continue
+            # Newly unpacked binaries can wait behind Windows antivirus scanning.
             completed = proc.run_bytes(
                 argv, capture_output=True, timeout=120, env=env
             )
-        except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as e:
+        except (OSError, subprocess.TimeoutExpired, engines_mod.EnginesStoreError) as e:
             # no-report: doctor collects every failure to report them all (no short-circuit)
-            failures.append(f"{name}({type(e).__name__})")
+            failures.append(f"{name}({e})")
             continue
         rc = completed.returncode
         if rc < 0:
@@ -380,10 +381,7 @@ _AST_GREP_VERSION = "0.45.1"
 
 
 def _check_ast_grep() -> CheckResult:
-    """The outline engine (D015): a pip runtime dependency (bundled in the thin
-    wheel on Android), resolved exactly as the engine resolves it (interpreter
-    dir, then tackbox/bin, then PATH). Gate presence AND the pinned version - a
-    grammar bump can silently change resolved scope chains (residual A7)."""
+    """Pin the grammar version because it determines suppression identities."""
     found = scopes.ast_grep_exe()
     if not found:
         return CheckResult("ast-grep", False, "ast-grep not found (interpreter dir, tackbox/bin, or PATH)")

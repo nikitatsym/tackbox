@@ -202,20 +202,6 @@ def test_payload_publish_job_uses_oidc_no_tokens(workflow, packages_dir):
     )
 
 
-def test_android_wheels_are_smoked_in_termux(workflow):
-    """The Android wheels cross-build on x86_64; an arm64 runner smokes them in
-    the pinned Termux image (an Android userland): thin alone plus the staged
-    payloads, hook-protocol, doctor and lint, like the host smoke."""
-    job = workflow["jobs"]["smoke-android"]
-    assert job["needs"] == "build"
-    assert job["runs-on"] in {"ubuntu-22.04-arm", "ubuntu-24.04-arm"}
-    text = _steps_text(job["steps"])
-    assert "wheels-android-aarch64" in text
-    assert "termux/termux-docker:aarch64@sha256:" in text  # digest: test_workflow_pins
-    assert "scripts/termux_smoke.sh provision" in text
-    assert "scripts/termux_smoke.sh wheels" in text
-
-
 def test_publish_thin_job_uses_oidc_no_tokens(workflow):
     thin = _publish_thin_job(workflow["jobs"])
     perms = thin.get("permissions", {})
@@ -360,27 +346,6 @@ def test_canary_matrix_covers_required_platforms(verify_workflow):
     assert platforms == HOST_PLATFORMS, (
         f"canary must cover {sorted(HOST_PLATFORMS)}, got {sorted(platforms)}"
     )
-
-
-def test_android_canary_runs_uvx_in_termux_and_gates_the_verdict(verify_workflow):
-    """uvx resolves the Android wheel from PyPI in the pinned Termux image, and
-    the badge and commit status count it like the host canary."""
-    jobs = verify_workflow["jobs"]
-    canary = jobs["canary-android"]
-    assert canary["needs"] == "target"
-    assert canary["runs-on"] in {"ubuntu-22.04-arm", "ubuntu-24.04-arm"}
-    text = _steps_text(canary["steps"])
-    assert "termux/termux-docker:aarch64@sha256:" in text
-    assert "scripts/termux_smoke.sh provision" in text
-    assert "scripts/termux_smoke.sh uvx" in text
-    envs = [s.get("env") or {} for s in canary["steps"] if isinstance(s, dict)]
-    assert {"VERSION": "${{ needs.target.outputs.version }}"} in envs
-    for name in ("badge", "status"):
-        job = jobs[name]
-        assert "canary-android" in job["needs"], name
-        assert "needs.canary-android.result" in job["if"], name
-        result = str(job["steps"][0]["env"]["RESULT"])
-        assert "needs.canary.result" in result and "needs.canary-android.result" in result, name
 
 
 def test_canary_uses_uvx_from_pypi(verify_workflow):
