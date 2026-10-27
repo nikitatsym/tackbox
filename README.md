@@ -258,7 +258,8 @@ or are static:
 
 The release cross-builds Android wheels on x86_64 Linux and smoke-tests them
 in a pinned `termux-docker` image on an arm64 runner before publishing.
-`verify-release` runs the published `uvx` canary in the same image.
+The container enables the standard `termux-exec` preload for uvx's shell
+launchers. `verify-release` runs the published `uvx` canary in the same image.
 
 ## What the rules enforce
 

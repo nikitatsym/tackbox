@@ -7,10 +7,12 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 provision() {
   apt-get update -q
   apt-get install -y -q -o Dpkg::Options::=--force-confnew \
-    python uv git golang openjdk-17 nodejs-lts
+    python uv git golang openjdk-17 nodejs-lts termux-exec
 }
 
 materialize() {
+  # uvx's relocatable launchers need Termux's normal /bin/sh rewriting preload.
+  export LD_PRELOAD=$PREFIX/lib/libtermux-exec-ld-preload.so
   work=$(mktemp -d)
   trap 'rm -rf "$work"' EXIT
   fixture=$work/fixture-repo
