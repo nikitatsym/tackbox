@@ -67,6 +67,19 @@ def test_no_bare_tag_or_branch_refs_remain():
             )
 
 
+def test_termux_image_is_digest_pinned():
+    """The Android smoke and canary run a third-party container image; a tag
+    can move under the release runners like an action tag, so every reference
+    carries its sha256 digest - one image, so pre- and post-publish agree."""
+    refs = [
+        ref for wf in _workflow_files()
+        for ref in re.findall(r"termux/termux-docker[^\s'\"]*", wf.read_text())
+    ]
+    assert len(refs) == 3, f"expected the wheels, publish and verify-release references: {refs}"
+    assert len(set(refs)) == 1, refs
+    assert re.fullmatch(r"termux/termux-docker:aarch64@sha256:[0-9a-f]{64}", refs[0]), refs[0]
+
+
 def _opengrep_install_run(ci: dict) -> str:
     for step in ci["jobs"]["test"]["steps"]:
         if not isinstance(step, dict):

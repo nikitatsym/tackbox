@@ -1,4 +1,5 @@
-"""Wheels CI matrix spec: 5 platforms, per-platform runners, no cross-compile.
+"""Wheels CI matrix spec: 5 platforms, per-platform runners; Android alone
+cross-builds and is smoked in Termux.
 
 Pins the shape of `.github/workflows/wheels.yml` so a silent platform drop
 (say, removing `linux-aarch64` because it's slow) turns the suite red before
@@ -18,25 +19,31 @@ import yaml
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO / ".github" / "workflows" / "wheels.yml"
 
-REQUIRED_PLATFORMS = {
+HOST_PLATFORMS = {
     "linux-x86_64",
     "linux-aarch64",
     "macos-aarch64",
     "windows-x86_64",
 }
+ANDROID = "android-aarch64"
+REQUIRED_PLATFORMS = HOST_PLATFORMS | {ANDROID}
 
 RUNNER_OS = {
     "linux-x86_64": "linux",
     "linux-aarch64": "linux",
     "macos-aarch64": "macos",
     "windows-x86_64": "windows",
+    ANDROID: "linux",
 }
 
+# No Android runner exists: Android cross-builds on x86_64 Linux, the host of
+# the NDK build_wheels.py pins.
 ALLOWED_RUNNERS = {
     "linux-x86_64": {"ubuntu-22.04", "ubuntu-24.04"},
     "linux-aarch64": {"ubuntu-22.04-arm", "ubuntu-24.04-arm"},
     "macos-aarch64": {"macos-14", "macos-15"},
     "windows-x86_64": {"windows-2022", "windows-2019"},
+    ANDROID: {"ubuntu-22.04", "ubuntu-24.04"},
 }
 
 
@@ -72,8 +79,9 @@ def test_each_matrix_entry_declares_platform_key_and_runner(matrix_include):
 
 
 def test_no_cross_compilation_runner_matches_platform_os(matrix_include):
-    """Each platform must map to a host-native runner. Cross-compiled binaries
-    silently skip the wheel-vs-host doctor check the payload_sha256 pin catches."""
+    """Each host platform must map to a host-native runner. Cross-compiled
+    binaries silently skip the wheel-vs-host doctor check the payload_sha256 pin
+    catches; Android's doctor runs in its Termux smoke instead."""
     for entry in matrix_include:
         runner = entry["runner"].lower()
         expected_os = RUNNER_OS[entry["platform"]]
@@ -101,10 +109,39 @@ def test_runner_arch_matches_platform_arch(matrix_include):
 
 
 def test_matrix_runners_are_all_distinct(matrix_include):
-    runners = [entry["runner"] for entry in matrix_include]
+    """Host platforms build natively, so two of them sharing a runner label
+    would cross-compile one; only Android cross-builds by design."""
+    runners = [entry["runner"] for entry in matrix_include if entry["platform"] != ANDROID]
     assert len(runners) == len(set(runners)), (
         f"two matrix cells share a runner label - would cross-compile: {runners}"
     )
+
+
+_HOST_SMOKE_STEPS = (
+    "Install thin wheel; stage both payloads from the built payload wheels",
+    "Materialize fixture repo",
+    "tackbox doctor (expect exit 0)",
+    "tackbox lint (expect exit 1 on planted violations)",
+)
+
+
+def test_host_smoke_steps_skip_android(workflow):
+    """Android wheels cannot run on their x86_64 build host; their smoke is the
+    Termux job."""
+    steps = {s.get("name"): s for s in workflow["jobs"]["wheels"]["steps"] if isinstance(s, dict)}
+    for name in _HOST_SMOKE_STEPS:
+        assert steps[name].get("if") == f"matrix.platform != '{ANDROID}'", name
+
+
+def test_android_wheels_are_smoked_in_termux(workflow):
+    job = workflow["jobs"]["smoke-android"]
+    assert job["needs"] == "wheels"
+    assert job["runs-on"] in ALLOWED_RUNNERS["linux-aarch64"]
+    text = " ".join(str(s.get("run", "")) + str(s.get("with", "")) for s in job["steps"])
+    assert "wheels-android-aarch64" in text
+    assert "termux/termux-docker:aarch64@sha256:" in text  # digest: test_workflow_pins
+    assert "scripts/termux_smoke.sh provision" in text
+    assert "scripts/termux_smoke.sh wheels" in text
 
 
 def test_job_steps_invoke_build_and_materialize_scripts(workflow):

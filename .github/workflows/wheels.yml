@@ -22,6 +22,11 @@ jobs:
             runner: macos-14
           - platform: windows-x86_64
             runner: windows-2022
+          # No Android runner exists: these wheels cross-build on x86_64 Linux,
+          # the host of the NDK that build_wheels.py pins; smoke-android tests
+          # them in an Android userland instead of the host steps below.
+          - platform: android-aarch64
+            runner: ubuntu-22.04
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -71,6 +76,7 @@ jobs:
           exit "$fail"
 
       - name: Install thin wheel; stage both payloads from the built payload wheels
+        if: matrix.platform != 'android-aarch64'
         shell: bash
         run: |
           set -euo pipefail
@@ -92,6 +98,7 @@ jobs:
           echo "TACKBOX_OPENGREP_DIR=$PWD/opengrep-payload/tackbox_opengrep" >> "$GITHUB_ENV"
 
       - name: Materialize fixture repo
+        if: matrix.platform != 'android-aarch64'
         shell: bash
         run: |
           set -euo pipefail
@@ -99,6 +106,7 @@ jobs:
           python scripts/materialize_fixture.py fixture-repo
 
       - name: tackbox doctor (expect exit 0)
+        if: matrix.platform != 'android-aarch64'
         shell: bash
         working-directory: fixture-repo
         run: |
@@ -114,6 +122,7 @@ jobs:
           "$tackbox" doctor
 
       - name: tackbox lint (expect exit 1 on planted violations)
+        if: matrix.platform != 'android-aarch64'
         shell: bash
         working-directory: fixture-repo
         run: |
@@ -143,3 +152,27 @@ jobs:
           path: dist/*.whl
           if-no-files-found: error
           retention-days: 7
+
+  # Termux in the pinned termux-docker image is an Android userland (bionic,
+  # Termux's python/uv/node) on the arm64 runner's kernel: the Android wheels
+  # install and run there as on a device.
+  smoke-android:
+    name: smoke android-aarch64 (Termux)
+    needs: wheels
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Download Android wheels
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: wheels-android-aarch64
+          path: dist
+
+      - name: Termux smoke (thin alone + staged payloads; hook-protocol, doctor, lint)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --security-opt seccomp=unconfined -v "$PWD:/mnt/repo:ro" \
+            termux/termux-docker:aarch64@sha256:18e2c6a633642d0806afd7abaeb0e74b2b957c92f6f30021260e5ba997579f48 \
+            bash -c 'bash /mnt/repo/scripts/termux_smoke.sh provision && bash /mnt/repo/scripts/termux_smoke.sh wheels /mnt/repo/dist'

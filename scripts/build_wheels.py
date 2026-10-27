@@ -1,10 +1,14 @@
-"""Build the tackbox wheels for the current platform.
+"""Build the tackbox wheels for one platform.
 
 Three platform wheels: thin `tackbox` (built in-tree from py/) and the two
 payload wheels the thin store fetches at runtime - `tackbox-engines` (node,
 jscpd, vendored node_modules) and `tackbox-opengrep` (the opengrep binary),
 each staged in a temp project from assets fetched per engines/manifest.json
 and built with `python -m build --wheel` and platform tagging.
+
+Every platform builds on its own host except android-aarch64, which
+cross-builds on linux-x86_64: its Rust binaries come from their pinned crates
+through the pinned Android NDK (see cargo_build).
 """
 
 from __future__ import annotations
@@ -40,9 +44,14 @@ CACHE_DIR = Path(os.environ.get("TACKBOX_BUILD_CACHE", str(Path.home() / ".cache
 class Platform:
     key: str
     wheel_plat: str
-    node: dict
+    # None: the platform runs the system node (see prepare_fat).
+    node: dict | None
     opengrep: dict
     jscpd: dict
+    # The ast-grep the thin wheel bundles where no ast-grep-cli wheel exists.
+    ast_grep: dict | None
+    # Toolchain for the entries built from source (`cargo_bin`).
+    cargo: dict | None
 
 
 def detect_platform_key() -> str:
@@ -71,9 +80,11 @@ def platform_for(manifest: dict, key: str) -> Platform:
     return Platform(
         key=key,
         wheel_plat=entry["wheel_plat"],
-        node=entry["node"],
+        node=entry.get("node"),
         opengrep=entry["opengrep"],
         jscpd=entry["jscpd"],
+        ast_grep=entry.get("ast_grep"),
+        cargo=entry.get("cargo"),
     )
 
 
@@ -98,30 +109,137 @@ def fetch(url: str, expected_sha: str) -> Path:
     return dest
 
 
-def extract_node_binary(archive: Path, member: str, dest: Path) -> None:
+def extract_member(archive: Path, member: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if archive.suffix in (".xz",) or archive.name.endswith(".tar.xz"):
-        with tarfile.open(archive, "r:xz") as tf:
-            src = tf.extractfile(member)
-            if src is None:
-                raise SystemExit(f"member {member} not found in {archive}")
-            with dest.open("wb") as out:
-                shutil.copyfileobj(src, out)
-    elif archive.suffix == ".zip" or archive.name.endswith(".zip"):
+    if archive.name.endswith(".zip"):
         with zipfile.ZipFile(archive) as zf:
             with zf.open(member) as src, dest.open("wb") as out:
                 shutil.copyfileobj(src, out)
     else:
-        raise SystemExit(f"unsupported archive: {archive.name}")
-    st = dest.stat().st_mode
-    dest.chmod(st | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        # tarfile detects the .tar.xz / .tgz / .tar.gz compression itself.
+        with tarfile.open(archive) as tf:
+            src = tf.extractfile(member)
+            if src is None:
+                raise SystemExit(f"member {member} not found in {archive}")
+            with src, dest.open("wb") as out:
+                shutil.copyfileobj(src, out)
+    _make_executable(dest)
 
 
 def copy_binary(src: Path, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(src, dest)
-    st = dest.stat().st_mode
-    dest.chmod(st | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    _make_executable(dest)
+
+
+def _make_executable(path: Path) -> None:
+    st = path.stat().st_mode
+    path.chmod(st | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def stage_binary(pl: Platform, entry: dict, dest: Path) -> None:
+    """Materialize one manifest binary at dest: built from its crate when the
+    entry names a `cargo_bin`, else extracted as `archive_member` from the
+    fetched archive, else the fetched file itself."""
+    if "cargo_bin" in entry:
+        copy_binary(cargo_build(pl, entry), dest)
+        return
+    archive = fetch(entry["source_url"], entry["archive_sha256"])
+    if "archive_member" in entry:
+        extract_member(archive, entry["archive_member"], dest)
+    else:
+        copy_binary(archive, dest)
+
+
+def extract_zip_tree(archive: Path, dest: Path) -> None:
+    """Unzip keeping the Unix modes and symlinks the archive records: the NDK's
+    tools need their exec bits, and several of them are symlinks."""
+    with zipfile.ZipFile(archive) as zf:
+        for info in zf.infolist():
+            target = dest / info.filename
+            mode = info.external_attr >> 16
+            if info.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if stat.S_ISLNK(mode):
+                target.symlink_to(zf.read(info).decode())
+                continue
+            with zf.open(info) as src, target.open("wb") as out:
+                shutil.copyfileobj(src, out)
+            target.chmod(stat.S_IMODE(mode) or 0o644)
+
+
+def ensure_ndk(ndk: dict) -> Path:
+    """The pinned Android NDK, unpacked once into the build cache."""
+    root = CACHE_DIR / f"{ndk['archive_sha256']}-ndk"
+    if not root.is_dir():
+        archive = fetch(ndk["source_url"], ndk["archive_sha256"])
+        print(f"unpack {archive.name}", file=sys.stderr)
+        part = root.with_name(root.name + ".part")
+        shutil.rmtree(part, ignore_errors=True)
+        extract_zip_tree(archive, part)
+        part.rename(root)
+    (top,) = root.iterdir()
+    return top
+
+
+def cargo_build(pl: Platform, entry: dict) -> Path:
+    """Build entry's `cargo_bin` from its pinned crate (the crate's own
+    Cargo.lock, --locked) for the platform's Rust target, linked against the
+    Android system libraries by the pinned NDK's clang at the platform's API
+    level. Reproducible: source and registry paths are remapped and symbols
+    stripped, so a rebuild matches the already-published payload byte for byte
+    (guard_engines_publish holds every rebuild to that). Cached per input."""
+    if detect_platform_key() != "linux-x86_64":
+        raise SystemExit(f"{pl.key} cross-builds only on a linux-x86_64 host (the NDK's)")
+    cargo = pl.cargo
+    key = sha256_bytes(json.dumps([cargo, entry], sort_keys=True).encode())[:16]
+    out = CACHE_DIR / f"{key}-{entry['bin_name']}"
+    if out.is_file():
+        return out
+    rust, target = cargo["rust"], cargo["target"]
+    subprocess.run(
+        ["rustup", "toolchain", "install", rust, "--profile", "minimal", "--target", target],
+        check=True, stdout=sys.stderr,
+    )
+    bin_dir = ensure_ndk(cargo["ndk"]) / "toolchains" / "llvm" / "prebuilt" / "linux-x86_64" / "bin"
+    clang = bin_dir / f"{target}{cargo['android_api']}-clang"
+    crate = fetch(entry["source_url"], entry["archive_sha256"])
+    work = CACHE_DIR / f"{key}-build"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True)
+    try:
+        with tarfile.open(crate) as tf:
+            tf.extractall(work, filter="data")
+        (src,) = work.iterdir()
+        cargo_home = Path(os.environ.get("CARGO_HOME") or Path.home() / ".cargo")
+        remap = ((src, "/build"), (cargo_home, "/cargo"))
+        var = target.replace("-", "_")
+        env = {
+            **os.environ,
+            "RUSTUP_TOOLCHAIN": rust,
+            "CARGO_PROFILE_RELEASE_STRIP": "symbols",
+            f"CARGO_TARGET_{var.upper()}_LINKER": str(clang),
+            f"CARGO_TARGET_{var.upper()}_RUSTFLAGS": " ".join(
+                f"--remap-path-prefix={path}={to}" for path, to in remap
+            ),
+            f"CC_{var}": str(clang),
+            f"CXX_{var}": f"{clang}++",
+            f"AR_{var}": str(bin_dir / "llvm-ar"),
+            f"CFLAGS_{var}": " ".join(f"-ffile-prefix-map={path}={to}" for path, to in remap),
+        }
+        print(f"cargo build {entry['cargo_bin']} {entry['version']} -> {target}", file=sys.stderr)
+        subprocess.run(
+            ["cargo", "build", "--release", "--locked", "--target", target, "--bin", entry["cargo_bin"]],
+            cwd=src, env=env, check=True, stdout=sys.stderr,
+        )
+        part = out.with_name(out.name + ".part")
+        shutil.copyfile(src / "target" / target / "release" / entry["cargo_bin"], part)
+        part.rename(out)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return out
 
 
 def build_javalint_jar() -> Path:
@@ -199,36 +317,30 @@ def prepare_fat(
 
     entries: list[dict] = []
 
-    node_archive = fetch(pl.node["source_url"], pl.node["archive_sha256"])
-    node_bin = fat_root / "bin" / pl.node["bin_name"]
-    extract_node_binary(node_archive, pl.node["archive_member"], node_bin)
-    node_notice = manifest["licenses"]["node"]
-    (fat_root / "third_party" / "licenses" / "node.LICENSE.txt").write_text(node_notice["notice"] + "\n")
-    entries.append({
-        "id": "node",
-        "kind": "runtime",
-        "version": pl.node["version"],
-        "source_url": pl.node["source_url"],
-        "archive_sha256": pl.node["archive_sha256"],
-        "sha256": sha256_file(node_bin),
-        "license": node_notice["spdx"],
-        "license_path": "tackbox_engines/third_party/licenses/node.LICENSE.txt",
-        "path": f"tackbox_engines/bin/{pl.node['bin_name']}",
-    })
+    # No node entry (Android): Node.js publishes no Android build and a static
+    # Linux node is killed by Android's seccomp filter, so the platform runs the
+    # system node (engines.json "node": "system") on these vendored modules.
+    if pl.node is not None:
+        node_bin = fat_root / "bin" / pl.node["bin_name"]
+        stage_binary(pl, pl.node, node_bin)
+        node_notice = manifest["licenses"]["node"]
+        (fat_root / "third_party" / "licenses" / "node.LICENSE.txt").write_text(node_notice["notice"] + "\n")
+        entries.append({
+            "id": "node",
+            "kind": "runtime",
+            "version": pl.node["version"],
+            "source_url": pl.node["source_url"],
+            "archive_sha256": pl.node["archive_sha256"],
+            "sha256": sha256_file(node_bin),
+            "license": node_notice["spdx"],
+            "license_path": "tackbox_engines/third_party/licenses/node.LICENSE.txt",
+            "path": f"tackbox_engines/bin/{pl.node['bin_name']}",
+        })
 
-    # jscpd rides as an npm platform-package tarball (.tgz) with the binary
-    # at a fixed member path; extract it by name like the node archive.
-    jscpd_archive = fetch(pl.jscpd["source_url"], pl.jscpd["archive_sha256"])
+    # jscpd rides as an npm platform-package tarball (.tgz) with the binary at
+    # a fixed member path; Android, which has no such package, builds the crate.
     jscpd_bin = fat_root / "bin" / pl.jscpd["bin_name"]
-    member = pl.jscpd["archive_member"]
-    with tarfile.open(jscpd_archive, "r:gz") as tf:
-        src = tf.extractfile(member)
-        if src is None:
-            raise SystemExit(f"member {member} not found in {jscpd_archive}")
-        with jscpd_bin.open("wb") as out:
-            shutil.copyfileobj(src, out)
-    st = jscpd_bin.stat().st_mode
-    jscpd_bin.chmod(st | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    stage_binary(pl, pl.jscpd, jscpd_bin)
     jscpd_notice = manifest["licenses"]["jscpd"]
     (fat_root / "third_party" / "licenses" / "jscpd.LICENSE.txt").write_text(jscpd_notice["notice"] + "\n")
     entries.append({
@@ -312,9 +424,11 @@ def prepare_fat(
 def prepare_opengrep(pl: Platform, manifest: dict, og_root: Path) -> list[dict]:
     (og_root / "bin").mkdir(parents=True)
     (og_root / "third_party" / "licenses").mkdir(parents=True)
-    opengrep_archive = fetch(pl.opengrep["source_url"], pl.opengrep["archive_sha256"])
+    # Android's opengrep is the static opengrep-core: started under the name
+    # `opengrep` it runs the opengrep CLI, whereas the regular release binary
+    # is a libc-linked bundle that cannot start there.
     opengrep_bin = og_root / "bin" / pl.opengrep["bin_name"]
-    copy_binary(opengrep_archive, opengrep_bin)
+    stage_binary(pl, pl.opengrep, opengrep_bin)
     og_notice = manifest["licenses"]["opengrep"]
     (og_root / "third_party" / "licenses" / "opengrep.LICENSE.txt").write_text(og_notice["notice"] + "\n")
     return [{
@@ -381,6 +495,7 @@ def build_payload_wheel(
 
 def prepare_thin(
     pl: Platform,
+    manifest: dict,
     payload_entries: list[dict],
     version: str,
     pins: dict[str, dict],
@@ -394,15 +509,20 @@ def prepare_thin(
     (thin_root / "third_party" / "licenses").mkdir(parents=True)
 
     exe_suffix = ".exe" if pl.key == "windows-x86_64" else ""
+    # Android needs GOOS=android: a linux build's os/exec probes executables
+    # with faccessat2, which Android's seccomp filter kills (SIGSYS) the moment
+    # erclint runs `go`. CGO_ENABLED=0 still links no C library.
     goos = {
         "linux-x86_64": "linux",
         "linux-aarch64": "linux",
+        "android-aarch64": "android",
         "macos-aarch64": "darwin",
         "windows-x86_64": "windows",
     }[pl.key]
     goarch = {
         "linux-x86_64": "amd64",
         "linux-aarch64": "arm64",
+        "android-aarch64": "arm64",
         "macos-aarch64": "arm64",
         "windows-x86_64": "amd64",
     }[pl.key]
@@ -435,6 +555,26 @@ def prepare_thin(
             "path": f"tackbox/bin/{cmd}{exe_suffix}",
             "license": "MIT AND BSD-3-Clause",
             "license_path": "tackbox/third_party/licenses/go/NOTICE.txt",
+        })
+
+    # Android has no ast-grep-cli wheel, so setup.py drops that dependency there
+    # and the thin wheel carries the same pinned ast-grep, built from its crate;
+    # scopes.ast_grep_exe finds it in tackbox/bin.
+    if pl.ast_grep is not None:
+        ast_grep = thin_root / "bin" / pl.ast_grep["bin_name"]
+        stage_binary(pl, pl.ast_grep, ast_grep)
+        notice = manifest["licenses"]["ast-grep"]
+        (thin_root / "third_party" / "licenses" / "ast-grep.LICENSE.txt").write_text(notice["notice"] + "\n")
+        thin_entries.append({
+            "id": "ast-grep",
+            "kind": "binary",
+            "version": pl.ast_grep["version"],
+            "source_url": pl.ast_grep["source_url"],
+            "archive_sha256": pl.ast_grep["archive_sha256"],
+            "sha256": sha256_file(ast_grep),
+            "path": f"tackbox/bin/{pl.ast_grep['bin_name']}",
+            "license": notice["spdx"],
+            "license_path": "tackbox/third_party/licenses/ast-grep.LICENSE.txt",
         })
 
     # javalint is a JVM engine: one platform-independent shaded jar run via
@@ -501,6 +641,9 @@ def prepare_thin(
         "platform": pl.key,
         "wheel_plat": pl.wheel_plat,
         "payloads": pins,
+        # "system": the engines payload carries no node (see prepare_fat) and
+        # the runtime runs the host's `node` instead.
+        "node": "bundled" if pl.node is not None else "system",
         "engines": all_entries,
     }
     (thin_root / "engines.json").write_text(json.dumps(engines_json, indent=2, sort_keys=True))
@@ -616,7 +759,8 @@ def main() -> int:
                     help="tackbox-opengrep wheel version (defaults to --version)")
     ap.add_argument("--outdir", default=str(REPO / "dist"))
     ap.add_argument("--platform", default=None,
-                    help="platform key override (linux-x86_64|linux-aarch64|macos-aarch64|windows-x86_64)")
+                    help="platform key override (linux-x86_64|linux-aarch64|macos-aarch64|"
+                         "windows-x86_64|android-aarch64)")
     args = ap.parse_args()
 
     plat_key = args.platform or detect_platform_key()
@@ -642,7 +786,7 @@ def main() -> int:
     )
 
     prepare_thin(
-        pl, engines_entries + opengrep_entries, version,
+        pl, manifest, engines_entries + opengrep_entries, version,
         {ENGINES.key: engines_pin, OPENGREP.key: opengrep_pin},
     )
 

@@ -92,6 +92,40 @@
         "archive_member": "package/bin/jscpd.exe",
         "bin_name": "jscpd.exe"
       }
+    },
+    "android-aarch64": {
+      "wheel_plat": "android_24_arm64_v8a",
+      "cargo": {
+        "rust": "1.99.1",
+        "target": "aarch64-linux-android",
+        "android_api": 24,
+        "ndk": {
+          "version": "27.3.13750724",
+          "source_url": "https://dl.google.com/android/repository/android-ndk-r27d-linux.zip",
+          "archive_sha256": "601246087a682d1944e1e16dd85bc6e49560fe8b6d61255be2829178c8ed15d9"
+        }
+      },
+      "opengrep": {
+        "version": "1.30.0",
+        "source_url": "https://github.com/opengrep/opengrep/releases/download/v1.30.0/opengrep-core_linux_aarch64.tar.gz",
+        "archive_sha256": "116c1609876ab9e2a09fad8267b1bd3ee3311806506016186cd0691f23d94db5",
+        "archive_member": "opengrep-core",
+        "bin_name": "opengrep"
+      },
+      "jscpd": {
+        "version": "5.0.12",
+        "source_url": "https://static.crates.io/crates/jscpd/jscpd-5.0.12.crate",
+        "archive_sha256": "c14d370af459c1b87340898f066d53cb8a830480ac39ac8562aa250bcc43ff03",
+        "cargo_bin": "jscpd",
+        "bin_name": "jscpd"
+      },
+      "ast_grep": {
+        "version": "0.45.1",
+        "source_url": "https://static.crates.io/crates/ast-grep/ast-grep-0.45.1.crate",
+        "archive_sha256": "b817abaee1c828ffafd913de4f3c17beedf62a994ff62e0735abd9c33932b497",
+        "cargo_bin": "ast-grep",
+        "bin_name": "ast-grep"
+      }
     }
   },
   "licenses": {
@@ -106,6 +140,10 @@
     "jscpd": {
       "spdx": "MIT",
       "notice": "jscpd is licensed under the MIT License. Copyright (c) 2013-2024 Andrey Kucherenko. See https://github.com/kucherenko/jscpd/blob/master/LICENSE."
+    },
+    "ast-grep": {
+      "spdx": "MIT",
+      "notice": "ast-grep is licensed under the MIT License. Copyright (c) 2022 Herrington Darkholme. See https://github.com/ast-grep/ast-grep/blob/main/LICENSE."
     }
   },
   "npm_deps": {

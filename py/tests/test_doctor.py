@@ -77,7 +77,7 @@ def _setup_hermetic(tmp_path, monkeypatch, pkg, engines_json) -> None:
             "wheel": f"{payload.package}-0.0.0-py3-none-any.whl",
             "store_sha256": sha256_tree(root),
         }
-    (pkg / "engines.json").write_text(json.dumps({**engines_json, "payloads": pins}))
+    (pkg / "engines.json").write_text(json.dumps({"node": "bundled", **engines_json, "payloads": pins}))
     monkeypatch.setattr(engines_mod, "_TACKBOX_PKG_ROOT", pkg)
     monkeypatch.setattr(engines_mod, "is_hermetic", lambda: True)
     monkeypatch.setattr(engines_mod, "hermetic_env", lambda base=None: dict(base or {}))

@@ -31,7 +31,9 @@ engines-hash:
   installed flake8/pyflakes dependencies for pyrules, and the system Java runtime
   version for javalint. In dev mode, Node and installed ESLint versions salt
   ESLint units, and the PATH opengrep version salts erclint-opengrep units.
-  Hermetic Node/opengrep/ESLint payloads are already covered by engines-hash.
+  Hermetic Node/opengrep/ESLint payloads are already covered by engines-hash;
+  where the hermetic wheel runs the system Node (Android), its version salts
+  ESLint units.
   Only dispatched cacheable engines resolve versions; unresolved versions fail
   the command rather than permitting a stale hit.
 """
@@ -49,7 +51,13 @@ from importlib import metadata
 from pathlib import Path
 
 from . import proc
-from .engines import EnginesStoreError, hermetic_env, is_hermetic, iter_json_objects
+from .engines import (
+    EnginesStoreError,
+    hermetic_env,
+    is_hermetic,
+    iter_json_objects,
+    uses_system_node,
+)
 from .hashing import sha256_file
 from .source_set import group_go_packages_by_module, module_relative
 
@@ -196,6 +204,8 @@ def engine_runtime_version(engine_id: str, repo_root: Path, tackbox_root: Path) 
             if not isinstance(version, str) or not version.strip() or version == "?":
                 raise EnginesStoreError(f"cannot determine ESLint version ({manifest}): invalid version")
             return json.dumps([node, version])
+    elif engine_id == "tackbox-eslint" and uses_system_node():
+        return required_tool_version(["node", "--version"], repo_root)
     return ""
 
 

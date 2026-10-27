@@ -508,13 +508,15 @@ A6); inserting an earlier same-name sibling renumbers later
 ordinals - accepted last-resort churn; Svelte snippet blocks are not
 yet named scopes - file scope is the coarse address.
 
-## D015 - outline engine: ast-grep, pinned, behind a seam (2026-07-19)
+## D015 - outline engine: ast-grep, pinned, behind a seam (2026-10-27)
 
 Rules affected: none. The tooling decision behind D014's scope
 resolution.
 
 Decision: scope outlines come from ast-grep (`ast-grep-cli==0.45.1`,
-a runtime dependency of the thin wheel; the canonical executable is
+a runtime dependency of the thin wheel; ast-grep-cli publishes no
+Android wheel, so the Android thin wheel bundles the same version
+built from its crate; the canonical executable is
 `ast-grep`, never the `sg` alias - upstream warns it collides with
 the Linux setgroups utility) invoked as a subprocess with `--json`
 behind an internal contract: declarations and comments with ranges

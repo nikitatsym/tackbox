@@ -148,15 +148,37 @@ jobs:
             exit 1
           fi
 
+  # The same canary in Termux (pinned termux-docker image), an Android
+  # userland on the arm64 runner's kernel: uvx resolves the Android wheel there
+  # as on a device.
+  canary-android:
+    name: canary android-aarch64 (Termux)
+    needs: target
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Termux uvx canary (waits out index convergence; hook-protocol, doctor, lint)
+        shell: bash
+        env:
+          VERSION: ${{ needs.target.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker run --rm --security-opt seccomp=unconfined -v "$PWD:/mnt/repo:ro" \
+            termux/termux-docker:aarch64@sha256:18e2c6a633642d0806afd7abaeb0e74b2b957c92f6f30021260e5ba997579f48 \
+            bash -c "bash /mnt/repo/scripts/termux_smoke.sh provision && bash /mnt/repo/scripts/termux_smoke.sh uvx '${VERSION}'"
+
   badge:
     name: pypi badge
-    needs: [target, canary]
+    needs: [target, canary, canary-android]
     # Red on canary failure is the point, so always(); a cancelled canary
     # (superseded by a newer release) must not stamp a stale verdict, and a
     # manual re-verify of a pinned old version must not roll the badge back
     # (bare dispatch pins to latest, so it may stamp - handy for reseeding).
     if: >-
       always() && needs.canary.result != 'cancelled' && needs.canary.result != 'skipped'
+      && needs.canary-android.result != 'cancelled' && needs.canary-android.result != 'skipped'
       && (github.event_name != 'workflow_dispatch' || inputs.version == '')
     runs-on: ubuntu-22.04
     permissions:
@@ -169,7 +191,7 @@ jobs:
       - name: Render badge and push to badges branch
         env:
           GH_TOKEN: ${{ github.token }}
-          RESULT: ${{ needs.canary.result }}
+          RESULT: ${{ needs.canary.result == 'success' && needs.canary-android.result == 'success' && 'success' || 'failure' }}
           VERSION: ${{ needs.target.outputs.version }}
         run: |
           set -euo pipefail
@@ -196,8 +218,10 @@ jobs:
 
   status:
     name: commit status
-    needs: canary
-    if: always() && github.event_name == 'workflow_run' && needs.canary.result != 'cancelled'
+    needs: [canary, canary-android]
+    if: >-
+      always() && github.event_name == 'workflow_run'
+      && needs.canary.result != 'cancelled' && needs.canary-android.result != 'cancelled'
     runs-on: ubuntu-22.04
     permissions:
       statuses: write
@@ -208,7 +232,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.event.workflow_run.head_sha }}
-          RESULT: ${{ needs.canary.result }}
+          RESULT: ${{ needs.canary.result == 'success' && needs.canary-android.result == 'success' && 'success' || 'failure' }}
         run: |
           set -euo pipefail
           if [ "$RESULT" = "success" ]; then state="success"; else state="failure"; fi

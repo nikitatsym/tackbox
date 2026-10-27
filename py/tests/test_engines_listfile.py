@@ -376,6 +376,7 @@ def test_dev_mdlint_argv_uses_files_from_not_positional(tmp_path):
 
 def test_hermetic_eslint_argv_uses_files_from(monkeypatch, tmp_path):
     monkeypatch.setenv(engines.ENGINES.dir_env, str(tmp_path / "store"))
+    monkeypatch.setattr(engines, "load_engines_json", lambda: {"node": "bundled"})
     argv = _herm("tackbox-eslint").build_argv(
         Path("/repo"), Path("/tb"), ["a.js"], (), tmp_path
     )
@@ -386,6 +387,7 @@ def test_hermetic_eslint_argv_uses_files_from(monkeypatch, tmp_path):
 
 def test_hermetic_mdlint_argv_uses_files_from(monkeypatch, tmp_path):
     monkeypatch.setenv(engines.ENGINES.dir_env, str(tmp_path / "store"))
+    monkeypatch.setattr(engines, "load_engines_json", lambda: {"node": "bundled"})
     argv = _herm("tackbox-mdlint").build_argv(
         Path("/repo"), Path("/tb"), ["a.md"], (), tmp_path
     )

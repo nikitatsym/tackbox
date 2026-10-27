@@ -36,6 +36,11 @@ jobs:
             runner: macos-14
           - platform: windows-x86_64
             runner: windows-2022
+          # No Android runner exists: these wheels cross-build on x86_64 Linux,
+          # the host of the NDK that build_wheels.py pins, and smoke-android
+          # tests them in an Android userland.
+          - platform: android-aarch64
+            runner: ubuntu-22.04
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -248,9 +253,33 @@ jobs:
             exit 1
           fi
 
+  # Termux in the pinned termux-docker image is an Android userland (bionic,
+  # Termux's python/uv/node) on the arm64 runner's kernel: the Android wheels
+  # install and run there as on a device.
+  smoke-android:
+    name: smoke android-aarch64 (Termux)
+    needs: build
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Download platform wheels
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: wheels-android-aarch64
+          path: dist
+
+      - name: Termux smoke (thin alone + staged payloads; hook-protocol, doctor, lint)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --security-opt seccomp=unconfined -v "$PWD:/mnt/repo:ro" \
+            termux/termux-docker:aarch64@sha256:18e2c6a633642d0806afd7abaeb0e74b2b957c92f6f30021260e5ba997579f48 \
+            bash -c 'bash /mnt/repo/scripts/termux_smoke.sh provision && bash /mnt/repo/scripts/termux_smoke.sh wheels /mnt/repo/dist'
+
   publish-fat:
     name: publish tackbox_engines to PyPI
-    needs: smoke
+    needs: [smoke, smoke-android]
     runs-on: ubuntu-latest
     # PyPI Trusted Publishers rejects two pending TPs with the same
     # (owner, repo, workflow, environment) tuple: the OIDC subject cannot
@@ -300,7 +329,7 @@ jobs:
 
   publish-opengrep:
     name: publish tackbox_opengrep to PyPI
-    needs: smoke
+    needs: [smoke, smoke-android]
     runs-on: ubuntu-latest
     # Own environment for the same Trusted Publisher reason as pypi-engines.
     environment: pypi-opengrep

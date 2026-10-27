@@ -341,7 +341,7 @@ def _check_binaries_start() -> CheckResult:
             True,
         ),
         ("opengrep", [str(opengrep_root / "bin" / exe("opengrep")), "--version"], True),
-        ("node", [str(engines_root / "bin" / exe("node")), "--version"], True),
+        ("node", [engines_mod.hermetic_node(), "--version"], True),
         ("jscpd", [str(engines_root / "bin" / exe("jscpd")), "--version"], True),
     ]
     env = engines_mod.hermetic_env()
@@ -380,13 +380,13 @@ _AST_GREP_VERSION = "0.45.1"
 
 
 def _check_ast_grep() -> CheckResult:
-    """The outline engine (D015): a pip runtime dependency, resolved exactly as
-    the engine resolves it (interpreter dir first, then PATH). Gate presence AND
-    the pinned version - a grammar bump can silently change resolved scope
-    chains (residual A7)."""
+    """The outline engine (D015): a pip runtime dependency (bundled in the thin
+    wheel on Android), resolved exactly as the engine resolves it (interpreter
+    dir, then tackbox/bin, then PATH). Gate presence AND the pinned version - a
+    grammar bump can silently change resolved scope chains (residual A7)."""
     found = scopes.ast_grep_exe()
     if not found:
-        return CheckResult("ast-grep", False, "ast-grep not found (interpreter dir or PATH)")
+        return CheckResult("ast-grep", False, "ast-grep not found (interpreter dir, tackbox/bin, or PATH)")
     try:
         completed = proc.run(
             [found, "--version"], capture_output=True, timeout=60

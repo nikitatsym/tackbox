@@ -54,7 +54,8 @@ uvx tackbox@latest lint .
 The wheel is hermetic: a consumer needs only `git` on PATH (plus a Go
 toolchain if the repo has `.go` files, and a Java 17+ runtime if it
 has `.java` files) and, the first time a given engine payload version
-runs, network access to fetch that payload once.
+runs, network access to fetch that payload once. On Android (Termux)
+Node.js is a system toolchain too - see [Android](#android-termux).
 Rules roll out via `@latest` - a new safety rule reaches every repo on
 its next run.
 
@@ -191,9 +192,9 @@ fetched separately and cached per version:
   `javalint.jar`, the opengrep rule yamls, and the ESLint and
   markdownlint plugins and presets. Platform-specific, bumped on every
   push.
-- `tackbox-engines` (fat) - the bundled Node runtime, the `jscpd`
-  binary, and the vendored third-party `node_modules`. Version in
-  `engines/VERSION`; bumped only when one of these changes.
+- `tackbox-engines` (fat) - the bundled Node runtime (none on Android),
+  the `jscpd` binary, and the vendored third-party `node_modules`.
+  Version in `engines/VERSION`; bumped only when one of these changes.
 - `tackbox-opengrep` - only the `opengrep` binary and its license
   notice. It is its own project because one wheel carrying both
   payloads exceeds PyPI's 100 MiB per-file limit. Version in
@@ -219,7 +220,8 @@ thin client cannot force a re-download.
 
 After the first fetch tackbox runs fully offline until a payload
 version changes. Platform wheels cover Linux x86_64/arm64 (manylinux),
-macOS arm64, and Windows x86_64. `engines.json` in the thin
+macOS arm64, Windows x86_64, and Android arm64 (`android_24_arm64_v8a`,
+Termux). `engines.json` in the thin
 wheel records the source, version, sha256, and license of every
 bundled binary and dependency; `tackbox doctor` fetches each store if
 absent and verifies it (`engines-store`, `opengrep-store`).
@@ -229,6 +231,36 @@ Third-party license texts and dependency inventories ship in the jar under
 see the [engine notices](engines/licenses/NOTICE.txt).
 PMD acknowledgment: This product includes software developed in part by
 support from the Defense Advanced Research Project Agency (DARPA).
+
+### Android (Termux)
+
+`uvx tackbox@latest` works in Termux like anywhere else:
+
+```bash
+pkg install python uv git nodejs-lts   # plus golang / openjdk-17 for .go / .java
+```
+
+Neither Node.js nor ast-grep-cli publishes an Android build, and the Linux
+builds of node, jscpd, opengrep, and ast-grep do not start on Android's libc,
+so the Android wheels differ from the Linux ones:
+
+- Node.js is the system `node` from PATH, like Go and Java; the engines
+  payload carries no node, and `tackbox doctor` probes the system one.
+- The thin wheel bundles the pinned ast-grep in `tackbox/bin` instead of
+  depending on `ast-grep-cli`, which is declared only off Android.
+- `jscpd` and `ast-grep` are built from their pinned crates for
+  `aarch64-linux-android` with the pinned Rust and Android NDK
+  (`engines/manifest.json`), reproducibly, linking only Android system
+  libraries.
+- `opengrep` is the static `opengrep-core` of the same opengrep release; under
+  the name `opengrep` it runs the opengrep CLI.
+- The Go engines are built for `GOOS=android`: a Linux build is killed by
+  Android's seccomp filter as soon as it starts `go` or `opengrep`.
+
+No Android CI runner exists: the release cross-builds the Android wheels on
+x86_64 Linux and smoke-tests them in Termux (the pinned `termux-docker`
+image) on an arm64 runner before publishing; `verify-release` repeats the
+`uvx` canary there.
 
 ## What the rules enforce
 
@@ -1013,3 +1045,8 @@ The following host toolchains must be on `PATH`:
 Everything else - `node_modules`, Maven build output, Python virtual
 environments, and Go modules - is reproduced by `dev.py check`; nothing needs
 to be synchronized by hand.
+
+`dev.py check` builds the host's wheels only. Building the Android wheels
+(`python scripts/build_wheels.py --platform android-aarch64`) additionally needs
+a linux-x86_64 host with rustup on `PATH`; the script installs the pinned Rust
+toolchain and fetches the pinned NDK itself.

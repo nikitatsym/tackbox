@@ -322,15 +322,11 @@ def test_thin_wheel_does_not_depend_on_payloads(wheels):
         for p in ("tackbox-engines", "tackbox_engines", "tackbox-opengrep", "tackbox_opengrep")
     ), f"thin wheel still pins a payload: {requires}"
     # flake8 stays a real dependency (hosts the pyrules plugin); ast-grep-cli is
-    # the pinned outline engine (D015), a thin runtime dep like flake8.
+    # the pinned outline engine (D015), a thin runtime dep like flake8 - except
+    # on Android, which has no ast-grep-cli wheel and gets a bundled copy.
     for analyzer, version in (("flake8", "7.3.0"), ("pyflakes", "3.4.0")):
         assert any(analyzer in r and f"=={version}" in r for r in requires), requires
-    assert any("ast-grep-cli" in r or "ast_grep_cli" in r for r in requires), (
-        f"thin must pin the outline engine ast-grep-cli: {requires}"
-    )
-    assert any("==0.45.1" in r for r in requires if "ast" in r.lower()), (
-        f"ast-grep-cli must be version-pinned: {requires}"
-    )
+    assert 'Requires-Dist: ast-grep-cli==0.45.1; sys_platform != "android"' in requires, requires
 
 
 def test_engines_json_carries_store_pins(engines_payload, opengrep_payload, wheels):
@@ -340,6 +336,7 @@ def test_engines_json_carries_store_pins(engines_payload, opengrep_payload, whee
     with zipfile.ZipFile(wheels["thin"]) as zf:
         ej = json.loads(zf.read("tackbox/engines.json"))
     assert ej["platform"] == engines.detect_platform_key()
+    assert ej["node"] == "bundled"
     assert ej["payloads"] == {
         "engines": {
             "project": "tackbox-engines", "version": "0.0.0",

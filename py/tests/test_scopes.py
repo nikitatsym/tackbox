@@ -31,6 +31,30 @@ def hexhash(body: str) -> str:
     return f"<h{hashlib.sha256(' '.join(body.split()).encode('utf-8')).hexdigest()[:8]}>"
 
 
+# -- ast-grep executable resolution ----------------------------------------
+
+def _executable(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"")
+    path.chmod(0o755)
+    return str(path)
+
+
+def test_ast_grep_exe_order_interpreter_dir_then_bundled_then_path(tmp_path, monkeypatch):
+    # Android's thin wheel bundles ast-grep in tackbox/bin (no ast-grep-cli
+    # wheel exists there): probed after the interpreter dir, before PATH.
+    name = "ast-grep.exe" if scopes.os.name == "nt" else "ast-grep"
+    monkeypatch.setattr(scopes.sys, "executable", str(tmp_path / "venv" / "bin" / "python"))
+    monkeypatch.setattr(scopes, "_PKG_BIN", tmp_path / "tackbox" / "bin")
+    monkeypatch.setenv("PATH", str(tmp_path / "path"))
+    on_path = _executable(tmp_path / "path" / name)
+    assert scopes.ast_grep_exe() == on_path
+    bundled = _executable(tmp_path / "tackbox" / "bin" / name)
+    assert scopes.ast_grep_exe() == bundled
+    interpreter_dir = _executable(tmp_path / "venv" / "bin" / name)
+    assert scopes.ast_grep_exe() == interpreter_dir
+
+
 # -- scope-position rule (trailing / in-body / above-declaration) ----------
 
 def test_python_scope_positions(tmp_path):

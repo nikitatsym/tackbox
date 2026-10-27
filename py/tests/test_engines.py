@@ -356,6 +356,29 @@ def test_mdlint_is_non_cacheable_and_wants_link_targets():
         assert md.wants_link_targets is True
 
 
+# -- Android: platform key and system node ----------------------------------
+
+
+def test_android_host_resolves_its_platform_key(monkeypatch):
+    # Python built for Android (Termux) reports sys.platform "android".
+    monkeypatch.setattr(engines.sys, "platform", "android")
+    monkeypatch.setattr(engines.platform, "machine", lambda: "aarch64")
+    assert engines.detect_platform_key() == "android-aarch64"
+
+
+def test_hermetic_node_runs_the_system_node_where_engines_json_says_so(monkeypatch, tmp_path):
+    payload = tmp_path / "tackbox_engines"
+    monkeypatch.setenv("TACKBOX_ENGINES_DIR", str(payload))
+    monkeypatch.setattr(engines, "load_engines_json", lambda: {"node": "bundled"})
+    assert engines.hermetic_node() == str(payload / "bin" / engines.exe_name("node"))
+    monkeypatch.setattr(engines, "load_engines_json", lambda: {"node": "system"})
+    assert engines.hermetic_node() == "node"
+    for engine_id in ("tackbox-eslint", "tackbox-mdlint"):
+        spec = next(e for e in HERMETIC_ENGINES if e.id == engine_id)
+        assert spec.build_argv(tmp_path, tmp_path, ["a.md"], (), tmp_path)[0] == "node"
+
+
+
 # -- resolve_dev_versions ---------------------------------------------------
 
 

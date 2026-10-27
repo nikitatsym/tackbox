@@ -118,6 +118,23 @@ def test_python_interpreter_version_invalidates_marker(monkeypatch, tmp_path):
     assert not cache.is_cached(cache.CacheKey("payload", cache.with_runtime_digest("source", changed), "pyrules"), tmp_path)
 
 
+@pytest.mark.parametrize("system_node,runtime", [(True, "v24.1.0"), (False, "")])
+def test_hermetic_eslint_salted_only_by_a_system_node(monkeypatch, tmp_path, system_node, runtime):
+    """A system node (Android) can change under an unchanged engines hash, so
+    its version salts hermetic ESLint units; a bundled node is in the hash."""
+    monkeypatch.setattr(cache, "is_hermetic", lambda: True)
+    monkeypatch.setattr(cache, "uses_system_node", lambda: system_node)
+    monkeypatch.setattr(cache, "hermetic_env", lambda: {})
+
+    def probe(command, **kwargs):
+        assert command == ["node", "--version"]
+        return subprocess.CompletedProcess(command, 0, "v24.1.0", "")
+
+    monkeypatch.setattr(cache.proc, "run", probe)
+    assert cache.engine_runtime_version("tackbox-eslint", tmp_path, tmp_path) == runtime
+
+
+
 @pytest.mark.parametrize("returncode,output", [(0, ""), (0, "?"), (1, "go1.27.0")])
 def test_unknown_runtime_version_cannot_reuse_cache(monkeypatch, tmp_path, returncode, output):
     monkeypatch.setattr(cache.proc, "run", lambda argv, **kwargs:

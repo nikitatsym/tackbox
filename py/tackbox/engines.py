@@ -62,6 +62,8 @@ _PLATFORM_KEYS = {
     ("darwin", "aarch64"): "macos-aarch64",
     ("windows", "x86_64"): "windows-x86_64",
     ("windows", "amd64"): "windows-x86_64",
+    ("android", "aarch64"): "android-aarch64",
+    ("android", "arm64"): "android-aarch64",
 }
 
 
@@ -1577,8 +1579,19 @@ def _hermetic_erclint_bin(name: str) -> Path:
     return _TACKBOX_PKG_ROOT / "bin" / exe_name(name)
 
 
-def _hermetic_node_bin() -> Path:
-    return payload_root(ENGINES) / "bin" / exe_name("node")
+def uses_system_node() -> bool:
+    """True where the engines payload carries no node (engines.json `"node":
+    "system"`, Android: Node.js publishes no Android build and a static Linux
+    node is killed by its seccomp filter). The ESLint and markdownlint wrappers
+    then run on the host's `node` from PATH, a system toolchain there like go
+    and java everywhere."""
+    return load_engines_json()["node"] == "system"
+
+
+def hermetic_node() -> str:
+    if uses_system_node():
+        return "node"
+    return str(payload_root(ENGINES) / "bin" / exe_name("node"))
 
 
 def _hermetic_rule_script(name: str) -> Path:
@@ -1636,14 +1649,14 @@ def _tackbox_eslint_argv_hermetic(
     _repo_root: Path, _tackbox_root: Path, files: list[str], reporters=(), paths_dir: Path | None = None
 ) -> list[str]:
     flag = _reporters_flag(reporters, _JS_EXTS, lambda f: f)
-    head = [str(_hermetic_node_bin()), str(_hermetic_rule_script("tackbox-eslint.js"))]
+    head = [hermetic_node(), str(_hermetic_rule_script("tackbox-eslint.js"))]
     return _node_listfile_argv(head, flag, files, paths_dir)
 
 
 def _tackbox_mdlint_argv_hermetic(
     _repo_root: Path, _tackbox_root: Path, files: list[str], _reporters=(), paths_dir: Path | None = None
 ) -> list[str]:
-    head = [str(_hermetic_node_bin()), str(_hermetic_rule_script("tackbox-mdlint.js"))]
+    head = [hermetic_node(), str(_hermetic_rule_script("tackbox-mdlint.js"))]
     return _node_listfile_argv(head, [], files, paths_dir)
 
 
@@ -1712,7 +1725,8 @@ def resolve_hermetic_versions() -> dict[str, str]:
     return {
         "erclint": versions.get("erclint", "?"),
         "opengrep": versions.get("opengrep", "?"),
-        "node": versions.get("node", "?"),
+        "node": _version_from_binary("node", ("--version",), strip_v=True)
+        if uses_system_node() else versions.get("node", "?"),
         "eslint": versions.get("eslint", "?"),
         "markdownlint": versions.get("markdownlint", "?"),
     }
