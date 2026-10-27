@@ -24,8 +24,7 @@ hook_protocol() {
     | "${tackbox[@]}" hook-protocol)
   printf '%s\n' "$response"
   printf '%s\n' "$response" | python3 -c 'import json,sys; e={"protocol":1,"decision":"allow","reason":""}; r=json.load(sys.stdin); sys.exit(0 if r==e else f"unexpected hook-protocol response: {r!r}")'
-  response=$(cd "$fixture" && printf '%s\n' \
-    "{\"protocol\":1,\"phase\":\"post\",\"cwd\":\"$fixture\",\"tool\":\"write\",\"targets\":[{\"path\":\"$fixture/pkga/violate.go\",\"op\":\"write\",\"expectedPresent\":true}],\"unknown\":null,\"targetless\":null,\"succeeded\":true}" \
+  response=$(cd "$fixture" && python3 -c 'import json,pathlib; p=pathlib.Path("pkga/violate.go").resolve(); print(json.dumps({"protocol":1,"phase":"post","cwd":str(p.parent.parent),"tool":"write","targets":[{"path":str(p),"op":"write","expectedPresent":True,"content":p.read_text()}],"unknown":None,"targetless":None,"succeeded":True}))' \
     | "${tackbox[@]}" hook-protocol)
   printf '%s\n' "$response"
   printf '%s\n' "$response" | python3 -c 'import json,sys; r=json.load(sys.stdin); sys.exit(0 if r["decision"]=="block" and "ERC001" in r["reason"] else f"unexpected hook-protocol response: {r!r}")'
