@@ -32,7 +32,8 @@ def test_stage_binary_extracts_an_archive_member_executable(tmp_path, monkeypatc
     entry = {"source_url": "u", "archive_sha256": "s", "archive_member": "opengrep-core"}
     build_wheels.stage_binary(None, entry, dest)
     assert dest.read_bytes() == b"core\n"
-    assert dest.stat().st_mode & stat.S_IXUSR
+    if sys.platform != "win32":
+        assert dest.stat().st_mode & stat.S_IXUSR
 
 
 def test_stage_binary_copies_a_bare_download(tmp_path, monkeypatch):
@@ -42,7 +43,8 @@ def test_stage_binary_copies_a_bare_download(tmp_path, monkeypatch):
     dest = tmp_path / "out" / "opengrep"
     build_wheels.stage_binary(None, {"source_url": "u", "archive_sha256": "s"}, dest)
     assert dest.read_bytes() == b"binary\n"
-    assert dest.stat().st_mode & stat.S_IXUSR
+    if sys.platform != "win32":
+        assert dest.stat().st_mode & stat.S_IXUSR
 
 
 def test_stage_binary_builds_a_cargo_entry(tmp_path, monkeypatch):

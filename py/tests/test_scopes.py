@@ -11,6 +11,7 @@ Java signatures), the plan wins and these assertions encode it.
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 
 import pytest
 from tackbox import scopes
@@ -46,11 +47,11 @@ def test_ast_grep_exe_order_interpreter_dir_then_bundled_then_path(tmp_path, mon
     monkeypatch.setattr(scopes, "_PKG_BIN", tmp_path / "tackbox" / "bin")
     monkeypatch.setenv("PATH", str(tmp_path / "path"))
     on_path = _executable(tmp_path / "path" / name)
-    assert scopes.ast_grep_exe() == on_path
+    assert Path(scopes.ast_grep_exe()).samefile(on_path)
     bundled = _executable(tmp_path / "tackbox" / "bin" / name)
-    assert scopes.ast_grep_exe() == bundled
+    assert Path(scopes.ast_grep_exe()).samefile(bundled)
     interpreter_dir = _executable(tmp_path / "venv" / "bin" / name)
-    assert scopes.ast_grep_exe() == interpreter_dir
+    assert Path(scopes.ast_grep_exe()).samefile(interpreter_dir)
 
 
 # -- scope-position rule (trailing / in-body / above-declaration) ----------
