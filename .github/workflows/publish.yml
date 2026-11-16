@@ -33,7 +33,7 @@ jobs:
           - platform: linux-aarch64
             runner: ubuntu-22.04-arm
           - platform: macos-aarch64
-            runner: macos-14
+            runner: macos-15
           - platform: windows-x86_64
             runner: windows-2022
           # The NDK cross-builds on x86_64; Android binaries run in Termux smoke.
@@ -124,14 +124,14 @@ jobs:
           - platform: linux-aarch64
             runner: ubuntu-22.04-arm
           - platform: macos-aarch64
-            runner: macos-14
+            runner: macos-15
           - platform: windows-x86_64
             runner: windows-2022
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      # macos-14 does not ship Go by default; the fixture repo has .go files,
-      # and `tackbox doctor` fails go-toolchain check without it.
+      # macos-15 keeps Go only in its tool cache, off PATH; the fixture repo has
+      # .go files, and `tackbox doctor` fails go-toolchain check without it.
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod

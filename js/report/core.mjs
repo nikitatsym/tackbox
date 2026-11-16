@@ -23,6 +23,8 @@ export function createReporter(deliverNotice, sdk) {
       environment: opts.environment,
       debug: !!opts.debug,
       defaultIntegrations: false,
+      // Sentry 11 attaches a typeless synthetic exception to messages by default; GlitchTip then titles the startup check "?".
+      attachStacktrace: false,
       // Without it the SDK drops Error.cause and the event carries only the Error(msg) wrapper.
       integrations: [sdk.linkedErrorsIntegration(), ...(opts.integrations || [])],
     })

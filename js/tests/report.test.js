@@ -193,6 +193,9 @@ for (const [name, load] of Object.entries(VARIANTS)) {
     const [event] = keyed('report.startup')
     assert.equal(event.level, 'info')
     assert.equal(event.tags.healthcheck, 'true')
+    // GlitchTip titles an event by its exception type when one is attached, so the check must stay a plain message.
+    assert.equal(event.message, 'report.Verify')
+    assert.equal(event.exception, undefined)
   })
 
   test(`${name}: a sink that re-enters a verb is skipped, not looped`, async () => {
