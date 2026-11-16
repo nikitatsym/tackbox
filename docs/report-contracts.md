@@ -1,10 +1,11 @@
 # report helper contracts
 
 Cross-language contracts of the runtime capture helpers (go/report,
-js/report.js, java/report, py/tackbox_report). Entries keep their
-original rules/DECISIONS.md ids - code comments, DESIGN docs, and the
-specs reference them as D002/D003/D005. Rule decisions stay in
-rules/DECISIONS.md; this file holds library behavior.
+js/report/ with its browser and Node variants, java/report,
+py/tackbox_report). Entries keep their original rules/DECISIONS.md ids -
+code comments, DESIGN docs, and the specs reference them as
+D002/D003/D005. Rule decisions stay in rules/DECISIONS.md; this file
+holds library behavior.
 
 ## Direct reporting lanes
 
@@ -85,3 +86,10 @@ Per-sink order at a call site: local log always; user-lane dispatch
 unconditional, before any gate; capture behind init + rate window. A
 helper without a user lane simply has no second sink; the contract
 binds it as soon as one ships.
+
+A failing user-lane sink never reaches the reporting caller and never
+re-enters the user lane: a notifier that throws - in JS also one whose
+returned promise rejects - is captured telemetry-only on the quiet lane
+as `report notifier failed` under dedupKey `report.notifier`. The one
+sink a helper cannot observe is a browser `tackbox:error` listener,
+whose failure the DOM routes to `window.onerror`.

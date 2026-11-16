@@ -1,190 +1,273 @@
-const { test } = require('node:test')
+const { test, before, after } = require('node:test')
 const assert = require('node:assert')
+const http = require('node:http')
+const path = require('node:path')
+const zlib = require('node:zlib')
+const { pathToFileURL } = require('node:url')
 
-// report.js reads console, window/CustomEvent, and @sentry/browser at call time
-// (globals + the shared module cache), so replacing them here reaches the module
-// under test. A fake Sentry in require.cache dodges real init/network; load()
-// reloads report.js per scenario for pristine ready/lastSent state.
-const REPORT_PATH = require.resolve('../report.js')
-const SENTRY_PATH = require.resolve('@sentry/browser')
+// Both variants run on their real Sentry SDK against a local ingest endpoint, so
+// the asserted events are what the SDK actually ships. A query-string import
+// gives every scenario a fresh variant instance (pristine ready/rate state).
 
+const logged = []
 console.log = () => {}
-console.warn = () => {}
+console.warn = (...args) => logged.push(args.join(' '))
 console.error = () => {}
 
-let captured = [] // one entry per Sentry.captureException: { err, level, fingerprint, tags }
-let dispatched = [] // one entry per window.dispatchEvent: the CustomEvent detail
-let scope = null
+const events = []
+let server
+let dsn
 
-const fakeSentry = {
-  init() {},
-  withScope(fn) {
-    scope = { level: undefined, fingerprint: undefined, tags: {} }
-    fn({
-      setLevel(l) { scope.level = l },
-      setFingerprint(f) { scope.fingerprint = f },
-      setTag(k, v) { scope.tags[k] = v },
+before(async () => {
+  server = http.createServer((req, res) => {
+    const chunks = []
+    req.on('data', chunk => chunks.push(chunk))
+    req.on('end', () => {
+      let body = Buffer.concat(chunks)
+      if (req.headers['content-encoding'] === 'gzip') body = zlib.gunzipSync(body)
+      // envelope: a header line, then item-header / payload line pairs
+      const lines = body.toString('utf8').split('\n')
+      for (let i = 1; i + 1 < lines.length; i += 2) {
+        if (JSON.parse(lines[i]).type === 'event') events.push(JSON.parse(lines[i + 1]))
+      }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end('{}')
     })
-    scope = null
-  },
-  captureException(err) {
-    captured.push({
-      err,
-      level: scope && scope.level,
-      fingerprint: scope && scope.fingerprint,
-      tags: scope ? { ...scope.tags } : null,
-    })
-  },
-}
-require.cache[SENTRY_PATH] = { id: SENTRY_PATH, filename: SENTRY_PATH, loaded: true, exports: fakeSentry }
-
-class FakeCustomEvent {
-  constructor(type, opts) {
-    this.type = type
-    this.detail = opts && opts.detail
-  }
-}
-Object.defineProperty(globalThis, 'CustomEvent', { value: FakeCustomEvent, configurable: true, writable: true })
-Object.defineProperty(globalThis, 'window', {
-  value: { addEventListener() {}, dispatchEvent(ev) { dispatched.push(ev.detail); return true } },
-  configurable: true,
-  writable: true,
-})
-
-const VALID_DSN = 'https://public@sentry.example.com/1'
-
-function load() {
-  captured = []
-  dispatched = []
-  scope = null
-  delete require.cache[REPORT_PATH]
-  return require(REPORT_PATH)
-}
-
-test('module.exports is the exact ordered reporting-only key list', () => {
-  const report = load()
-  assert.deepEqual(Object.keys(report), [
-    'init', 'flush', 'isReady', 'verify', 'reportError', 'reportWarn',
-    'reportQuiet', 'reportSynthError', 'notify', 'reportPanic',
-  ])
-})
-
-// (a) DSN unset -> not ready -> capture disabled, but the user lane still fires.
-test('report dispatches to the user lane even when not ready (DSN unset)', () => {
-  const report = load()
-  report.init({})
-  assert.equal(report.isReady(), false)
-  report.reportError('connection lost mid-stream', new Error('boom'), { area: 'net' }, 'net.conn')
-  assert.equal(dispatched.length, 1, 'user lane must dispatch without init')
-  assert.equal(captured.length, 0, 'capture stays gated off when not ready')
-  assert.equal(dispatched[0].msg, 'connection lost mid-stream')
-  assert.equal(dispatched[0].dedupKey, 'net.conn')
-})
-
-// (b) same dedupKey inside the rate window: both dispatch, second capture dropped.
-test('rate window drops the second capture but never the dispatch', () => {
-  const report = load()
-  report.init({ dsn: VALID_DSN })
-  assert.equal(report.isReady(), true)
-  report.reportError('poll failed on stale token', new Error('e1'), { area: 'poll' }, 'poll.stale')
-  report.reportError('poll failed on stale token', new Error('e2'), { area: 'poll' }, 'poll.stale')
-  assert.equal(dispatched.length, 2, 'every event reaches the user lane')
-  assert.equal(captured.length, 1, 'duplicate capture suppressed within the window')
-})
-
-// (D-5) re-entrancy guard: a throwing tackbox:error listener surfaces via
-// window.onerror, which an app-owned global handler turns back into reportError ->
-// dispatch on the same stack. The guard skips the nested dispatch so it cannot
-// loop; sequential dispatches are unaffected.
-test('a re-entering dispatch is skipped (no infinite loop, one outer dispatch)', () => {
-  const report = load()
-  report.init({})
-  let calls = 0
-  const realWindow = window
-  Object.defineProperty(globalThis, 'window', {
-    value: {
-      addEventListener() {},
-      dispatchEvent(ev) {
-        calls++
-        dispatched.push(ev.detail)
-        // the listener failure re-enters synchronously via reportError
-        report.reportError('re-entry from a listener failure', new Error('inner'), null, 'reentry.key')
-        return true
-      },
-    },
-    configurable: true,
-    writable: true,
   })
-  try {
-    report.reportError('outer dispatch that re-enters', new Error('outer'), null, 'outer.key')
-    assert.equal(calls, 1, 'exactly one dispatch; the nested re-entry is skipped')
-    assert.equal(dispatched.length, 1, 'only the outer notice reaches the user lane')
-  } finally {
-    Object.defineProperty(globalThis, 'window', { value: realWindow, configurable: true, writable: true })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  dsn = `http://public@127.0.0.1:${server.address().port}/1`
+})
+
+after(() => new Promise(resolve => server.close(resolve)))
+
+let loads = 0
+
+async function fresh(variant) {
+  events.length = 0
+  logged.length = 0
+  const file = path.join(__dirname, '..', 'report', variant + '.mjs')
+  return import(pathToFileURL(file).href + '?load=' + ++loads)
+}
+
+// Each loader returns a fresh report module plus the notices its user lane
+// delivered; `sink` swaps in a custom user-lane sink for the failure scenarios.
+const VARIANTS = {
+  async browser(sink) {
+    const notices = []
+    globalThis.window = new EventTarget()
+    window.addEventListener('tackbox:error', e => (sink ? sink(e.detail) : notices.push(e.detail)))
+    return { report: await fresh('browser'), notices }
+  },
+  async node(sink) {
+    delete globalThis.window
+    const notices = []
+    const report = await fresh('node')
+    report.setNotifier(sink || (n => notices.push(n)))
+    return { report, notices }
+  },
+}
+
+const SHARED_VERBS = [
+  'flush', 'init', 'isReady', 'notify', 'reportError', 'reportPanic',
+  'reportQuiet', 'reportSynthError', 'reportWarn', 'verify',
+]
+
+function keyed(key) {
+  return events.filter(e => e.fingerprint && e.fingerprint[0] === key)
+}
+
+function messages(event) {
+  return event.exception.values.map(v => v.value)
+}
+
+for (const [name, load] of Object.entries(VARIANTS)) {
+  test(`${name}: user lane delivers without a DSN, capture stays off`, async () => {
+    const { report, notices } = await load()
+    report.init({ silentMissing: true })
+    assert.equal(report.isReady(), false)
+    const cause = new Error('boom')
+    report.reportError('connection lost mid-stream', cause, { area: 'net' }, 'net.conn')
+    assert.deepEqual(notices, [
+      { msg: 'connection lost mid-stream', cause, tags: { area: 'net' }, dedupKey: 'net.conn', level: 'error' },
+    ])
+    assert.equal(await report.verify(500), false, 'verify before a successful init')
+    await report.flush(500)
+    assert.equal(events.length, 0)
+  })
+
+  test(`${name}: D005 rate window drops the repeat capture, never the notice`, async () => {
+    const { report, notices } = await load()
+    report.init({ dsn })
+    assert.equal(report.isReady(), true)
+    report.reportError('poll failed on stale token', new Error('e1'), { area: 'poll' }, 'poll.stale')
+    report.reportError('poll failed on stale token', new Error('e2'), { area: 'poll' }, 'poll.stale')
+    await report.flush(2000)
+    assert.equal(notices.length, 2, 'every event reaches the user lane')
+    assert.equal(keyed('poll.stale').length, 1, 'in-window repeat capture dropped')
+  })
+
+  test(`${name}: a capture is Error(msg) chaining the caught cause, with level, tags, fingerprint`, async () => {
+    const { report } = await load()
+    report.init({ dsn, environment: 'test', release: 'r1' })
+    report.reportError('upload failed mid-flight', new Error('socket hangup'), { area: 'upload' }, 'upload.fail')
+    await report.flush(2000)
+    const [event] = keyed('upload.fail')
+    assert.equal(event.level, 'error')
+    assert.equal(event.environment, 'test')
+    assert.equal(event.release, 'r1')
+    assert.equal(event.tags.area, 'upload')
+    const values = event.exception.values
+    assert.equal(values.at(-1).value, 'upload failed mid-flight', 'the wrapper is the primary exception')
+    assert.ok(messages(event).includes('socket hangup'), 'the caught cause ships as a linked exception')
+  })
+
+  test(`${name}: D003 each capture owns its scope - no tag or fingerprint bleed`, async () => {
+    const { report } = await load()
+    report.init({ dsn })
+    report.reportError('first failure in batch one', new Error('a'), { area: 'one' }, 'batch.one')
+    report.reportWarn('second failure in batch two', new Error('b'), { zone: 'two' }, 'batch.two')
+    report.reportSynthError('third failure without cause', null, 'batch.three')
+    await report.flush(2000)
+    const [one] = keyed('batch.one')
+    const [two] = keyed('batch.two')
+    const [three] = keyed('batch.three')
+    assert.equal(one.level, 'error')
+    assert.equal(two.level, 'warning')
+    assert.deepEqual([one.tags.area, one.tags.zone], ['one', undefined])
+    assert.deepEqual([two.tags.area, two.tags.zone], [undefined, 'two'])
+    assert.deepEqual(three.tags || {}, {})
+  })
+
+  test(`${name}: D002 panics key per name`, async () => {
+    const { report, notices } = await load()
+    report.init({ dsn })
+    report.reportPanic('worker', new Error('kaboom'))
+    report.reportPanic('poller', 'not an error')
+    report.reportPanic('worker', new Error('kaboom again'))
+    await report.flush(2000)
+    assert.deepEqual(notices.map(n => [n.level, n.dedupKey, n.msg]), [
+      ['fatal', 'panic:worker', 'panic in worker'],
+      ['fatal', 'panic:poller', 'panic in poller'],
+      ['fatal', 'panic:worker', 'panic in worker'],
+    ])
+    const [worker] = keyed('panic:worker')
+    const [poller] = keyed('panic:poller')
+    assert.equal(keyed('panic:worker').length, 1, 'same name inside the window collapses')
+    assert.equal(worker.level, 'fatal')
+    assert.equal(worker.tags.source, 'worker')
+    assert.deepEqual(messages(poller), ['not an error'])
+  })
+
+  test(`${name}: reportSynthError captures a plain Error(msg)`, async () => {
+    const { report, notices } = await load()
+    report.init({ dsn })
+    report.reportSynthError('non-OK response handled inline', { area: 'http' }, 'http.synth')
+    await report.flush(2000)
+    assert.deepEqual(messages(keyed('http.synth')[0]), ['non-OK response handled inline'])
+    assert.equal(notices[0].cause, null)
+  })
+
+  test(`${name}: reportQuiet captures at warning without the user lane`, async () => {
+    const { report, notices } = await load()
+    report.init({ dsn })
+    report.reportQuiet('index rebuild degraded, using stale', new Error('timeout'), { area: 'idx' }, 'idx.stale')
+    await report.flush(2000)
+    assert.equal(keyed('idx.stale')[0].level, 'warning')
+    assert.equal(notices.length, 0)
+  })
+
+  test(`${name}: notify reaches the user lane only and leaves the rate slot`, async () => {
+    const { report, notices } = await load()
+    report.init({ dsn })
+    report.notify('you appear to be offline', new Error('net down'), { area: 'conn' }, 'conn.offline')
+    report.reportError('still offline after retry', new Error('net down'), { area: 'conn' }, 'conn.offline')
+    await report.flush(2000)
+    assert.deepEqual(notices.map(n => n.level), ['notice', 'error'])
+    assert.equal(keyed('conn.offline').length, 1, 'the following reportError still captures')
+  })
+
+  test(`${name}: verify ships the report.startup healthcheck`, async () => {
+    const { report } = await load()
+    report.init({ dsn })
+    assert.equal(await report.verify(2000), true)
+    const [event] = keyed('report.startup')
+    assert.equal(event.level, 'info')
+    assert.equal(event.tags.healthcheck, 'true')
+  })
+
+  test(`${name}: a sink that re-enters a verb is skipped, not looped`, async () => {
+    const delivered = []
+    const { report } = await load(n => {
+      delivered.push(n.dedupKey)
+      report.reportError('re-entry from the user-lane sink', new Error('inner'), null, 'reentry.inner')
+    })
+    report.init({ dsn })
+    report.reportError('outer dispatch that re-enters', new Error('outer'), null, 'reentry.outer')
+    await report.flush(2000)
+    assert.deepEqual(delivered, ['reentry.outer'])
+    assert.ok(logged.some(l => l.includes('nested user-lane dispatch skipped')))
+    assert.equal(keyed('reentry.inner').length, 1, 'the nested call still captures')
+  })
+
+  test(`${name}: exports exactly the documented verbs`, async () => {
+    const { report } = await load()
+    const expected = name === 'node' ? [...SHARED_VERBS, 'setNotifier'].sort() : SHARED_VERBS
+    assert.deepEqual(Object.keys(report), expected)
+  })
+}
+
+test('node: a throwing notifier is captured on the quiet lane, never thrown to the caller', async () => {
+  const { report } = await VARIANTS.node(() => {
+    throw new Error('notifier is broken')
+  })
+  report.init({ dsn })
+  report.reportError('caller path survives the sink', new Error('x'), null, 'sink.sync')
+  await report.flush(2000)
+  const [event] = keyed('report.notifier')
+  assert.equal(event.level, 'warning')
+  assert.ok(messages(event).includes('notifier is broken'))
+  assert.equal(keyed('sink.sync').length, 1)
+})
+
+test('node: a rejecting async notifier is captured on the quiet lane', async () => {
+  const { report } = await VARIANTS.node(async () => {
+    throw new Error('notifier rejected')
+  })
+  report.init({ dsn })
+  report.notify('you appear to be offline', new Error('net down'), null, 'conn.offline')
+  await new Promise(resolve => setImmediate(resolve))
+  await report.flush(2000)
+  assert.ok(messages(keyed('report.notifier')[0]).includes('notifier rejected'))
+})
+
+test('node: setNotifier(null) clears the sink; a non-function is refused', async () => {
+  const { report, notices } = await VARIANTS.node()
+  report.setNotifier(null)
+  report.notify('you appear to be offline', null, null, 'conn.offline')
+  assert.equal(notices.length, 0)
+  assert.throws(() => report.setNotifier(undefined), TypeError)
+  assert.throws(() => report.setNotifier('notifier'), TypeError)
+})
+
+test('browser: a throwing window.dispatchEvent is captured on the quiet lane', async () => {
+  const { report } = await VARIANTS.browser()
+  globalThis.window = {
+    dispatchEvent() {
+      throw new Error('dispatch is broken')
+    },
   }
+  report.init({ dsn })
+  report.reportWarn('caller path survives dispatch', new Error('x'), null, 'sink.dispatch')
+  await report.flush(2000)
+  assert.ok(messages(keyed('report.notifier')[0]).includes('dispatch is broken'))
+  assert.equal(keyed('sink.dispatch').length, 1)
 })
 
-// (c) reportPanic routes to the user lane with level fatal and a per-name key.
-test('reportPanic dispatches level fatal with panic:<name> dedupKey', () => {
-  const report = load()
-  report.reportPanic('worker', new Error('kaboom'))
-  assert.equal(dispatched.length, 1)
-  const d = dispatched[0]
-  assert.equal(d.level, 'fatal')
-  assert.equal(d.dedupKey, 'panic:worker')
-  assert.equal(d.msg, 'panic in worker')
-  assert.equal(d.cause.message, 'kaboom')
-})
-
-// (d) capture builds Error(msg) with the original error chained as .cause (seed shape).
-test('capture is Error(msg) with the original cause chained', () => {
-  const report = load()
-  report.init({ dsn: VALID_DSN })
-  const original = new Error('socket hangup')
-  report.reportError('upload failed mid-flight', original, { area: 'upload' }, 'upload.fail')
-  assert.equal(captured.length, 1)
-  const { err, level, fingerprint, tags } = captured[0]
-  assert.ok(err instanceof Error)
-  assert.equal(err.message, 'upload failed mid-flight')
-  assert.equal(err.cause, original)
-  assert.equal(level, 'error')
-  assert.deepEqual(fingerprint, ['upload.fail'])
-  assert.equal(tags.area, 'upload')
-})
-
-// (e) reportSynthError captures a plain Error(msg) with no cause chain.
-test('reportSynthError captures Error(msg) with no cause', () => {
-  const report = load()
-  report.init({ dsn: VALID_DSN })
-  report.reportSynthError('non-OK response handled inline', { area: 'http' }, 'http.synth')
-  assert.equal(captured.length, 1)
-  assert.equal(captured[0].err.message, 'non-OK response handled inline')
-  assert.equal(captured[0].err.cause, undefined)
-  assert.equal(dispatched.length, 1)
-  assert.equal(dispatched[0].cause, null, 'synth user-lane detail carries cause: null')
-})
-
-// (f) reportQuiet captures at warning with no user-lane dispatch.
-test('reportQuiet captures warning-level with no user-lane dispatch', () => {
-  const report = load()
-  report.init({ dsn: VALID_DSN })
-  report.reportQuiet('index rebuild degraded, using stale', new Error('timeout'), { area: 'idx' }, 'idx.stale')
-  assert.equal(captured.length, 1, 'quiet still captures')
-  assert.equal(captured[0].level, 'warning')
-  assert.deepEqual(captured[0].fingerprint, ['idx.stale'])
-  assert.equal(dispatched.length, 0, 'quiet must not touch the user lane')
-})
-
-// (g) notify dispatches only, captures nothing, and consumes no rate slot.
-test('notify dispatches level notice, captures nothing, leaves the rate slot', () => {
-  const report = load()
-  report.init({ dsn: VALID_DSN })
-  report.notify('you appear to be offline', new Error('net down'), { area: 'conn' }, 'conn.offline')
-  assert.equal(dispatched.length, 1)
-  assert.equal(dispatched[0].level, 'notice')
-  assert.equal(captured.length, 0, 'notify captures nothing')
-  // Same dedupKey still captures: notify consumed no rate slot.
-  report.reportError('still offline after retry', new Error('net down'), { area: 'conn' }, 'conn.offline')
-  assert.equal(captured.length, 1, 'following reportError on the notify key still captures')
-  assert.equal(dispatched.length, 2)
+test('browser: without a window (SSR) the user lane is a no-op and capture still runs', async () => {
+  const { report } = await VARIANTS.browser()
+  delete globalThis.window
+  report.init({ dsn })
+  report.reportError('server-side render path failed', new Error('ssr'), null, 'ssr.render')
+  await report.flush(2000)
+  assert.equal(keyed('ssr.render').length, 1)
 })

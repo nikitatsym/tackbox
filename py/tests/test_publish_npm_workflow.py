@@ -197,7 +197,12 @@ def test_published_tarball_excludes_test_suites():
         assert not leaked, f"npm tarball must not ship test suites: {leaked}"
         for required in (
             "js/eslint-plugin.js",
-            "js/report.js",
+            "js/report/core.mjs",
+            "js/report/browser.mjs",
+            "js/report/node.mjs",
+            "js/report/api.d.mts",
+            "js/report/browser.d.mts",
+            "js/report/node.d.mts",
             "js/omp/index.mjs",
             "js/omp/index.js",
             "js/omp/hook.js",

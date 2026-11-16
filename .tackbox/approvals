@@ -15,8 +15,6 @@ js/omp/hook.js#execute.<h5fabee14>: no-report: a synchronous stdin failure has t
 js/omp/hook.js#execute.<h5fabee14>: no-report: synchronous spawn failure resolves the protocol failure outcome.
 js/omp/hook.js#parseJson: no-report: malformed JSON becomes an explicit unverified outcome.
 js/omp/hook.js#parseJson: parse-skip: protocol JSON is intentionally parsed only at this boundary.
-js/report.js#dispatchEventSafely: no-report: dispatch failure loses only the notice; the verb's local log already ran
-js/report.js#maskDSN: no-report: malformed user DSN, opaque marker is the recovery
 py/tackbox/cache.py#_module_digests: no-report: dir outside repo boundary - not ours to digest, skip
 py/tackbox/cache.py#erclint_import_paths: no-report: dir outside repo boundary - not ours to digest, skip
 py/tackbox/cache.py#gc_soft_cap: no-report: best-effort GC unlink; a miss is never a run failure

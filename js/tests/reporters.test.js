@@ -35,19 +35,32 @@ test('name-trust death: local reportError does not satisfy no-swallow-catch', ()
   })
 })
 
-// tier-1: named / renamed / default-member / namespace-member / CJS destructure
-// all resolve to a tackbox/report origin.
+// tier-1: named / renamed / namespace-member / CJS destructure / CJS namespace
+// all resolve to a reporter origin, for both runtime variants.
 test('tier-1 import forms are recognized', () => {
   const body = "try { f() } catch (e) { %CALL% }"
+  const forms = mod => [
+    `import { reportError } from '${mod}'\n` + body.replace('%CALL%', "reportError('connection lost mid-stream', e)"),
+    `import { reportError as re } from '${mod}'\n` + body.replace('%CALL%', "re('connection lost mid-stream', e)"),
+    `import * as report from '${mod}'\n` + body.replace('%CALL%', "report.reportError('connection lost mid-stream', e)"),
+    `const { reportError } = require('${mod}')\n` + body.replace('%CALL%', "reportError('connection lost mid-stream', e)"),
+    `const report = require('${mod}')\n` + body.replace('%CALL%', "report.reportError('connection lost mid-stream', e)"),
+  ]
   ruleTester.run('no-swallow-catch', noSwallow, {
-    valid: [
-      "import { reportError } from 'tackbox/report'\n" + body.replace('%CALL%', "reportError('connection lost mid-stream', e)"),
-      "import { reportError as re } from 'tackbox/report'\n" + body.replace('%CALL%', "re('connection lost mid-stream', e)"),
-      "import report from 'tackbox/report'\n" + body.replace('%CALL%', "report.reportError('connection lost mid-stream', e)"),
-      "import * as report from 'tackbox/report'\n" + body.replace('%CALL%', "report.reportError('connection lost mid-stream', e)"),
-      "const { reportError } = require('tackbox/report')\n" + body.replace('%CALL%', "reportError('connection lost mid-stream', e)"),
-    ],
+    valid: [...forms('tackbox/report/browser'), ...forms('tackbox/report/node')],
     invalid: [],
+  })
+})
+
+// The strict tier-1 argument contracts bind every report path, Node included.
+test('valid-error-report enforces the strict contract on both report paths', () => {
+  const call = "reportError('connection lost mid-stream', e)"
+  ruleTester.run('valid-error-report', validReport, {
+    valid: [],
+    invalid: ['tackbox/report/browser', 'tackbox/report/node'].map(mod => ({
+      code: `import { reportError } from '${mod}'\ntry { f() } catch (e) { ${call} }`,
+      errors: [{ messageId: 'dedupMissing' }],
+    })),
   })
 })
 
@@ -232,21 +245,24 @@ test('tier-2 $lib alias: aliased .svelte.ts reporter is recognized; bare/undecla
   assert.equal(badErrs.length, 2, 'bare swallow + undeclared reporter must both flag: ' + badErrs.join(', '))
 })
 
-// report.js self-lints clean when the repo-root .tackbox/reporters declares
-// reportPanic as the fatal-lane console sink (matching the real self-lint): the
-// declaration exempts that one console.error, the catches carry no-report
-// markers, and the reportError calls sit in event callbacks, not catches. This
-// is an acceptance assert, not a resolution branch.
-test('report.js self-lint is clean with reportPanic declared', async () => {
+// The report helper self-lints clean with the repo-root .tackbox/reporters
+// declarations (matching the real self-lint): reportPanic is the fatal-lane
+// console sink, and reportQuiet captures the user-lane sink failure the core's
+// catch and rejection handler hand it. This is an acceptance assert, not a
+// resolution branch.
+test('report helper self-lint is clean with its reporters declared', async () => {
   const { ESLint } = require('eslint')
   const root = path.join(__dirname, '..', '..')
   const eslint = new ESLint({
     cwd: root,
     overrideConfigFile: path.join(root, 'eslint.config.preset.js'),
-    overrideConfig: [{ settings: { tackbox: { reporters: ['js/report.js#reportPanic'] } } }],
+    overrideConfig: [{
+      settings: { tackbox: { reporters: ['js/report/core.mjs#reportPanic', 'js/report/core.mjs#reportQuiet'] } },
+    }],
   })
-  const results = await eslint.lintFiles([path.join(__dirname, '..', 'report.js')])
+  const dir = path.join(__dirname, '..', 'report')
+  const results = await eslint.lintFiles(['core.mjs', 'browser.mjs', 'node.mjs'].map(f => path.join(dir, f)))
   const errs = results.reduce((a, r) => a + r.errorCount + r.fatalErrorCount, 0)
   const msgs = results.flatMap(r => r.messages.map(m => `${m.ruleId}:${m.line} ${m.message}`))
-  assert.equal(errs, 0, 'report.js not clean with reportPanic declared:\n' + msgs.join('\n'))
+  assert.equal(errs, 0, 'report helper not clean with its reporters declared:\n' + msgs.join('\n'))
 })

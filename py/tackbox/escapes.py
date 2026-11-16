@@ -55,7 +55,7 @@ _GIT_ATTR_SOURCE_MIN = (2, 40)
 # -- verb-site detection (textual, per language; D013) --------------------
 # Public verb names confirmed from the four runtime helpers:
 #   go/report:      Quiet, Notify   -> attribute form .Quiet( / .Notify(
-#   js/report.js:   reportQuiet, notify
+#   js/report/:     reportQuiet, notify
 #   tackbox_report: report_quiet, notify
 #   Report.java:    quiet, notify   -> attribute form .quiet( / .notify(
 # Word-boundaried so notifyAll( / snotify( / x.notifying( never match. A hit

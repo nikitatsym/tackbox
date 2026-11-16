@@ -1,11 +1,11 @@
 name: publish-npm
 
 # Publishes the `tackbox` npm package (ESLint plugin + markdownlint rules +
-# browser report helper + the tackbox-eslint / tackbox-mdlint bin wrappers) to
-# the public npm registry after the matching PyPI wheel has passed its fresh
-# runner hook-protocol canary. The source release tag still supplies the
-# version, so `npm install --save-dev tackbox` and `uvx tackbox@<tag>` remain
-# lockstep consumers of one release.
+# browser and Node report helpers + the tackbox-eslint / tackbox-mdlint bin
+# wrappers) to the public npm registry after the matching PyPI wheel has
+# passed its fresh runner hook-protocol canary. The source release tag still
+# supplies the version, so `npm install --save-dev tackbox` and
+# `uvx tackbox@<tag>` remain lockstep consumers of one release.
 #
 # Auth is npm Trusted Publishing (OIDC), NOT a stored token: with a Trusted
 # Publisher configured on npmjs.com, `npm publish` exchanges this job's

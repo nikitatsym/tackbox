@@ -2,7 +2,7 @@ const path = require('path')
 const fs = require('fs')
 
 // Canonical reporter names. A call counts as a reporter only when its
-// callee resolves (scope analysis) to an import of `tackbox`/`tackbox/report`
+// callee resolves (scope analysis) to an import of a TACKBOX_MODULES entry
 // carrying one of these names (tier-1), or to a function declared in
 // `.tackbox/reporters` (tier-2). A bare identifier that merely shares the
 // name is not trusted - name-only matching is dead.
@@ -29,7 +29,7 @@ const REPORTER_FULL = new Set([
 const REPORTER_SYNTH = new Set(['reportSynth', 'reportSynthError'])
 
 // Modules whose imports are trusted as reporter origins (tier-1).
-const TACKBOX_MODULES = new Set(['tackbox', 'tackbox/report'])
+const TACKBOX_MODULES = new Set(['tackbox', 'tackbox/report/browser', 'tackbox/report/node'])
 
 const DEDUP_KEY_RE = /^[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*(:[a-zA-Z0-9_.-]+)?$/
 
@@ -106,9 +106,10 @@ function requireInfo(declarator, localName) {
 }
 
 // tier1ImportedName returns the tackbox-module imported name `call`'s callee
-// resolves to - a named import used directly, or a namespace/default member -
-// else null. Origin-gated (mirrors the Go package gate); the shared core of
-// reporter and notify recognition.
+// resolves to - a named import used directly, or a namespace member - else
+// null. The report modules are ESM with no default export, so a default-import
+// member names nothing. Origin-gated (mirrors the Go package gate); the shared
+// core of reporter and notify recognition.
 function tier1ImportedName(context, call) {
   const callee = call.callee
   if (!callee) return null
@@ -125,7 +126,7 @@ function tier1ImportedName(context, call) {
   ) {
     const info = importInfo(resolveVar(context, callee.object))
     if (!info || !TACKBOX_MODULES.has(info.source)) return null
-    if (info.kind !== 'namespace' && info.kind !== 'default') return null
+    if (info.kind !== 'namespace') return null
     return callee.property.name
   }
   return null

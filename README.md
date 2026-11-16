@@ -471,9 +471,10 @@ The unused-binding lane has no suppression mechanism; see
 Capture helpers are recognized by origin, not by name: a Go call
 counts only when its callee resolves (type info / import) to the
 `github.com/nikitatsym/tackbox/go/report` package, a JS/TS call to
-`tackbox/report`, and a Java capture when the caught reaches a
-`nl.tsym.tackbox.report.Report` call or a known logger sink (e.g.
-slf4j, `java.lang.System.Logger`) at `ERROR` / `WARNING` - tier-1.
+`tackbox/report/browser` or `tackbox/report/node`, and a Java capture
+when the caught reaches a `nl.tsym.tackbox.report.Report` call or a
+known logger sink (e.g. slf4j, `java.lang.System.Logger`) at `ERROR` /
+`WARNING` - tier-1.
 Every language also honors a function declared in a repo-root
 `.tackbox/reporters` file (`file#function: reason`) - tier-2. A
 declaration names a report sink - it is not an exclude: it disables no
@@ -1006,7 +1007,7 @@ js/
   eslint-plugin.js                     # ESLint plugin entry
   rules/                               # 14 frontend rules
   markdownlint-rules/                  # custom markdownlint rules
-  report.js                            # browser capture helper (@sentry/browser)
+  report/                              # browser + Node capture helpers (@sentry/browser, @sentry/node)
   omp/                                 # Oh My Pi extension (payload parser + hook-protocol client)
   tests/                               # RuleTester + node:test
 py/

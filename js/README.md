@@ -1,6 +1,6 @@
 # tackbox (JS / TS / Svelte)
 
-ESLint plugin + browser report helper. Implements the
+ESLint plugin + browser and Node report helpers. Implements the
 `error-reporting-and-coverage` and `error-handling-frontend` specs.
 
 ## Linting
@@ -218,9 +218,10 @@ public bin.
 ## Reporter recognition
 
 A call counts as a reporter only when its callee resolves to one of the
-reporter names imported from `tackbox` / `tackbox/report` (tier-1), or
-to a function declared in a repo-root `.tackbox/reporters` file
-(tier-2). A bare identifier that merely shares the name is not trusted.
+reporter names imported from `tackbox`, `tackbox/report/browser`, or
+`tackbox/report/node` (tier-1), or to a function declared in a repo-root
+`.tackbox/reporters` file (tier-2). A bare identifier that merely shares
+the name is not trusted.
 
 Names: `reportError`, `reportWarn`, `reportQuiet`, `reportApiError`,
 `reportLayerError` (4-arg form: msg, cause, tags, dedupKey) and `reportSynth`,
@@ -231,11 +232,13 @@ is deliberately not a reporter name: it never credits a swallow as a
 capture. `no-broad-notify` gates it, and `valid-error-report` /
 `valid-dedup-key` validate its msg and dedupKey.
 
-Tier-1 covers named, renamed, default- or namespace-member, and CJS
-`require('tackbox/report')` forms. The strict argument contracts
-(`valid-error-report`, `valid-dedup-key`) apply
-to tier-1 calls; declared sinks carry only the argument-flow contract
-(the caught error must flow into the call).
+Tier-1 covers named, renamed, and namespace-member imports and the CJS
+`require(...)` destructure and namespace forms of both report paths, in
+JS, TS, and Svelte files. The report modules have no default export, so
+a default-import member is not a reporter. The strict argument contracts
+(`valid-error-report`, `valid-dedup-key`) apply to tier-1 calls; declared
+sinks carry only the argument-flow contract (the caught error must flow
+into the call).
 
 `.tackbox/reporters` lines are `file#function: reason`. The `tackbox`
 CLI parses and validates the file. When you consume this ESLint plugin
@@ -244,21 +247,42 @@ list of `"file#function"` strings) in your own config; symbol
 validation is the CLI's responsibility and is not performed in that
 mode.
 
-## Report helper
+## Report helpers
 
-```js
-import { init, reportError, reportWarn, flush } from 'tackbox/report'
+Two runtime variants share one API and the cross-language runtime contract
+in [`../docs/report-contracts.md`](../docs/report-contracts.md): sink
+ordering, the never-suppressed user lane, the per-`dedupKey` capture rate
+window, per-name panic keys, and per-capture scope isolation.
+
+| Import path              | Runtime           | Sentry SDK (peer)          | User lane                       |
+|--------------------------|-------------------|----------------------------|---------------------------------|
+| `tackbox/report/browser` | browser, WebView  | `@sentry/browser` ^11.12.0 | `tackbox:error` event on window |
+| `tackbox/report/node`    | Node              | `@sentry/node` ^11.12.0    | `setNotifier` callback          |
+
+Both modules are ESM and ship TypeScript declarations. A CommonJS consumer
+`require()`s the same module (Node `require(esm)`, unflagged from Node
+20.19 / 22.12; bundlers resolve it themselves), so a mixed ESM/CJS app
+shares one module instance and one rate window. The SDK is an optional peer
+dependency: install the one your variant imports next to `tackbox`.
+
+```bash
+npm install tackbox @sentry/browser   # client
+npm install tackbox @sentry/node      # server
+```
+
+### Browser
+
+```ts
+import { init, reportError } from 'tackbox/report/browser'
 
 init({
   dsn: import.meta.env.VITE_SENTRY_DSN || '',
   release: import.meta.env.VITE_VERSION,
   verify: true,         // confirm connectivity at startup
-  debug: false,
 })
-// ... on shutdown:
-await flush(2000)
 
-// in app code:
+window.addEventListener('tackbox:error', e => showNotice(e.detail))
+
 try {
   await fetchSomething()
 } catch (err) {
@@ -266,10 +290,55 @@ try {
 }
 ```
 
-Empty DSN: `init` logs a WARN (suppressible via `silentMissing`)
-and stays log-only. `init({ verify: true })` sends one healthcheck
-event with `fingerprint: ["report.startup"]` and flushes; glitchtip
-groups all startups under one issue, no spam.
+The user lane is the `tackbox:error` CustomEvent, dispatched on `window` by
+every verb except `reportQuiet`. The declarations add it to
+`WindowEventMap`, so `e.detail` is typed as a `Notice`. Without a window
+(SSR, a worker) the user lane is a no-op and capture still runs.
+
+### Node
+
+```ts
+import { init, setNotifier, reportError, flush } from 'tackbox/report/node'
+
+init({ dsn: process.env.SENTRY_DSN || '', release: process.env.APP_VERSION, environment: 'prod' })
+setNotifier(notice => sessions.broadcast(notice))
+
+// ... on shutdown; capture is asynchronous:
+await flush(2000)
+```
+
+Node has no window event, so the user lane is one registered notifier,
+the shape the Go, Python, and Java helpers use; `setNotifier(null)`
+clears it, and anything else that is not a function is a `TypeError`.
+The notifier receives each `Notice` synchronously on the reporting
+caller's stack, before the capture gate; with none registered the user
+lane is a no-op. A notifier that throws, or returns a promise that
+rejects, never reaches the caller: the failure is captured on the quiet
+lane as `report notifier failed` under dedupKey `report.notifier`.
+
+### Shared behavior
+
+A `Notice` carries `{ msg, cause, tags, dedupKey, level }`; `level` is
+`error`, `warning`, `notice` (`notify`), or `fatal` (`reportPanic`). The
+app renders it and coalesces on `dedupKey`.
+
+Empty DSN: `init` logs a WARN (suppressible via `silentMissing`) and
+stays log-only. `init({ verify: true })` sends one healthcheck event with
+`fingerprint: ["report.startup"]` and flushes; glitchtip groups all
+startups under one issue, no spam. `init` turns the SDK's default
+integrations off and adds only the linked-errors integration and
+`opts.integrations`: a capture is `Error(msg)` carrying the caught error
+as its linked cause, and the SDK hooks no global handler.
+
+A user-lane sink that calls a report verb on the same stack would loop. A
+re-entrancy guard skips the nested dispatch and logs locally instead; the
+nested call still logs and captures, and sequential dispatches are
+unaffected. In the browser the platform opens this loop by itself: the
+DOM routes a throwing `tackbox:error` listener to `window.onerror`, not to
+`dispatchEvent`, so the helper cannot capture that failure, and an
+app-owned global handler turns it back into `reportError` on the same
+stack. A `window.dispatchEvent` that itself throws is captured like a
+failed Node notifier.
 
 ### Global handlers
 
@@ -287,9 +356,21 @@ window.addEventListener('unhandledrejection', e => {
 })
 ```
 
+```ts
+process.on('unhandledRejection', reason => {
+  reportError('unhandled promise rejection', reason,
+    { source: 'process.unhandledRejection' }, 'global.unhandled')
+})
+process.on('uncaughtException', async err => {
+  reportPanic('process', err)
+  await flush(2000)
+  process.exit(1)
+})
+```
+
 ## Bundled API
 
-- `init(opts)`, `flush(timeout)`, `verify(timeout)`, `isReady()`
+- `init(opts)`, `flush(timeout)`, `verify(timeout = 3000)`, `isReady()`
 - `reportError(msg, cause, tags, dedupKey)` - log + user lane + capture
 - `reportWarn(msg, cause, tags, dedupKey)` - log + user lane + capture
 - `reportQuiet(msg, cause, tags, dedupKey)` - log + warning-level capture,
@@ -299,20 +380,7 @@ window.addEventListener('unhandledrejection', e => {
   the user lost connectivity)
 - `reportSynthError(msg, tags, dedupKey)`
 - `reportPanic(name, recovered)`
+- `setNotifier(fn | null)` - `tackbox/report/node` only
 
-Sink ordering, the never-suppressed user lane, and the per-`dedupKey` capture
-rate window are the cross-language runtime contract:
-[`../docs/report-contracts.md`](../docs/report-contracts.md). JS-specific: the
-user lane is the `tackbox:error` custom event, dispatched on the window after
-each `reportError` / `reportWarn` / `notify` / `reportPanic` call (`reportQuiet`
-does not dispatch it). The event `detail` carries `{ msg, cause, tags, dedupKey,
-level }`; the listener coalesces on `dedupKey`.
-
-Platform limit: a `tackbox:error` listener that throws is not observable from
-`dispatchEvent` - the browser routes a listener failure to `window.onerror` by
-design. So the JS user lane cannot capture its own listener's failure the way
-Go, Python, and Java capture a throwing `report.notifier`. A module-level
-re-entrancy guard stops the one loop this opens (a throwing listener reaching
-`window.onerror`, which an app-owned global handler turns back into
-`reportError` -> dispatch): a dispatch already in progress on the stack skips
-the nested one and logs locally instead. Sequential dispatches are unaffected.
+Types: `InitOptions`, `Notice`, `NoticeLevel`, `Tags`, and (Node)
+`Notifier`.

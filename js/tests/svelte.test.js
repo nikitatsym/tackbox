@@ -7,7 +7,7 @@ const ruleTester = new RuleTester({
 })
 
 const svelteOpts = { languageOptions: { parser: svelteParser } }
-const IMP = "import { reportError } from 'tackbox/report'\n"
+const IMP = "import { reportError } from 'tackbox/report/browser'\n"
 
 test('no-swallow-catch (Svelte)', () => {
   ruleTester.run('no-swallow-catch', require('../rules/no-swallow-catch'), {

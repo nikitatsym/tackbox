@@ -1,1 +1,2 @@
-js/report.js#reportPanic: fatal-lane console sink of the report helper itself
+js/report/core.mjs#reportPanic: fatal-lane console sink of the report helper itself
+js/report/core.mjs#reportQuiet: quiet-lane capture of the report helper's own user-lane sink failure

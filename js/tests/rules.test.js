@@ -11,20 +11,21 @@ const tsRuleTester = new RuleTester({
   languageOptions: { parser: require('@typescript-eslint/parser'), ecmaVersion: 2022, sourceType: 'module' },
 })
 
-// Reporter calls are recognized only through a tackbox/report import (tier-1)
-// or a .tackbox/reporters declaration (tier-2); a bare name is not trusted.
-// These rule tests import the canonical reporters so the calls resolve.
+// Reporter calls are recognized only through a tackbox/report/browser or
+// tackbox/report/node import (tier-1) or a .tackbox/reporters declaration
+// (tier-2); a bare name is not trusted. These rule tests import the canonical
+// reporters so the calls resolve.
 const R =
-  "import { reportError, reportSynth, reportSynthError, reportApiError, reportWarn, reportLayerError } from 'tackbox/report'\n"
+  "import { reportError, reportSynth, reportSynthError, reportApiError, reportWarn, reportLayerError } from 'tackbox/report/browser'\n"
 
 // Namespace import: qualified `report.reportError(...)` calls must resolve to the
 // same tier-1 origin as the bare named form. Proves origin resolution on
 // member-expression callees, not only bare identifiers.
-const NS = "import * as report from 'tackbox/report'\n"
+const NS = "import * as report from 'tackbox/report/node'\n"
 
 // notify is origin-gated like a reporter but is NOT in REPORTER_NAMES; the
-// D006/D007/D008 rules resolve it through the same tackbox/report import.
-const N = "import { notify, reportError, reportWarn } from 'tackbox/report'\n"
+// D006/D007/D008 rules resolve it through the same tier-1 import.
+const N = "import { notify, reportError, reportWarn } from 'tackbox/report/browser'\n"
 
 test('no-swallow-catch', () => {
   ruleTester.run('no-swallow-catch', require('../rules/no-swallow-catch'), {
@@ -341,7 +342,7 @@ test('valid-error-report', () => {
       // namespace call: qualified callee resolves to the tier-1 origin.
       NS + 'report.reportError("connection lost mid-stream", err, null, "api.lost")',
       // CJS named destructure resolves to the tier-1 origin.
-      "const { reportError } = require('tackbox/report')\nreportError('connection lost mid-stream', err, null, 'api.lost')",
+      "const { reportError } = require('tackbox/report/node')\nreportError('connection lost mid-stream', err, null, 'api.lost')",
       // a same-named LOCAL function is not a reporter: origin gating means an
       // otherwise-invalid call (no args) earns nothing.
       'function reportError() {}\nreportError()',
@@ -374,7 +375,7 @@ test('valid-dedup-key', () => {
       // namespace call: dedupKey slot is validated on the qualified callee too.
       NS + 'report.reportError("connection lost mid-stream", err, null, "api.lost")',
       // CJS namespace resolves to the tier-1 origin.
-      "const report = require('tackbox/report')\nreport.reportError('connection lost mid-stream', err, null, 'api.lost')",
+      "const report = require('tackbox/report/node')\nreport.reportError('connection lost mid-stream', err, null, 'api.lost')",
       // a same-named LOCAL function is not a reporter: a non-literal key earns nothing.
       'function reportError(m, e, t, k) {}\nreportError("m", err, null, dynKey)',
       // D-4: the reporter-arg rules skip test files - a dynamic key is clean there.
