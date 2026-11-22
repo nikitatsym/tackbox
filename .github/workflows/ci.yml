@@ -75,9 +75,9 @@ jobs:
           set -euo pipefail
           url=$(jq -r '.platforms."windows-x86_64".opengrep.source_url' engines/manifest.json)
           sha=$(jq -r '.platforms."windows-x86_64".opengrep.archive_sha256' engines/manifest.json)
-          mkdir -p "$RUNNER_TEMP/opengrep-bin"
-          curl -fsSL "$url" -o "$RUNNER_TEMP/opengrep-bin/opengrep.exe"
-          echo "${sha}  $RUNNER_TEMP/opengrep-bin/opengrep.exe" | sha256sum -c -
+          curl -fsSL "$url" -o "$RUNNER_TEMP/opengrep.zip"
+          echo "${sha}  $RUNNER_TEMP/opengrep.zip" | sha256sum -c -
+          python -m zipfile -e "$RUNNER_TEMP/opengrep.zip" "$RUNNER_TEMP/opengrep-bin"
           echo "$RUNNER_TEMP/opengrep-bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/opengrep-bin/opengrep.exe" --version
       # dev.py runs npm ci itself; CI only provisions Node and caches npm downloads.

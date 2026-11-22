@@ -28,7 +28,7 @@ from tackbox import engines
 from tackbox.hashing import sha256_tree
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-from build_wheels import compute_payload_sha, python_rule_entries
+from build_wheels import compute_payload_sha, detect_platform_key, load_manifest, python_rule_entries
 
 REPO = Path(__file__).resolve().parents[2]
 BUILD_SCRIPT = REPO / "scripts" / "build_wheels.py"
@@ -193,13 +193,16 @@ def test_all_three_wheels_built_under_the_pypi_limit(wheels):
 
 
 def test_opengrep_lives_only_in_the_opengrep_wheel(wheels):
-    """tackbox-opengrep carries exactly the opengrep binary and its notice;
-    tackbox-engines no longer carries opengrep at all."""
+    libraries = load_manifest()["platforms"][detect_platform_key()]["opengrep"].get("archive_libraries", [])
+    library_licenses = REPO / "engines" / "licenses" / "opengrep-windows"
     with zipfile.ZipFile(wheels["opengrep"]) as zf:
         payload = {n for n in zf.namelist() if n.startswith("tackbox_opengrep/")}
     assert payload == {
         "tackbox_opengrep/__init__.py",
         f"tackbox_opengrep/bin/{engines.exe_name('opengrep')}",
+        *(f"tackbox_opengrep/bin/{name}" for name in libraries),
+        *(f"tackbox_opengrep/third_party/licenses/opengrep-windows/{text.name}"
+          for text in library_licenses.iterdir() if libraries),
         "tackbox_opengrep/third_party/licenses/opengrep.LICENSE.txt",
     }
     with zipfile.ZipFile(wheels["fat"]) as zf:
@@ -489,7 +492,7 @@ def test_hermetic_banner_carries_engines_sha_and_versions(hermetic_venv, fixture
             break
     assert banner is not None, f"no banner on stderr:\n{result.stderr}"
     assert "engines=sha256:" in banner
-    assert "opengrep=1.30.0" in banner
+    assert "opengrep=2.0.0" in banner
     assert "node=22.18.0" in banner
     assert "eslint=" in banner
     assert "markdownlint=" in banner

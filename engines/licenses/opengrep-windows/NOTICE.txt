@@ -1,0 +1,16 @@
+opengrep Windows DLL notices
+
+The Windows tackbox-opengrep wheel ships opengrep.exe with the DLLs of
+opengrep's opengrep_windows_x86.zip. opengrep's release build copies them
+unchanged from Cygwin's MinGW-w64 packages.
+
+inventory.json lists, per DLL, its sha256, the Cygwin package and version
+it comes from, its license, its license texts, and its corresponding
+source: the Cygwin source package, which holds the upstream release
+tarball, the Cygwin patches, and the build script. The license texts here
+are copies of upstream files with trailing whitespace removed;
+inventory.json names the file each one is copied from.
+
+Each DLL, like opengrep.exe, is built with MinGW-w64 and statically
+linked against parts of the MinGW-w64 runtime, whose notices are in
+mingw-w64-runtime.COPYING.txt.

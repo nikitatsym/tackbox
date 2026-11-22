@@ -134,15 +134,14 @@ def _make_executable(path: Path) -> None:
 
 
 def stage_binary(pl: Platform, entry: dict, dest: Path) -> None:
-    """Materialize one manifest binary at dest: built from its crate when the
-    entry names a `cargo_bin`, else extracted as `archive_member` from the
-    fetched archive, else the fetched file itself."""
     if "cargo_bin" in entry:
         copy_binary(cargo_build(pl, entry), dest)
         return
     archive = fetch(entry["source_url"], entry["archive_sha256"])
     if "archive_member" in entry:
         extract_member(archive, entry["archive_member"], dest)
+        for library in entry.get("archive_libraries", ()):
+            extract_member(archive, library, dest.parent / library)
     else:
         copy_binary(archive, dest)
 
@@ -252,19 +251,27 @@ def build_javalint_jar() -> Path:
     return jar
 
 
-def stage_engine_licenses(thin_root: Path, engine: str) -> list[dict]:
-    source = ENGINES_DIR / "licenses" / engine
-    destination = thin_root / "third_party" / "licenses" / engine
+def stage_licenses(root: Path, name: str) -> tuple[Path, list[dict]]:
+    source = ENGINES_DIR / "licenses" / name
+    destination = root / "third_party" / "licenses" / name
     shutil.copytree(source, destination)
-    inventory = json.loads((source / "inventory.json").read_text())
+    components = json.loads((source / "inventory.json").read_text())["components"]
+    for component in components:
+        texts = [component["license_path"], *component.get("additional_license_paths", ())]
+        if component.get("notice_path"):
+            texts.append(component["notice_path"])
+        for text in texts:
+            if not (destination / text).is_file():
+                raise SystemExit(f"missing license text for {component['id']}: {destination / text}")
+    return destination, components
+
+
+def stage_engine_licenses(thin_root: Path, engine: str) -> list[dict]:
+    destination, components = stage_licenses(thin_root, engine)
     entries = []
-    for component in inventory["components"]:
+    for component in components:
         license_file = destination / component["license_path"]
-        if not license_file.is_file():
-            raise SystemExit(f"missing license for {component['id']}: {license_file}")
         notice_path = component.get("notice_path")
-        if notice_path and not (destination / notice_path).is_file():
-            raise SystemExit(f"missing notice for {component['id']}: {notice_path}")
         entries.append({
             "id": f"{engine}-dependency/{component['id']}",
             "kind": "dependency",
@@ -411,12 +418,11 @@ def prepare_fat(
 def prepare_opengrep(pl: Platform, manifest: dict, og_root: Path) -> list[dict]:
     (og_root / "bin").mkdir(parents=True)
     (og_root / "third_party" / "licenses").mkdir(parents=True)
-    # The static core's opengrep CLI avoids the regular CLI's libc dependency.
     opengrep_bin = og_root / "bin" / pl.opengrep["bin_name"]
     stage_binary(pl, pl.opengrep, opengrep_bin)
     og_notice = manifest["licenses"]["opengrep"]
     (og_root / "third_party" / "licenses" / "opengrep.LICENSE.txt").write_text(og_notice["notice"] + "\n")
-    return [{
+    entries = [{
         "id": "opengrep",
         "kind": "binary",
         "version": pl.opengrep["version"],
@@ -427,6 +433,34 @@ def prepare_opengrep(pl: Platform, manifest: dict, og_root: Path) -> list[dict]:
         "license_path": "tackbox_opengrep/third_party/licenses/opengrep.LICENSE.txt",
         "path": f"tackbox_opengrep/bin/{pl.opengrep['bin_name']}",
     }]
+    libraries = pl.opengrep.get("archive_libraries", ())
+    if not libraries:
+        return entries
+    licenses, components = stage_licenses(og_root, "opengrep-windows")
+    prefix = f"tackbox_opengrep/{licenses.relative_to(og_root).as_posix()}"
+    by_name = {component["id"]: component for component in components}
+    for name in libraries:
+        sha256 = sha256_file(og_root / "bin" / name)
+        component = by_name.get(name)
+        if component is None or component["sha256"] != sha256:
+            raise SystemExit(
+                f"{name} (sha256 {sha256}) is not the build engines/licenses/opengrep-windows/"
+                "inventory.json records; record the build it comes from and its license there"
+            )
+        entries.append({
+            "id": f"opengrep/{name}",
+            "kind": "library",
+            "version": component["version"],
+            "source_url": pl.opengrep["source_url"],
+            "archive_sha256": pl.opengrep["archive_sha256"],
+            "sha256": sha256,
+            "path": f"tackbox_opengrep/bin/{name}",
+            "license": component["license"],
+            "license_path": f"{prefix}/{component['license_path']}",
+            "notice_path": f"{prefix}/{component['notice_path']}",
+            "source": component["source"],
+        })
+    return entries
 
 
 @dataclass(frozen=True)

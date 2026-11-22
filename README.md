@@ -195,10 +195,7 @@ fetched separately and cached per version:
 - `tackbox-engines` (fat) - the bundled Node runtime (none on Android),
   the `jscpd` binary, and the vendored third-party `node_modules`.
   Version in `engines/VERSION`; bumped only when one of these changes.
-- `tackbox-opengrep` - only the `opengrep` binary and its license
-  notice. It is its own project because one wheel carrying both
-  payloads exceeds PyPI's 100 MiB per-file limit. Version in
-  `engines/opengrep/VERSION`; bumped only when opengrep changes.
+- `tackbox-opengrep` - opengrep and its required notices.
 
 Both payload wheels are published to PyPI but are **not** pip
 dependencies of thin. The thin wheel's `engines.json` pins each one
@@ -220,8 +217,8 @@ thin client cannot force a re-download.
 
 After the first fetch tackbox runs fully offline until a payload
 version changes. Platform wheels cover Linux x86_64/arm64 (manylinux),
-macOS arm64, Windows x86_64, and Android arm64 (`android_24_arm64_v8a`,
-Termux). `engines.json` in the thin
+macOS 15 or newer on arm64, Windows x86_64, and Android arm64
+(`android_24_arm64_v8a`, Termux). `engines.json` in the thin
 wheel records the source, version, sha256, and license of every
 bundled binary and dependency; `tackbox doctor` fetches each store if
 absent and verifies it (`engines-store`, `opengrep-store`).
@@ -251,8 +248,7 @@ or are static:
   `aarch64-linux-android` with the pinned Rust and Android NDK
   (`engines/manifest.json`), reproducibly, linking only Android system
   libraries.
-- `opengrep` is the static `opengrep-core` of the same opengrep release; under
-  the name `opengrep` it runs the opengrep CLI.
+- `opengrep` is statically linked.
 - The Go engines are built for `GOOS=android`: a Linux build is killed by
   Android's seccomp filter as soon as it starts `go` or `opengrep`.
 

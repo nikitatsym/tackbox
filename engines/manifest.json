@@ -11,9 +11,9 @@
         "bin_name": "node"
       },
       "opengrep": {
-        "version": "1.30.0",
-        "source_url": "https://github.com/opengrep/opengrep/releases/download/v1.30.0/opengrep_manylinux_x86",
-        "archive_sha256": "35779bdd72e92129c8df2a77f0c55e8c08356801ea92591ef32108d6b28d564c",
+        "version": "2.0.0",
+        "source_url": "https://github.com/opengrep/opengrep/releases/download/v2.0.0/opengrep_linux_x86",
+        "archive_sha256": "37e93f4da5fd04a18c5c1febbdd12f7e98dfccd4d0c9cf2593bcb25eeb462da0",
         "bin_name": "opengrep"
       },
       "jscpd": {
@@ -34,9 +34,9 @@
         "bin_name": "node"
       },
       "opengrep": {
-        "version": "1.30.0",
-        "source_url": "https://github.com/opengrep/opengrep/releases/download/v1.30.0/opengrep_manylinux_aarch64",
-        "archive_sha256": "a5d5a4a58ba5d46ff51e921663da1c2bba38f4b03987f4aeec87f16c6ad3ecae",
+        "version": "2.0.0",
+        "source_url": "https://github.com/opengrep/opengrep/releases/download/v2.0.0/opengrep_linux_aarch64",
+        "archive_sha256": "6257b65423a744b704af2ff9beeb8f222c2f6925236af386b56b031d4c06d6d8",
         "bin_name": "opengrep"
       },
       "jscpd": {
@@ -48,7 +48,7 @@
       }
     },
     "macos-aarch64": {
-      "wheel_plat": "macosx_11_0_arm64",
+      "wheel_plat": "macosx_15_0_arm64",
       "node": {
         "version": "22.18.0",
         "source_url": "https://nodejs.org/dist/v22.18.0/node-v22.18.0-darwin-arm64.tar.xz",
@@ -57,9 +57,9 @@
         "bin_name": "node"
       },
       "opengrep": {
-        "version": "1.30.0",
-        "source_url": "https://github.com/opengrep/opengrep/releases/download/v1.30.0/opengrep_osx_arm64",
-        "archive_sha256": "0f5bc3dec09d995c61331a4017b856ede508f90d95b018d95f1dc6166be89fdd",
+        "version": "2.0.0",
+        "source_url": "https://github.com/opengrep/opengrep/releases/download/v2.0.0/opengrep_osx_arm64",
+        "archive_sha256": "b51b3d83f165a2e0934497b8f1b08abb1c3041ef20ef911c97e04cb39af1ad55",
         "bin_name": "opengrep"
       },
       "jscpd": {
@@ -80,9 +80,18 @@
         "bin_name": "node.exe"
       },
       "opengrep": {
-        "version": "1.30.0",
-        "source_url": "https://github.com/opengrep/opengrep/releases/download/v1.30.0/opengrep_windows_x86.exe",
-        "archive_sha256": "b5cf4f8fe9f44e030aab2d579d96bd395c139db1f1ba66633676ff4d5ebc7c39",
+        "version": "2.0.0",
+        "source_url": "https://github.com/opengrep/opengrep/releases/download/v2.0.0/opengrep_windows_x86.zip",
+        "archive_sha256": "899a17e2b15863367cfd15032c93cdf482fd4e7ec8719c69de46f4f38b227864",
+        "archive_member": "opengrep.exe",
+        "archive_libraries": [
+          "libgcc_s_seh-1.dll",
+          "libgmp-10.dll",
+          "libpcre2-8-0.dll",
+          "libstdc++-6.dll",
+          "libwinpthread-1.dll",
+          "libzstd-1.dll"
+        ],
         "bin_name": "opengrep.exe"
       },
       "jscpd": {
@@ -106,10 +115,9 @@
         }
       },
       "opengrep": {
-        "version": "1.30.0",
-        "source_url": "https://github.com/opengrep/opengrep/releases/download/v1.30.0/opengrep-core_linux_aarch64.tar.gz",
-        "archive_sha256": "116c1609876ab9e2a09fad8267b1bd3ee3311806506016186cd0691f23d94db5",
-        "archive_member": "opengrep-core",
+        "version": "2.0.0",
+        "source_url": "https://github.com/opengrep/opengrep/releases/download/v2.0.0/opengrep_linux_aarch64",
+        "archive_sha256": "6257b65423a744b704af2ff9beeb8f222c2f6925236af386b56b031d4c06d6d8",
         "bin_name": "opengrep"
       },
       "jscpd": {

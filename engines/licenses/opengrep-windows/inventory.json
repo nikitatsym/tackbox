@@ -1,0 +1,89 @@
+{
+  "components": [
+    {
+      "id": "libgcc_s_seh-1.dll",
+      "sha256": "645763b1b6f52c6a755444dfb781e6a606e1fda3061b2a3d9806780bb3dc54b4",
+      "package": "mingw64-x86_64-gcc-core",
+      "version": "13.4.0-1",
+      "license": "GPL-3.0-or-later WITH GCC-exception-3.1",
+      "license_path": "gcc.COPYING.RUNTIME.txt",
+      "additional_license_paths": ["gcc.COPYING3.txt"],
+      "notice_path": "mingw-w64-runtime.COPYING.txt",
+      "source": "https://cygwin.com/pub/cygwin/x86_64/release/mingw64-x86_64-gcc/mingw64-x86_64-gcc-13.4.0-1-src.tar.zst",
+      "source_sha512": "9a1a577003c7c2bce334121e4642d817fafc81f7f25474f1b4a428fb66c20f94b02d29b930ae46c57c7e9568a50cab2313d80349daf91355a0c501d9bf2610dd"
+    },
+    {
+      "id": "libgmp-10.dll",
+      "sha256": "c188e570157c109181e6788c2837fcead79747a7b10209cd82ebf5365787f508",
+      "package": "mingw64-x86_64-gmp",
+      "version": "6.3.0-1",
+      "license": "LGPL-3.0-or-later OR GPL-2.0-or-later",
+      "license_path": "gmp.COPYING.LESSERv3.txt",
+      "additional_license_paths": ["gmp.COPYINGv3.txt", "gmp.COPYINGv2.txt"],
+      "notice_path": "mingw-w64-runtime.COPYING.txt",
+      "source": "https://cygwin.com/pub/cygwin/noarch/release/mingw64-x86_64-gmp/mingw64-x86_64-gmp-6.3.0-1-src.tar.zst",
+      "source_sha512": "87c6386ecc5f2d6ab1a51d23b838171b472ec652437ab678c6b6cb1e4b705b56d4f983847b354afb41a342b0aa98a46b90dfba3db88b102c6210a5002dd2d373"
+    },
+    {
+      "id": "libpcre2-8-0.dll",
+      "sha256": "563cb7436d6eba69b18080557bacaa5f620789a3b7a528a6eb2f8fad485e3dea",
+      "package": "mingw64-x86_64-pcre2",
+      "version": "10.49-1",
+      "license": "BSD-3-Clause WITH PCRE2-exception AND BSD-2-Clause",
+      "license_path": "pcre2.LICENCE.md.txt",
+      "additional_license_paths": ["sljit.LICENSE.txt"],
+      "notice_path": "mingw-w64-runtime.COPYING.txt",
+      "source": "https://cygwin.com/pub/cygwin/src/release/mingw64-x86_64-pcre2/mingw64-x86_64-pcre2-10.49-1-src.tar.zst",
+      "source_sha512": "96ac24f59017db77f7d409962f4f26916f683c230a2ef4c35f78d653e2d781c5db11d2f6870a42ce194df1db58328ce050eba08ea78f62098259c53d754153ed"
+    },
+    {
+      "id": "libstdc++-6.dll",
+      "sha256": "6244b77e3635c735ec7d463dcd748beef08a7e6facfa6e47e5463f388fa3b178",
+      "package": "mingw64-x86_64-gcc-g++",
+      "version": "13.4.0-1",
+      "license": "GPL-3.0-or-later WITH GCC-exception-3.1",
+      "license_path": "gcc.COPYING.RUNTIME.txt",
+      "additional_license_paths": ["gcc.COPYING3.txt"],
+      "notice_path": "mingw-w64-runtime.COPYING.txt",
+      "source": "https://cygwin.com/pub/cygwin/x86_64/release/mingw64-x86_64-gcc/mingw64-x86_64-gcc-13.4.0-1-src.tar.zst",
+      "source_sha512": "9a1a577003c7c2bce334121e4642d817fafc81f7f25474f1b4a428fb66c20f94b02d29b930ae46c57c7e9568a50cab2313d80349daf91355a0c501d9bf2610dd"
+    },
+    {
+      "id": "libwinpthread-1.dll",
+      "sha256": "fe0259c7c8bf875cce79dc63f7af2c350138e77e60c51cb44d35aaee4d45e3ee",
+      "package": "mingw64-x86_64-winpthreads",
+      "version": "14.0.0-1",
+      "license": "MIT AND BSD-3-Clause",
+      "license_path": "winpthreads.COPYING.txt",
+      "additional_license_paths": [],
+      "notice_path": "mingw-w64-runtime.COPYING.txt",
+      "source": "https://cygwin.com/pub/cygwin/noarch/release/mingw64-x86_64-winpthreads/mingw64-x86_64-winpthreads-14.0.0-1-src.tar.xz",
+      "source_sha512": "e6b4fcff57ac83c37f324beb3e17b4f87a81a5293e1cdcac7fedf90c9a378a090c3813b7c10e75a0b800748f851044fc156be102f9fda24bbdcecd3588d7068c"
+    },
+    {
+      "id": "libzstd-1.dll",
+      "sha256": "bbf5c934a2a80cf28b944e2e493aef3b4886fa6f9b4b026f42531f3f53c62907",
+      "package": "mingw64-x86_64-zstd",
+      "version": "1.5.7-1",
+      "license": "BSD-3-Clause OR GPL-2.0-only",
+      "license_path": "zstd.LICENSE.txt",
+      "additional_license_paths": ["zstd.COPYING.txt"],
+      "notice_path": "mingw-w64-runtime.COPYING.txt",
+      "source": "https://cygwin.com/pub/cygwin/noarch/release/mingw64-x86_64-zstd/mingw64-x86_64-zstd-1.5.7-1-src.tar.zst",
+      "source_sha512": "f422ea8ee1f4b076c8e49e942a85cc71e7703ba67abe96d08f23bfd9a055a56e5aae15c02889e4c10dad355d094704e0e37d3ae7cdde378dbea166ba8fe223e4"
+    }
+  ],
+  "texts": {
+    "gcc.COPYING.RUNTIME.txt": "gcc-13.4.0.tar.xz: gcc-13.4.0/COPYING.RUNTIME",
+    "gcc.COPYING3.txt": "gcc-13.4.0.tar.xz: gcc-13.4.0/COPYING3",
+    "gmp.COPYING.LESSERv3.txt": "gmp-6.3.0.tar.xz: gmp-6.3.0/COPYING.LESSERv3",
+    "gmp.COPYINGv3.txt": "gmp-6.3.0.tar.xz: gmp-6.3.0/COPYINGv3",
+    "gmp.COPYINGv2.txt": "gmp-6.3.0.tar.xz: gmp-6.3.0/COPYINGv2",
+    "pcre2.LICENCE.md.txt": "pcre2-10.49.tar.bz2: pcre2-10.49/LICENCE.md",
+    "sljit.LICENSE.txt": "pcre2-10.49.tar.bz2: pcre2-10.49/deps/sljit/LICENSE",
+    "zstd.LICENSE.txt": "zstd-1.5.7.tar.zst: zstd-1.5.7/LICENSE",
+    "zstd.COPYING.txt": "zstd-1.5.7.tar.zst: zstd-1.5.7/COPYING",
+    "winpthreads.COPYING.txt": "mingw-w64-14.0.0.tar.bz2: mingw-w64/mingw-w64-libraries/winpthreads/COPYING",
+    "mingw-w64-runtime.COPYING.txt": "mingw-w64-14.0.0.tar.bz2: mingw-w64/COPYING.MinGW-w64-runtime/COPYING.MinGW-w64-runtime.txt"
+  }
+}
