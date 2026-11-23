@@ -193,16 +193,17 @@ def test_all_three_wheels_built_under_the_pypi_limit(wheels):
 
 
 def test_opengrep_lives_only_in_the_opengrep_wheel(wheels):
-    libraries = load_manifest()["platforms"][detect_platform_key()]["opengrep"].get("archive_libraries", [])
-    library_licenses = REPO / "engines" / "licenses" / "opengrep-windows"
+    opengrep = load_manifest()["platforms"][detect_platform_key()]["opengrep"]
+    libraries = opengrep.get("archive_libraries", [])
+    inventory = opengrep["license_inventory"]
     with zipfile.ZipFile(wheels["opengrep"]) as zf:
         payload = {n for n in zf.namelist() if n.startswith("tackbox_opengrep/")}
     assert payload == {
         "tackbox_opengrep/__init__.py",
         f"tackbox_opengrep/bin/{engines.exe_name('opengrep')}",
         *(f"tackbox_opengrep/bin/{name}" for name in libraries),
-        *(f"tackbox_opengrep/third_party/licenses/opengrep-windows/{text.name}"
-          for text in library_licenses.iterdir() if libraries),
+        *(f"tackbox_opengrep/third_party/licenses/{inventory}/{text.name}"
+          for text in (REPO / "engines" / "licenses" / inventory).iterdir()),
         "tackbox_opengrep/third_party/licenses/opengrep.LICENSE.txt",
     }
     with zipfile.ZipFile(wheels["fat"]) as zf:

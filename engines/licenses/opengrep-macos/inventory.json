@@ -1,0 +1,57 @@
+{
+  "binaries": {
+    "opengrep_osx_arm64": "b51b3d83f165a2e0934497b8f1b08abb1c3041ef20ef911c97e04cb39af1ad55"
+  },
+  "components": [
+    {
+      "id": "gmp",
+      "package": "gmp",
+      "archives": ["libgmp.a"],
+      "version": "6.3.0",
+      "license": "LGPL-3.0-or-later OR GPL-2.0-or-later",
+      "license_path": "gmp.COPYING.LESSERv3.txt",
+      "additional_license_paths": ["gmp.COPYINGv3.txt", "gmp.COPYINGv2.txt"],
+      "source": "https://github.com/Homebrew/homebrew-core/blob/29209e1690e20fc7ef2211d24e7d61ce27b087e3/Formula/g/gmp.rb"
+    },
+    {
+      "id": "pcre2",
+      "package": "pcre2",
+      "archives": ["libpcre2-8.a"],
+      "version": "10.49",
+      "license": "BSD-3-Clause WITH PCRE2-exception AND BSD-2-Clause",
+      "license_path": "pcre2.LICENCE.md.txt",
+      "additional_license_paths": ["sljit.LICENSE.txt"],
+      "source": "https://github.com/Homebrew/homebrew-core/blob/b32bb132ea7188645a674a2d044011373416843f/Formula/p/pcre2.rb"
+    },
+    {
+      "id": "zstd",
+      "package": "zstd",
+      "archives": ["libzstd.a"],
+      "version": "1.5.7_1",
+      "license": "(BSD-3-Clause OR GPL-2.0-only) AND BSD-2-Clause",
+      "license_path": "zstd.LICENSE.txt",
+      "additional_license_paths": ["zstd.COPYING.txt", "zstd-legacy.LICENSE.txt"],
+      "source": "https://github.com/Homebrew/homebrew-core/blob/e66142c8e25c701965a3d14e567a770d94bab268/Formula/z/zstd.rb"
+    },
+    {
+      "id": "libev",
+      "package": "libev",
+      "archives": ["libev.a"],
+      "version": "4.33",
+      "license": "BSD-2-Clause OR GPL-2.0-or-later",
+      "license_path": "libev.LICENSE.txt",
+      "source": "https://github.com/Homebrew/homebrew-core/blob/8787fb35b7f9eabddfd197d4ec5e4a83f9d936be/Formula/lib/libev.rb"
+    }
+  ],
+  "texts": {
+    "gmp.COPYING.LESSERv3.txt": "gmp-6.3.0.tar.xz: gmp-6.3.0/COPYING.LESSERv3",
+    "gmp.COPYINGv3.txt": "gmp-6.3.0.tar.xz: gmp-6.3.0/COPYINGv3",
+    "gmp.COPYINGv2.txt": "gmp-6.3.0.tar.xz: gmp-6.3.0/COPYINGv2",
+    "pcre2.LICENCE.md.txt": "pcre2-10.49.tar.bz2: pcre2-10.49/LICENCE.md",
+    "sljit.LICENSE.txt": "pcre2-10.49.tar.bz2: pcre2-10.49/deps/sljit/LICENSE",
+    "zstd.LICENSE.txt": "zstd v1.5.7 tag archive: zstd-1.5.7/LICENSE",
+    "zstd.COPYING.txt": "zstd v1.5.7 tag archive: zstd-1.5.7/COPYING",
+    "zstd-legacy.LICENSE.txt": "zstd v1.5.7 tag archive: zstd-1.5.7/lib/legacy/zstd_v07.c lines 381-414",
+    "libev.LICENSE.txt": "libev-4.33.tar.gz: libev-4.33/LICENSE"
+  }
+}

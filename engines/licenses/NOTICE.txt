@@ -4,8 +4,10 @@ The javalint/ and go/ directories contain pinned dependency inventories
 and verbatim upstream license/notice texts for the Java and Go engines.
 Their contents ship in thin wheels under tackbox/third_party/licenses;
 javalint/ also ships inside javalint.jar under META-INF/third-party.
-opengrep-windows/ holds the inventory and license texts of the DLLs
-beside opengrep.exe and ships in the Windows tackbox-opengrep wheel under
+opengrep-windows/, opengrep-linux/ and opengrep-macos/ hold the inventories
+and license texts of the libraries opengrep's binary loads or links on
+those platforms; engines/manifest.json names each platform's directory,
+which ships in that platform's tackbox-opengrep wheel under
 tackbox_opengrep/third_party/licenses.
 
 Each engine directory's NOTICE.txt identifies the applicable license terms
@@ -16,5 +18,6 @@ Dependency upgrades must update the affected inventory entries and any
 changed license or notice texts. The Java inventory also records original
 jar hashes. Maven runtime dependencies come from java/pom.xml; linked Go
 modules come from `go list -deps` for the three bundled commands. The
-Windows build of tackbox-opengrep fails while a DLL's sha256 differs from
-its opengrep-windows inventory entry.
+tackbox-opengrep build fails while a Windows DLL's sha256 differs from its
+inventory entry, or while a Linux or macOS opengrep binary is not one its
+inventory lists.

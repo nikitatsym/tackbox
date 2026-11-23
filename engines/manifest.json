@@ -14,7 +14,8 @@
         "version": "2.0.0",
         "source_url": "https://github.com/opengrep/opengrep/releases/download/v2.0.0/opengrep_linux_x86",
         "archive_sha256": "37e93f4da5fd04a18c5c1febbdd12f7e98dfccd4d0c9cf2593bcb25eeb462da0",
-        "bin_name": "opengrep"
+        "bin_name": "opengrep",
+        "license_inventory": "opengrep-linux"
       },
       "jscpd": {
         "version": "5.0.12",
@@ -37,7 +38,8 @@
         "version": "2.0.0",
         "source_url": "https://github.com/opengrep/opengrep/releases/download/v2.0.0/opengrep_linux_aarch64",
         "archive_sha256": "6257b65423a744b704af2ff9beeb8f222c2f6925236af386b56b031d4c06d6d8",
-        "bin_name": "opengrep"
+        "bin_name": "opengrep",
+        "license_inventory": "opengrep-linux"
       },
       "jscpd": {
         "version": "5.0.12",
@@ -60,7 +62,8 @@
         "version": "2.0.0",
         "source_url": "https://github.com/opengrep/opengrep/releases/download/v2.0.0/opengrep_osx_arm64",
         "archive_sha256": "b51b3d83f165a2e0934497b8f1b08abb1c3041ef20ef911c97e04cb39af1ad55",
-        "bin_name": "opengrep"
+        "bin_name": "opengrep",
+        "license_inventory": "opengrep-macos"
       },
       "jscpd": {
         "version": "5.0.12",
@@ -92,7 +95,8 @@
           "libwinpthread-1.dll",
           "libzstd-1.dll"
         ],
-        "bin_name": "opengrep.exe"
+        "bin_name": "opengrep.exe",
+        "license_inventory": "opengrep-windows"
       },
       "jscpd": {
         "version": "5.0.12",
@@ -118,7 +122,8 @@
         "version": "2.0.0",
         "source_url": "https://github.com/opengrep/opengrep/releases/download/v2.0.0/opengrep_linux_aarch64",
         "archive_sha256": "6257b65423a744b704af2ff9beeb8f222c2f6925236af386b56b031d4c06d6d8",
-        "bin_name": "opengrep"
+        "bin_name": "opengrep",
+        "license_inventory": "opengrep-linux"
       },
       "jscpd": {
         "version": "5.0.12",

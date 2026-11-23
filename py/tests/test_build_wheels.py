@@ -1,5 +1,5 @@
 """Binary staging preserves content, executable modes, and NDK symlinks; the
-Windows opengrep libraries ship with the license texts their inventory names."""
+libraries opengrep loads or links ship with the license texts their inventory names."""
 
 from __future__ import annotations
 
@@ -57,26 +57,47 @@ def test_stage_binary_puts_archive_libraries_beside_the_member(tmp_path, monkeyp
     }
 
 
+_GMP = {
+    "version": "6.3.0-1", "license": "LGPL-3.0-or-later", "license_path": "gmp.COPYING.LESSERv3.txt",
+    "additional_license_paths": ["gmp.COPYINGv3.txt"], "source": "https://example.invalid/gmp-src",
+}
+
+
+def _opengrep_platform(tmp_path, monkeypatch, key, download: Path, inventory: dict):
+    monkeypatch.setattr(build_wheels, "fetch", lambda url, sha: download)
+    pl = build_wheels.platform_for(build_wheels.load_manifest(), key)
+    licenses = tmp_path / "engines" / "licenses" / pl.opengrep["license_inventory"]
+    licenses.mkdir(parents=True)
+    texts = {"NOTICE.txt"}
+    for component in inventory["components"]:
+        texts.update((component["license_path"], *component["additional_license_paths"]))
+        texts.update(filter(None, [component.get("notice_path")]))
+    for text in texts:
+        (licenses / text).write_text(f"{text}\n")
+    (licenses / "inventory.json").write_text(json.dumps(inventory))
+    monkeypatch.setattr(build_wheels, "ENGINES_DIR", tmp_path / "engines")
+    return pl, tmp_path / "og"
+
+
 def _windows_opengrep(tmp_path, monkeypatch, dll: bytes) -> tuple[build_wheels.Platform, Path]:
     archive = tmp_path / "opengrep_windows_x86.zip"
     with zipfile.ZipFile(archive, "w") as zf:
         zf.writestr("opengrep.exe", b"exe\n")
         zf.writestr("libgmp-10.dll", dll)
-    monkeypatch.setattr(build_wheels, "fetch", lambda url, sha: archive)
-    licenses = tmp_path / "engines" / "licenses" / "opengrep-windows"
-    licenses.mkdir(parents=True)
-    for text in ("NOTICE.txt", "gmp.COPYING.LESSERv3.txt", "gmp.COPYINGv3.txt", "runtime.txt"):
-        (licenses / text).write_text(f"{text}\n")
-    (licenses / "inventory.json").write_text(json.dumps({"components": [{
-        "id": "libgmp-10.dll", "sha256": build_wheels.sha256_bytes(b"gmp\n"), "version": "6.3.0-1",
-        "license": "LGPL-3.0-or-later", "license_path": "gmp.COPYING.LESSERv3.txt",
-        "additional_license_paths": ["gmp.COPYINGv3.txt"], "notice_path": "runtime.txt",
-        "source": "https://example.invalid/gmp-src.tar.zst",
-    }]}))
-    pl = build_wheels.platform_for(build_wheels.load_manifest(), "windows-x86_64")
-    monkeypatch.setattr(build_wheels, "ENGINES_DIR", tmp_path / "engines")
+    pl, root = _opengrep_platform(tmp_path, monkeypatch, "windows-x86_64", archive, {"components": [{
+        "id": "libgmp-10.dll", "sha256": build_wheels.sha256_bytes(b"gmp\n"), "notice_path": "runtime.txt", **_GMP,
+    }]})
     opengrep = {**pl.opengrep, "archive_libraries": ["libgmp-10.dll"]}
-    return dataclasses.replace(pl, opengrep=opengrep), tmp_path / "og"
+    return dataclasses.replace(pl, opengrep=opengrep), root
+
+
+def _linux_opengrep(tmp_path, monkeypatch, binary: bytes) -> tuple[build_wheels.Platform, Path]:
+    download = tmp_path / "opengrep_linux_x86"
+    download.write_bytes(binary)
+    return _opengrep_platform(tmp_path, monkeypatch, "linux-x86_64", download, {
+        "binaries": {"opengrep_linux_x86": build_wheels.sha256_bytes(b"elf\n")},
+        "components": [{"id": "gmp", **_GMP}],
+    })
 
 
 def test_prepare_opengrep_ships_library_licenses(tmp_path, monkeypatch):
@@ -88,7 +109,7 @@ def test_prepare_opengrep_ships_library_licenses(tmp_path, monkeypatch):
         "source_url": pl.opengrep["source_url"], "archive_sha256": pl.opengrep["archive_sha256"],
         "sha256": build_wheels.sha256_bytes(b"gmp\n"), "path": "tackbox_opengrep/bin/libgmp-10.dll",
         "license": "LGPL-3.0-or-later", "license_path": f"{prefix}/gmp.COPYING.LESSERv3.txt",
-        "notice_path": f"{prefix}/runtime.txt", "source": "https://example.invalid/gmp-src.tar.zst",
+        "notice_path": f"{prefix}/runtime.txt", "source": "https://example.invalid/gmp-src",
     }
     assert sorted(p.name for p in (root / "third_party" / "licenses" / "opengrep-windows").iterdir()) == [
         "NOTICE.txt", "gmp.COPYING.LESSERv3.txt", "gmp.COPYINGv3.txt", "inventory.json", "runtime.txt",
@@ -98,6 +119,27 @@ def test_prepare_opengrep_ships_library_licenses(tmp_path, monkeypatch):
 def test_prepare_opengrep_refuses_a_library_build_without_its_inventory_entry(tmp_path, monkeypatch):
     pl, root = _windows_opengrep(tmp_path, monkeypatch, b"another gmp build\n")
     with pytest.raises(SystemExit, match="libgmp-10.dll"):
+        build_wheels.prepare_opengrep(pl, _OPENGREP_LICENSE, root)
+
+
+def test_prepare_opengrep_ships_the_licenses_of_libraries_linked_into_the_binary(tmp_path, monkeypatch):
+    pl, root = _linux_opengrep(tmp_path, monkeypatch, b"elf\n")
+    entries = build_wheels.prepare_opengrep(pl, _OPENGREP_LICENSE, root)
+    text = "tackbox_opengrep/third_party/licenses/opengrep-linux/gmp.COPYING.LESSERv3.txt"
+    assert entries[1:] == [{
+        "id": "opengrep-dependency/gmp", "kind": "dependency", "version": "6.3.0-1",
+        "sha256": build_wheels.sha256_bytes(b"gmp.COPYING.LESSERv3.txt\n"), "path": text,
+        "license": "LGPL-3.0-or-later", "license_path": text,
+        "source": "https://example.invalid/gmp-src", "notice_path": "",
+    }]
+    assert sorted(p.name for p in (root / "third_party" / "licenses" / "opengrep-linux").iterdir()) == [
+        "NOTICE.txt", "gmp.COPYING.LESSERv3.txt", "gmp.COPYINGv3.txt", "inventory.json",
+    ]
+
+
+def test_prepare_opengrep_refuses_a_binary_its_inventory_does_not_list(tmp_path, monkeypatch):
+    pl, root = _linux_opengrep(tmp_path, monkeypatch, b"another opengrep build\n")
+    with pytest.raises(SystemExit, match="opengrep-linux/inventory.json"):
         build_wheels.prepare_opengrep(pl, _OPENGREP_LICENSE, root)
 
 
