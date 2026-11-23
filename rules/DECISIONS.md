@@ -837,7 +837,8 @@ Rules affected: `@typescript-eslint/no-unused-vars` and
 
 Decision: the fixed bundle runs unused-binding checks for every consumer,
 including tests, through the existing human, machine, CodeClimate, and hook
-channels. Rule coverage is documented in the [Python and Java reference](../README.md#what-the-rules-enforce),
+channels. Rule coverage is documented in the [Python reference](../py/README.md),
+[Java reference](../java/README.md),
 [Go reference](../go/README.md#unused-declarations-erc010), and
 [JS/TS/Svelte reference](../js/README.md#rules). Python re-exports are declared
 in `__all__`; redundant import aliases and strings recognized by TBX012 do
@@ -940,7 +941,7 @@ argument type is unresolved. A dead overload can remain undiagnosed around
 such uncertain calls; fully resolved calls do not hide dead overloads. None
 of these checks proves reflective reachability.
 
-The [hook contract](../README.md#agent-hook) and [D020](#d020---hooks-enforce-session-debt-not-existing-tree-debt-2026-09-06)
+The [hook contract](../docs/agent-hook.md) and [D020](#d020---hooks-enforce-session-debt-not-existing-tree-debt-2026-09-06)
 define diff-scoped presentation. Pure deletions and whole-file writes lint
 the whole file; replacements with nonempty additions can miss newly unused
 declarations on untouched lines. Go package analysis can find an unused

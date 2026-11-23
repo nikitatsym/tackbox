@@ -17,9 +17,11 @@ uvx tackbox@latest lint .
 
 The same npm package carries tackbox's Oh My Pi extension, so
 `omp plugin install tackbox` wires the rules into an agent's edit loop
-with nothing else to configure. See
-[Agent hook](../README.md#agent-hook) for what it gates, how a decision
-reaches the agent, and the development command override.
+with nothing else to configure. See the
+[agent hook contract](../docs/agent-hook.md) for what it gates and how a
+decision reaches the agent, and
+[CONTRIBUTING.md](../CONTRIBUTING.md#oh-my-pi-against-a-working-tree) for the
+development command override.
 
 ## Direct ESLint integration
 
@@ -128,6 +130,9 @@ Full constraints per rule:
   silently drops coverage. Chained forms report once, on the inner call.
   A deeper root (`queue.skip`, `foo.test.skip`) is out of scope. Escape
   with a `// test-skip: <reason>` marker directly above the statement.
+  A skip reason is also accepted in the call itself: node:test options
+  (`{ skip: 'reason' }` / `{ todo: 'reason' }`) and Playwright's
+  `test.skip(cond, 'reason')` / `test.fixme(cond, 'reason')`.
 - `no-focused-test` - a `.only` in a chain rooted at bare `it` / `test` /
   `describe` (`it.only`, `describe.only`, `test.only.each(...)(...)`), or a
   bare `fit` / `fdescribe` / `ftest`, disables the rest of the suite. No
@@ -214,6 +219,32 @@ repo-relative:
 The tackbox CLI builds this inventory from the git listing and passes it in;
 the flags exist for that one caller and are a deliberate breaking change to the
 public bin.
+
+### Declared charset
+
+MD-CHARS is opt-in and declaration-driven. With no marker, the charset
+is not checked. One HTML comment on one of the first five lines turns it
+on and names the allowed sets:
+
+```text
+<!-- tackbox: chars=cyrillic,punct -->
+```
+
+With a marker present, every codepoint must be in the always-allowed
+ASCII base (U+0000-U+007F) or in one of the declared sets; anything else
+is a finding. The sets are named by character repertoire, not language:
+
+- `ascii` adds nothing (it declares the check with no extension);
+- `cyrillic` adds the Cyrillic block U+0400-U+04FF;
+- `punct` adds em/en dash, guillemets, ellipsis, curly and low quotes,
+  and NBSP.
+
+Sets are comma-joined and unioned; a space after a comma is fine
+(`chars=ascii, cyrillic`). The marker is not a suppression: it draws no
+approval and does not appear in the escapes inventory. An invalid marker
+(an unknown set, an empty list, a duplicate set, a duplicate marker, or a
+marker past the fifth line) is itself a finding, and the content charset
+is then not checked.
 
 ## Reporter recognition
 

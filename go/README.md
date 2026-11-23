@@ -1,7 +1,7 @@
 # erclint (Go)
 
 Error reporting coverage, test integrity, and unused binding analyzers
-for Go. Implements the rules described in the parent README and source spec.
+for Go. Implements the [cross-language rules](../docs/rules.md) and source spec.
 
 ## Usage
 
@@ -163,7 +163,7 @@ Declarations with no references are left to ERC010; dead recursive functions
 and callees reached only by dead code can get both ERC010 and ERC011.
 Remove that dead code rather than editing its parameters. ERC011 has the
 same host and build-configuration limits as [ERC010](#unused-declarations-erc010).
-Hook presentation follows the [agent hook contract](../README.md#agent-hook);
+Hook presentation follows the [agent hook contract](../docs/agent-hook.md);
 full repository gates cover findings outside the hook's target and line scope.
 
 The linked x/tools supports Go 1.27.2 export data.
