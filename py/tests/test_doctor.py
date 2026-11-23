@@ -132,7 +132,7 @@ def test_hermetic_payload_mismatch_flags_check(tmp_path, monkeypatch):
     rc = doctor.run(out)
     assert rc == 1
     text = out.getvalue()
-    assert "fail payload-checksums: mismatch=1" in text
+    assert "fail payload-checksums: sha256 mismatch tackbox/bin/erclint" in text
 
 
 def test_hermetic_missing_payload_flags_check(tmp_path, monkeypatch):
@@ -158,7 +158,7 @@ def test_hermetic_missing_payload_flags_check(tmp_path, monkeypatch):
     out = io.StringIO()
     doctor.run(out)
     text = out.getvalue()
-    assert "fail payload-checksums: missing=1" in text
+    assert "fail payload-checksums: missing tackbox_opengrep/bin/opengrep" in text
 
 
 def _commit_one_file(tmp_path: Path, name: str, content: str) -> None:

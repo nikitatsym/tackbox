@@ -127,7 +127,7 @@ def _unexpected_run(cmd):
     pytest.fail(f"unexpected command: {cmd}")
 
 
-def _set_opengrep_version(monkeypatch, version):
+def _set_opengrep_version(monkeypatch, version, returncode=0, stderr=""):
     monkeypatch.setattr(
         dev,
         "_opengrep_pin",
@@ -139,7 +139,7 @@ def _set_opengrep_version(monkeypatch, version):
 
     def fake_run(cmd, **kwargs):
         calls.append((cmd, kwargs))
-        return subprocess.CompletedProcess(cmd, 0, stdout=f"{version}\n")
+        return subprocess.CompletedProcess(cmd, returncode, stdout=f"{version}\n", stderr=stderr)
 
     if executable:
         monkeypatch.setattr(dev.subprocess, "run", fake_run)
@@ -177,6 +177,20 @@ def test_unusable_opengrep_aborts_lint(monkeypatch, version, found):
     assert output == (
         f"dev.py: opengrep version mismatch: found {found}, pinned 1.25.0; "
         "install from https://example.invalid/opengrep\n"
+    )
+
+
+def test_opengrep_that_fails_to_start_aborts_lint_with_its_stderr(monkeypatch):
+    monkeypatch.setattr(dev, "_bootstrap", lambda: 0)
+    _set_opengrep_version(monkeypatch, "", returncode=127, stderr="libpcre2-8-0.dll not found\n")
+    monkeypatch.setattr(dev, "_run", _unexpected_run)
+
+    rc, output = _capture_stdout(dev.lint)
+
+    assert rc == 2
+    assert output == (
+        "dev.py: opengrep failed to start: /opengrep --version exited 127\n"
+        "libpcre2-8-0.dll not found\n"
     )
 
 

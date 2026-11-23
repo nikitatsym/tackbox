@@ -81,7 +81,15 @@ def _check_opengrep() -> int:
             capture_output=True,
             text=True,
         )
-        found = result.stdout.strip() if result.returncode == 0 else f"exit {result.returncode}"
+        if result.returncode != 0:
+            print(
+                f"dev.py: opengrep failed to start: {executable} --version exited {result.returncode}",
+                flush=True,
+            )
+            if result.stderr.strip():
+                print(result.stderr.rstrip(), flush=True)
+            return 2
+        found = result.stdout.strip()
     if found == pinned:
         return 0
     print(

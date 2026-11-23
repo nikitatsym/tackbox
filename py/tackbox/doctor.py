@@ -313,11 +313,11 @@ def _check_payload_checksums() -> CheckResult:
     if missing or mismatches:
         parts = []
         if missing:
-            parts.append(f"missing={len(missing)}")
+            parts.append(f"missing {', '.join(missing)}")
         if mismatches:
-            parts.append(f"mismatch={len(mismatches)}")
+            parts.append(f"sha256 mismatch {', '.join(mismatches)}")
         return CheckResult(
-            "payload-checksums", False, ", ".join(parts)
+            "payload-checksums", False, "; ".join(parts)
         )
     return CheckResult(
         "payload-checksums", True, f"{len(entries)} entries verified"
