@@ -283,6 +283,20 @@ jobs:
             termux/termux-docker:aarch64@sha256:18e2c6a633642d0806afd7abaeb0e74b2b957c92f6f30021260e5ba997579f48 \
             bash -c 'bash /mnt/repo/scripts/termux_smoke.sh provision && bash /mnt/repo/scripts/termux_smoke.sh wheels /mnt/repo/dist'
 
+  # The opengrep wheels name these copies' URLs, so they must exist first.
+  third-party-sources:
+    name: Keep third-party source copies
+    needs: lock-check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Upload missing copies, verify present ones
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/third_party_sources.py
+
   publish-fat:
     name: publish tackbox_engines to PyPI
     needs: [smoke, smoke-android]
@@ -335,7 +349,7 @@ jobs:
 
   publish-opengrep:
     name: publish tackbox_opengrep to PyPI
-    needs: [smoke, smoke-android]
+    needs: [smoke, smoke-android, third-party-sources]
     runs-on: ubuntu-latest
     # Own environment for the same Trusted Publisher reason as pypi-engines.
     environment: pypi-opengrep

@@ -5,7 +5,9 @@ opengrep_windows_x86.zip. The DLLs come unchanged from Cygwin packages.
 
 inventory.json links the Cygwin source packages (upstream tarballs, patches
 and build scripts) and identifies the upstream notice files and source
-ranges. Only trailing whitespace and final newlines may differ.
+ranges. Only trailing whitespace and final newlines may differ. GMP's source
+package is also kept at
+https://github.com/nikitatsym/tackbox/releases/download/third-party-sources/mingw64-x86_64-gmp-6.3.0-1-src.tar.zst
 
 opengrep.exe and the DLLs include parts of the MinGW-w64 runtime; see
 mingw-w64-runtime.COPYING.txt.

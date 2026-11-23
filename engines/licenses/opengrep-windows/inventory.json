@@ -25,7 +25,8 @@
       "additional_license_paths": ["gmp.COPYINGv3.txt", "gmp.COPYINGv2.txt"],
       "notice_path": "mingw-w64-runtime.COPYING.txt",
       "source": "https://cygwin.com/pub/cygwin/noarch/release/mingw64-x86_64-gmp/mingw64-x86_64-gmp-6.3.0-1-src.tar.zst",
-      "source_sha512": "87c6386ecc5f2d6ab1a51d23b838171b472ec652437ab678c6b6cb1e4b705b56d4f983847b354afb41a342b0aa98a46b90dfba3db88b102c6210a5002dd2d373"
+      "source_sha512": "87c6386ecc5f2d6ab1a51d23b838171b472ec652437ab678c6b6cb1e4b705b56d4f983847b354afb41a342b0aa98a46b90dfba3db88b102c6210a5002dd2d373",
+      "source_copy": "https://github.com/nikitatsym/tackbox/releases/download/third-party-sources/mingw64-x86_64-gmp-6.3.0-1-src.tar.zst"
     },
     {
       "id": "libpcre2-8-0.dll",

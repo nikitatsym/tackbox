@@ -41,7 +41,9 @@
       "license": "LGPL-3.0-or-later OR GPL-2.0-or-later",
       "license_path": "gmp.COPYING.LESSERv3.txt",
       "additional_license_paths": ["gmp.COPYINGv3.txt", "gmp.COPYINGv2.txt"],
-      "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/187e3f7791d3390e18bc06969a5f34c385fd883e/main/gmp"
+      "source": "https://gitlab.alpinelinux.org/alpine/aports/-/tree/187e3f7791d3390e18bc06969a5f34c385fd883e/main/gmp",
+      "upstream_source": "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz",
+      "upstream_source_sha512": "e85a0dab5195889948a3462189f0e0598d331d3457612e2d3350799dba2e244316d256f8161df5219538eb003e4b5343f989aaa00f96321559063ed8c8f29fd2"
     },
     {
       "id": "pcre2",

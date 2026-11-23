@@ -194,6 +194,14 @@ def test_release_lint_requires_the_opengrep_finding_and_no_engine_error(workflow
     assert '"go-exit-in-recover"' in text and '"tackbox-engine-error"' in text
 
 
+def test_opengrep_publish_waits_for_the_third_party_source_copies(workflow):
+    jobs = workflow["jobs"]
+    sources = jobs["third-party-sources"]
+    assert sources["permissions"] == {"contents": "write"}
+    assert "scripts/third_party_sources.py" in _steps_text(sources["steps"])
+    assert "third-party-sources" in _publish_job(jobs, "opengrep")[1]["needs"]
+
+
 @pytest.mark.parametrize("packages_dir", ["fat", "opengrep"])
 def test_payload_publish_job_uses_oidc_no_tokens(workflow, packages_dir):
     job = _publish_job(workflow["jobs"], packages_dir)[1]

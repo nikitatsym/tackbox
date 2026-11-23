@@ -3,6 +3,6 @@ opengrep macOS notices
 opengrep links static libraries from Homebrew; libSystem and libc++ are
 supplied by macOS.
 
-inventory.json links the Homebrew formulas and identifies the upstream notice
-files or source ranges. The formulas name the checked tarballs and patches.
-Only trailing whitespace and final newlines may differ.
+inventory.json links Homebrew formulas and GMP's upstream tarball, and
+identifies the notice sources. The formulas name the checked tarballs and
+patches. Only trailing whitespace and final newlines may differ.

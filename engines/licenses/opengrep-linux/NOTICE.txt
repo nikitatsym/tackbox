@@ -3,6 +3,6 @@ opengrep Linux and Android notices
 Linux and Android wheels ship opengrep built with static libraries from
 Alpine Linux 3.22.
 
-inventory.json links the Alpine package recipes and identifies the upstream
-notice files or source ranges. The recipes name the checked tarballs and
+inventory.json links package recipes and GMP's upstream tarball, and
+identifies the notice sources. The recipes name the checked tarballs and
 patches. Only trailing whitespace and final newlines may differ.
