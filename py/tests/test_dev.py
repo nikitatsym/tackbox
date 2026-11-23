@@ -111,9 +111,32 @@ def test_run_pins_the_repo_root_as_cwd(monkeypatch):
         calls.append((cmd, kwargs))
         return subprocess.CompletedProcess(cmd, 0)
 
+    monkeypatch.setattr(dev, "_child_env", lambda: {"KEPT": "1"})
     monkeypatch.setattr(dev.subprocess, "run", fake_run)
     assert dev._run(["tool", "arg"]) == 0
-    assert calls == [(["tool", "arg"], {"cwd": dev._ROOT})]
+    assert calls == [(["tool", "arg"], {"cwd": dev._ROOT, "env": {"KEPT": "1"}})]
+
+
+def test_run_keeps_the_hook_repository_out_of_child_processes(tmp_path, monkeypatch):
+    # A pre-commit hook in a linked worktree inherits GIT_DIR and GIT_INDEX_FILE;
+    # a suite that builds its own repo must not reinitialize the committing one.
+    real = tmp_path / "real"
+    subprocess.run(["git", "init", "-q", str(real)], check=True)
+    config = (real / ".git" / "config").read_text()
+    monkeypatch.setenv("GIT_DIR", str(real / ".git"))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(real / ".git" / "index"))
+    suite = tmp_path / "suite"
+    suite.mkdir()
+    script = (
+        "import subprocess, sys\n"
+        "subprocess.run(['git', 'init', '-q'], cwd=sys.argv[1], check=True)\n"
+        "open(sys.argv[1] + '/f.txt', 'w').close()\n"
+        "subprocess.run(['git', 'add', 'f.txt'], cwd=sys.argv[1], check=True)\n"
+    )
+    assert dev._run([sys.executable, "-c", script, str(suite)]) == 0
+    assert (real / ".git" / "config").read_text() == config
+    assert not (real / ".git" / "index").exists()
+    assert (suite / ".git" / "index").is_file()
 
 
 def _capture_stdout(call):

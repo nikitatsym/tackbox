@@ -39,7 +39,17 @@ os.environ["PYTHONUTF8"] = "1"
 def _run(cmd: list[str]) -> int:
     # Windows CreateProcess has no PATHEXT: resolve npm/mvn to their .cmd shims.
     exe = shutil.which(cmd[0])
-    return subprocess.run([exe, *cmd[1:]] if exe else cmd, cwd=_ROOT).returncode
+    return subprocess.run([exe, *cmd[1:]] if exe else cmd, cwd=_ROOT, env=_child_env()).returncode
+
+
+def _child_env() -> dict[str, str]:
+    # A git hook exports GIT_DIR, GIT_INDEX_FILE, ... of the committing checkout;
+    # a suite's `git init` in a temp dir would rewrite that repository instead.
+    # Children rediscover their repository from their own cwd.
+    local = subprocess.run(
+        ["git", "rev-parse", "--local-env-vars"], capture_output=True, text=True, check=True
+    ).stdout.split()
+    return {name: value for name, value in os.environ.items() if name not in local}
 
 
 def _bootstrap() -> int:
