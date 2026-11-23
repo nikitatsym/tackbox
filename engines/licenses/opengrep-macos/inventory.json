@@ -30,7 +30,7 @@
       "version": "1.5.7_1",
       "license": "(BSD-3-Clause OR GPL-2.0-only) AND BSD-2-Clause",
       "license_path": "zstd.LICENSE.txt",
-      "additional_license_paths": ["zstd.COPYING.txt", "zstd-legacy.LICENSE.txt"],
+      "additional_license_paths": ["zstd.COPYING.txt", "zstd.NOTICES.txt"],
       "source": "https://github.com/Homebrew/homebrew-core/blob/e66142c8e25c701965a3d14e567a770d94bab268/Formula/z/zstd.rb"
     },
     {
@@ -51,7 +51,18 @@
     "sljit.LICENSE.txt": "pcre2-10.49.tar.bz2: pcre2-10.49/deps/sljit/LICENSE",
     "zstd.LICENSE.txt": "zstd v1.5.7 tag archive: zstd-1.5.7/LICENSE",
     "zstd.COPYING.txt": "zstd v1.5.7 tag archive: zstd-1.5.7/COPYING",
-    "zstd-legacy.LICENSE.txt": "zstd v1.5.7 tag archive: zstd-1.5.7/lib/legacy/zstd_v07.c lines 381-414",
+    "zstd.NOTICES.txt": [
+      "zstd v1.5.7 tag archive: zstd-1.5.7/lib/common/threading.h lines 1-12",
+      "zstd v1.5.7 tag archive: zstd-1.5.7/lib/common/xxhash.c lines 1-9",
+      "zstd v1.5.7 tag archive: zstd-1.5.7/lib/legacy/zstd_v05.c lines 1-9",
+      "zstd v1.5.7 tag archive: zstd-1.5.7/lib/legacy/zstd_v05.c lines 17-50",
+      "zstd v1.5.7 tag archive: zstd-1.5.7/lib/legacy/zstd_v05.c lines 208-238",
+      "zstd v1.5.7 tag archive: zstd-1.5.7/lib/legacy/zstd_v05.c lines 617-650",
+      "zstd v1.5.7 tag archive: zstd-1.5.7/lib/legacy/zstd_v05.c lines 847-880",
+      "zstd v1.5.7 tag archive: zstd-1.5.7/lib/legacy/zstd_v05.c lines 1556-1588",
+      "zstd v1.5.7 tag archive: zstd-1.5.7/lib/legacy/zstd_v05.c lines 3700-3730",
+      "zstd v1.5.7 tag archive: zstd-1.5.7/lib/legacy/zstd_v06.c lines 1153-1185"
+    ],
     "libev.LICENSE.txt": "libev-4.33.tar.gz: libev-4.33/LICENSE"
   }
 }

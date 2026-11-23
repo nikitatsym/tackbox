@@ -1,4 +1,7 @@
 {
+  "binaries": {
+    "opengrep.exe": "3c9d000363cfe48df8ea153f3023cbe05fb848cb1d31fbc2858c0eed1361ea25"
+  },
   "components": [
     {
       "id": "libgcc_s_seh-1.dll",
@@ -65,9 +68,9 @@
       "sha256": "bbf5c934a2a80cf28b944e2e493aef3b4886fa6f9b4b026f42531f3f53c62907",
       "package": "mingw64-x86_64-zstd",
       "version": "1.5.7-1",
-      "license": "BSD-3-Clause OR GPL-2.0-only",
+      "license": "(BSD-3-Clause OR GPL-2.0-only) AND MIT",
       "license_path": "zstd.LICENSE.txt",
-      "additional_license_paths": ["zstd.COPYING.txt"],
+      "additional_license_paths": ["zstd.COPYING.txt", "zstd.NOTICES.txt"],
       "notice_path": "mingw-w64-runtime.COPYING.txt",
       "source": "https://cygwin.com/pub/cygwin/noarch/release/mingw64-x86_64-zstd/mingw64-x86_64-zstd-1.5.7-1-src.tar.zst",
       "source_sha512": "f422ea8ee1f4b076c8e49e942a85cc71e7703ba67abe96d08f23bfd9a055a56e5aae15c02889e4c10dad355d094704e0e37d3ae7cdde378dbea166ba8fe223e4"
@@ -83,6 +86,11 @@
     "sljit.LICENSE.txt": "pcre2-10.49.tar.bz2: pcre2-10.49/deps/sljit/LICENSE",
     "zstd.LICENSE.txt": "zstd-1.5.7.tar.zst: zstd-1.5.7/LICENSE",
     "zstd.COPYING.txt": "zstd-1.5.7.tar.zst: zstd-1.5.7/COPYING",
+    "zstd.NOTICES.txt": [
+      "zstd-1.5.7.tar.zst: zstd-1.5.7/lib/common/threading.c lines 1-12",
+      "zstd-1.5.7.tar.zst: zstd-1.5.7/lib/common/xxhash.c lines 1-9",
+      "zstd-1.5.7.tar.zst: zstd-1.5.7/lib/dictBuilder/divsufsort.c lines 1-25"
+    ],
     "winpthreads.COPYING.txt": "mingw-w64-14.0.0.tar.bz2: mingw-w64/mingw-w64-libraries/winpthreads/COPYING",
     "mingw-w64-runtime.COPYING.txt": "mingw-w64-14.0.0.tar.bz2: mingw-w64/COPYING.MinGW-w64-runtime/COPYING.MinGW-w64-runtime.txt"
   }

@@ -269,8 +269,7 @@ def stage_licenses(root: Path, name: str) -> tuple[Path, dict]:
 def dependency_entries(
     root: Path, package: str, engine: str, destination: Path, components: list[dict]
 ) -> list[dict]:
-    """One engines.json entry per inventory component, pinned by its license
-    text: a dependency compiled into a binary has no file of its own."""
+    """Use the license text to checksum a dependency without its own payload file."""
     entries = []
     for component in components:
         license_file = destination / component["license_path"]
@@ -444,13 +443,15 @@ def prepare_opengrep(pl: Platform, manifest: dict, og_root: Path) -> list[dict]:
     inventory_name = pl.opengrep["license_inventory"]
     record = f"engines/licenses/{inventory_name}/inventory.json"
     licenses, inventory = stage_licenses(og_root, inventory_name)
+
+    def unmatched(name: str, sha256: str) -> SystemExit:
+        return SystemExit(f"{record}: no matching entry for {name} (sha256 {sha256}); update its license inventory")
+
+    asset = pl.opengrep.get("archive_member") or Path(pl.opengrep["source_url"]).name
+    if inventory["binaries"].get(asset) != entries[0]["sha256"]:
+        raise unmatched(asset, entries[0]["sha256"])
     libraries = pl.opengrep.get("archive_libraries", ())
     if not libraries:
-        if entries[0]["sha256"] not in inventory["binaries"].values():
-            raise SystemExit(
-                f"{opengrep_bin.name} (sha256 {entries[0]['sha256']}) is not a binary {record} lists; "
-                "record the libraries linked into it and their licenses there"
-            )
         return entries + dependency_entries(
             og_root, "tackbox_opengrep", "opengrep", licenses, inventory["components"]
         )
@@ -460,10 +461,7 @@ def prepare_opengrep(pl: Platform, manifest: dict, og_root: Path) -> list[dict]:
         sha256 = sha256_file(og_root / "bin" / name)
         component = by_name.get(name)
         if component is None or component["sha256"] != sha256:
-            raise SystemExit(
-                f"{name} (sha256 {sha256}) is not the build {record} records; "
-                "record the build it comes from and its license there"
-            )
+            raise unmatched(name, sha256)
         entries.append({
             "id": f"opengrep/{name}",
             "kind": "library",

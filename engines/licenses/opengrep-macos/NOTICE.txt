@@ -1,15 +1,8 @@
 opengrep macOS notices
 
-The macOS tackbox-opengrep wheel ships opengrep's opengrep_osx_arm64
-binary. opengrep's release build links it on macOS against static
-libraries from Homebrew packages; the libSystem and libc++ it loads are
-part of macOS.
+opengrep links static libraries from Homebrew; libSystem and libc++ are
+supplied by macOS.
 
-inventory.json lists the binary it covers by sha256 and, per library,
-the Homebrew package and version its static archive comes from, its
-license, its license texts, and its corresponding source: the Homebrew
-formula of that package version in homebrew-core, which names the
-upstream release tarball and its sha256 and Homebrew's patches. The
-license texts here are copies of upstream files, or of an upstream
-source file's license header, with trailing whitespace removed;
-inventory.json names the file and lines each one is copied from.
+inventory.json links the Homebrew formulas and identifies the upstream notice
+files or source ranges. The formulas name the checked tarballs and patches.
+Only trailing whitespace and final newlines may differ.

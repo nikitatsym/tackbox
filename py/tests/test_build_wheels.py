@@ -1,6 +1,3 @@
-"""Binary staging preserves content, executable modes, and NDK symlinks; the
-libraries opengrep loads or links ship with the license texts their inventory names."""
-
 from __future__ import annotations
 
 import dataclasses
@@ -79,23 +76,27 @@ def _opengrep_platform(tmp_path, monkeypatch, key, download: Path, inventory: di
     return pl, tmp_path / "og"
 
 
-def _windows_opengrep(tmp_path, monkeypatch, dll: bytes) -> tuple[build_wheels.Platform, Path]:
+def _windows_opengrep(tmp_path, monkeypatch, dll: bytes, exe: bytes = b"exe\n") -> tuple[build_wheels.Platform, Path]:
     archive = tmp_path / "opengrep_windows_x86.zip"
     with zipfile.ZipFile(archive, "w") as zf:
-        zf.writestr("opengrep.exe", b"exe\n")
+        zf.writestr("opengrep.exe", exe)
         zf.writestr("libgmp-10.dll", dll)
-    pl, root = _opengrep_platform(tmp_path, monkeypatch, "windows-x86_64", archive, {"components": [{
-        "id": "libgmp-10.dll", "sha256": build_wheels.sha256_bytes(b"gmp\n"), "notice_path": "runtime.txt", **_GMP,
-    }]})
+    pl, root = _opengrep_platform(tmp_path, monkeypatch, "windows-x86_64", archive, {
+        "binaries": {"opengrep.exe": build_wheels.sha256_bytes(b"exe\n")},
+        "components": [{
+            "id": "libgmp-10.dll", "sha256": build_wheels.sha256_bytes(b"gmp\n"), "notice_path": "runtime.txt",
+            **_GMP,
+        }],
+    })
     opengrep = {**pl.opengrep, "archive_libraries": ["libgmp-10.dll"]}
     return dataclasses.replace(pl, opengrep=opengrep), root
 
 
-def _linux_opengrep(tmp_path, monkeypatch, binary: bytes) -> tuple[build_wheels.Platform, Path]:
+def _linux_opengrep(tmp_path, monkeypatch, binary: bytes, listed_as: str = "opengrep_linux_x86"):
     download = tmp_path / "opengrep_linux_x86"
     download.write_bytes(binary)
     return _opengrep_platform(tmp_path, monkeypatch, "linux-x86_64", download, {
-        "binaries": {"opengrep_linux_x86": build_wheels.sha256_bytes(b"elf\n")},
+        "binaries": {listed_as: build_wheels.sha256_bytes(b"elf\n")},
         "components": [{"id": "gmp", **_GMP}],
     })
 
@@ -118,7 +119,13 @@ def test_prepare_opengrep_ships_library_licenses(tmp_path, monkeypatch):
 
 def test_prepare_opengrep_refuses_a_library_build_without_its_inventory_entry(tmp_path, monkeypatch):
     pl, root = _windows_opengrep(tmp_path, monkeypatch, b"another gmp build\n")
-    with pytest.raises(SystemExit, match="libgmp-10.dll"):
+    with pytest.raises(SystemExit, match="no matching entry for libgmp-10.dll"):
+        build_wheels.prepare_opengrep(pl, _OPENGREP_LICENSE, root)
+
+
+def test_prepare_opengrep_refuses_an_executable_build_the_dll_inventory_does_not_record(tmp_path, monkeypatch):
+    pl, root = _windows_opengrep(tmp_path, monkeypatch, b"gmp\n", exe=b"another exe build\n")
+    with pytest.raises(SystemExit, match="no matching entry for opengrep.exe"):
         build_wheels.prepare_opengrep(pl, _OPENGREP_LICENSE, root)
 
 
@@ -139,7 +146,13 @@ def test_prepare_opengrep_ships_the_licenses_of_libraries_linked_into_the_binary
 
 def test_prepare_opengrep_refuses_a_binary_its_inventory_does_not_list(tmp_path, monkeypatch):
     pl, root = _linux_opengrep(tmp_path, monkeypatch, b"another opengrep build\n")
-    with pytest.raises(SystemExit, match="opengrep-linux/inventory.json"):
+    with pytest.raises(SystemExit, match="opengrep-linux/inventory.json: no matching entry for opengrep_linux_x86"):
+        build_wheels.prepare_opengrep(pl, _OPENGREP_LICENSE, root)
+
+
+def test_prepare_opengrep_refuses_a_hash_listed_under_another_asset(tmp_path, monkeypatch):
+    pl, root = _linux_opengrep(tmp_path, monkeypatch, b"elf\n", listed_as="opengrep_linux_aarch64")
+    with pytest.raises(SystemExit, match="no matching entry for opengrep_linux_x86"):
         build_wheels.prepare_opengrep(pl, _OPENGREP_LICENSE, root)
 
 

@@ -1,15 +1,8 @@
 opengrep Linux and Android notices
 
-The Linux and Android tackbox-opengrep wheels ship opengrep's static
-opengrep_linux_x86 or opengrep_linux_aarch64 binary. opengrep's release
-build links it in Alpine Linux 3.22 against static libraries from Alpine
-packages.
+Linux and Android wheels ship opengrep built with static libraries from
+Alpine Linux 3.22.
 
-inventory.json lists the binaries it covers by sha256 and, per library,
-the Alpine package and version its static archive comes from, its
-license, its license texts, and its corresponding source: the aports
-directory at the commit the package was built from, whose APKBUILD names
-the upstream release tarball and its sha512 and holds Alpine's patches.
-The license texts here are copies of upstream files, or of an upstream
-source file's license header, with trailing whitespace removed;
-inventory.json names the file and lines each one is copied from.
+inventory.json links the Alpine package recipes and identifies the upstream
+notice files or source ranges. The recipes name the checked tarballs and
+patches. Only trailing whitespace and final newlines may differ.
