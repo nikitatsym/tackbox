@@ -360,11 +360,12 @@ def _check_binaries_start() -> CheckResult:
             failures.append(f"{name}({e})")
             continue
         rc = completed.returncode
+        reason = next((f": {line}" for line in proc.decode(completed.stderr).splitlines() if line.strip()), "")
         if rc < 0:
-            failures.append(f"{name}(signal={-rc})")
+            failures.append(f"{name}(signal={-rc}{reason})")
             continue
         if require_zero and rc != 0:
-            failures.append(f"{name}(exit={rc})")
+            failures.append(f"{name}(exit={rc}{reason})")
     if failures:
         return CheckResult("binaries-start", False, ", ".join(failures))
     return CheckResult("binaries-start", True, f"{len(probes)} binaries respond")

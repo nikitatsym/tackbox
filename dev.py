@@ -54,7 +54,7 @@ def _bootstrap() -> int:
     return 0
 
 
-def _opengrep_pin() -> tuple[str, str]:
+def _opengrep_pin() -> dict:
     system = sys.platform
     if system.startswith("linux"):
         system = "linux"
@@ -66,12 +66,12 @@ def _opengrep_pin() -> tuple[str, str]:
     machine = {"amd64": "x86_64", "arm64": "aarch64"}.get(machine, machine)
     key = f"{system}-{machine}"
     manifest = json.loads((_ROOT / "engines" / "manifest.json").read_text())
-    entry = manifest["platforms"][key]["opengrep"]
-    return entry["version"], entry["source_url"]
+    return manifest["platforms"][key]["opengrep"]
 
 
 def _check_opengrep() -> int:
-    pinned, source_url = _opengrep_pin()
+    pin = _opengrep_pin()
+    pinned, source_url = pin["version"], pin["source_url"]
     executable = shutil.which("opengrep")
     found = "missing"
     if executable:
@@ -82,12 +82,15 @@ def _check_opengrep() -> int:
             text=True,
         )
         if result.returncode != 0:
-            print(
-                f"dev.py: opengrep failed to start: {executable} --version exited {result.returncode}",
-                flush=True,
-            )
+            print(f"dev.py: {executable} --version exited {result.returncode}", flush=True)
             if result.stderr.strip():
                 print(result.stderr.rstrip(), flush=True)
+            libraries = pin.get("archive_libraries", [])
+            missing = [name for name in libraries if not (Path(executable).parent / name).is_file()]
+            if missing:
+                print(f"dev.py: missing beside it: {', '.join(missing)}", flush=True)
+            repair = "extract the whole pinned ZIP" if libraries else "install"
+            print(f"dev.py: {repair} from {source_url}", flush=True)
             return 2
         found = result.stdout.strip()
     if found == pinned:

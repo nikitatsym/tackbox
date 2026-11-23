@@ -127,13 +127,12 @@ def _unexpected_run(cmd):
     pytest.fail(f"unexpected command: {cmd}")
 
 
-def _set_opengrep_version(monkeypatch, version, returncode=0, stderr=""):
-    monkeypatch.setattr(
-        dev,
-        "_opengrep_pin",
-        lambda: ("1.25.0", "https://example.invalid/opengrep"),
-    )
-    executable = None if version is None else "/opengrep"
+_PIN = {"version": "1.25.0", "source_url": "https://example.invalid/opengrep"}
+
+
+def _set_opengrep_version(monkeypatch, version, returncode=0, stderr="", pin=_PIN, executable="/opengrep"):
+    monkeypatch.setattr(dev, "_opengrep_pin", lambda: pin)
+    executable = None if version is None else executable
     monkeypatch.setattr(dev.shutil, "which", lambda name: executable)
     calls = []
 
@@ -182,15 +181,36 @@ def test_unusable_opengrep_aborts_lint(monkeypatch, version, found):
 
 def test_opengrep_that_fails_to_start_aborts_lint_with_its_stderr(monkeypatch):
     monkeypatch.setattr(dev, "_bootstrap", lambda: 0)
-    _set_opengrep_version(monkeypatch, "", returncode=127, stderr="libpcre2-8-0.dll not found\n")
+    _set_opengrep_version(monkeypatch, "", returncode=2, stderr='Fatal error: exception Sys_error("cfg")\n')
     monkeypatch.setattr(dev, "_run", _unexpected_run)
 
     rc, output = _capture_stdout(dev.lint)
 
     assert rc == 2
     assert output == (
-        "dev.py: opengrep failed to start: /opengrep --version exited 127\n"
-        "libpcre2-8-0.dll not found\n"
+        "dev.py: /opengrep --version exited 2\n"
+        'Fatal error: exception Sys_error("cfg")\n'
+        "dev.py: install from https://example.invalid/opengrep\n"
+    )
+
+
+def test_windows_opengrep_without_its_dlls_names_them_and_the_zip(tmp_path, monkeypatch):
+    monkeypatch.setattr(dev, "_bootstrap", lambda: 0)
+    exe = tmp_path / "opengrep.exe"
+    (tmp_path / "libzstd-1.dll").write_bytes(b"")
+    pin = {**_PIN, "source_url": "https://example.invalid/opengrep.zip",
+           "archive_libraries": ["libgmp-10.dll", "libzstd-1.dll"]}
+    # The Windows loader reports STATUS_DLL_NOT_FOUND as the exit code, with no stderr.
+    _set_opengrep_version(monkeypatch, "", returncode=0xC0000135, pin=pin, executable=str(exe))
+    monkeypatch.setattr(dev, "_run", _unexpected_run)
+
+    rc, output = _capture_stdout(dev.lint)
+
+    assert rc == 2
+    assert output == (
+        f"dev.py: {exe} --version exited 3221225781\n"
+        "dev.py: missing beside it: libgmp-10.dll\n"
+        "dev.py: extract the whole pinned ZIP from https://example.invalid/opengrep.zip\n"
     )
 
 
@@ -214,10 +234,10 @@ def test_opengrep_pin_is_read_from_the_manifest(tmp_path, monkeypatch):
     manifest.write_text(json.dumps({"platforms": entries}))
     monkeypatch.setattr(dev, "_ROOT", tmp_path)
 
-    assert dev._opengrep_pin() == (
-        "9.8.7",
-        "https://example.invalid/9.8.7",
-    )
+    assert dev._opengrep_pin() == {
+        "version": "9.8.7",
+        "source_url": "https://example.invalid/9.8.7",
+    }
 
 
 def test_unknown_command_exits_2():
