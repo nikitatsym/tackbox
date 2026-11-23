@@ -184,6 +184,16 @@ def test_smoke_runs_hook_protocol_against_the_built_artifact(workflow):
     assert "succeeded" in text and "hook-protocol" in text
 
 
+@pytest.mark.parametrize("which", ["smoke", "canary"])
+def test_release_lint_requires_the_opengrep_finding_and_no_engine_error(workflow, verify_workflow, which):
+    """The planted ERC001 alone keeps lint at exit 1, so the exit code cannot
+    show that opengrep ran its rule."""
+    job = _find_smoke_job(workflow["jobs"]) if which == "smoke" else _canary_job(verify_workflow["jobs"])
+    text = _steps_text(job["steps"])
+    assert "--codequality ../quality.json" in text
+    assert '"go-exit-in-recover"' in text and '"tackbox-engine-error"' in text
+
+
 @pytest.mark.parametrize("packages_dir", ["fat", "opengrep"])
 def test_payload_publish_job_uses_oidc_no_tokens(workflow, packages_dir):
     job = _publish_job(workflow["jobs"], packages_dir)[1]

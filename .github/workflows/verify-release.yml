@@ -139,7 +139,7 @@ jobs:
         run: |
           set -eo pipefail
           set +e
-          uvx "${UVX_SPEC}" lint . --no-cache
+          uvx "${UVX_SPEC}" lint . --no-cache --codequality ../quality.json
           rc=$?
           set -e
           echo "lint exit=$rc"
@@ -147,6 +147,16 @@ jobs:
             echo "expected exit 1 on fixture violations, got $rc" >&2
             exit 1
           fi
+          python -c '
+          import json
+          import sys
+          report = json.load(open(sys.argv[1]))
+          errors = [issue for issue in report if issue["check_name"] == "tackbox-engine-error"]
+          if errors:
+              raise SystemExit(f"engine errors: {errors!r}")
+          if not any(issue["check_name"] == "go-exit-in-recover" for issue in report):
+              raise SystemExit("no go-exit-in-recover finding from opengrep")
+          ' ../quality.json
 
   # Termux supplies Android's libc and Python wheel tags on the arm64 runner.
   canary-android:
