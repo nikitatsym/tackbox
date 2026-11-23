@@ -315,6 +315,9 @@ def test_poms_under_pruned_dirs_are_ignored(tmp_path):
     _write(tmp_path / "node_modules" / "dep" / "pom.xml", _pom("in-nm"))
     _write(tmp_path / "build" / "pkg" / "pyproject.toml")
     (tmp_path / "build" / "pkg" / "tests").mkdir(parents=True)
+    _write(tmp_path / ".worktrees" / "branch" / "py" / "pyproject.toml")
+    (tmp_path / ".worktrees" / "branch" / "py" / "tests").mkdir(parents=True)
+    _write(tmp_path / ".worktrees" / "branch" / "java" / "pom.xml", _pom("in-worktree"))
     assert dev._maven_root_poms(tmp_path) == []
     assert dev._python_test_dirs(tmp_path) == []
 

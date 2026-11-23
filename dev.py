@@ -25,9 +25,10 @@ _bootstrapped = False
 # Dirs never walked for suites: VCS, virtualenvs, vendored deps, build output,
 # and engines/ (bundled third-party runtimes, not our tests). egg-info is pruned
 # by suffix in _discover.
-# .claude holds agent git worktrees (nested checkouts) that would otherwise be
-# discovered as bogus duplicate suites.
-_PRUNE = {".git", ".claude", ".venv", "venv", "node_modules", "build", "dist", "target", "engines", "__pycache__"}
+# .claude and .worktrees hold agent git worktrees (nested checkouts) that would
+# otherwise be discovered as bogus duplicate suites.
+_PRUNE = {".git", ".claude", ".worktrees", ".venv", "venv", "node_modules", "build", "dist", "target", "engines",
+          "__pycache__"}
 
 # The whole gate runs with UTF-8 text I/O: fixtures and engine output are
 # UTF-8 by contract, and a cp1252 console (Windows runner default) must not
