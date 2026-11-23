@@ -70,8 +70,8 @@ def _opengrep_platform(tmp_path, monkeypatch, key, download: Path, inventory: di
         texts.update((component["license_path"], *component["additional_license_paths"]))
         texts.update(filter(None, [component.get("notice_path")]))
     for text in texts:
-        (licenses / text).write_text(f"{text}\n")
-    (licenses / "inventory.json").write_text(json.dumps(inventory))
+        (licenses / text).write_bytes(f"{text}\n".encode())
+    (licenses / "inventory.json").write_bytes(json.dumps(inventory).encode())
     monkeypatch.setattr(build_wheels, "ENGINES_DIR", tmp_path / "engines")
     return pl, tmp_path / "og"
 
