@@ -11,12 +11,14 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
 
 import pytest
+from conftest import commit_all, init_repo
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -69,7 +71,7 @@ def _record_commands(monkeypatch, code=0):
     monkeypatch.setattr(dev, "_maven_runners", lambda: [])
     monkeypatch.setattr(dev, "_check_opengrep", lambda: 0)
     ran = []
-    monkeypatch.setattr(dev, "_run", lambda cmd: ran.append(cmd) or code)
+    monkeypatch.setattr(dev, "_run", lambda cmd, env=None: ran.append(cmd) or code)
     return ran
 
 
@@ -111,15 +113,12 @@ def test_run_pins_the_repo_root_as_cwd(monkeypatch):
         calls.append((cmd, kwargs))
         return subprocess.CompletedProcess(cmd, 0)
 
-    monkeypatch.setattr(dev, "_child_env", lambda: {"KEPT": "1"})
     monkeypatch.setattr(dev.subprocess, "run", fake_run)
     assert dev._run(["tool", "arg"]) == 0
-    assert calls == [(["tool", "arg"], {"cwd": dev._ROOT, "env": {"KEPT": "1"}})]
+    assert calls == [(["tool", "arg"], {"cwd": dev._ROOT, "env": None})]
 
 
-def test_run_keeps_the_hook_repository_out_of_child_processes(tmp_path, monkeypatch):
-    # A pre-commit hook in a linked worktree inherits GIT_DIR and GIT_INDEX_FILE;
-    # a suite that builds its own repo must not reinitialize the committing one.
+def test_fixture_git_leaves_the_hook_repository_untouched(tmp_path, monkeypatch):
     real = tmp_path / "real"
     subprocess.run(["git", "init", "-q", str(real)], check=True)
     config = (real / ".git" / "config").read_text()
@@ -133,10 +132,37 @@ def test_run_keeps_the_hook_repository_out_of_child_processes(tmp_path, monkeypa
         "open(sys.argv[1] + '/f.txt', 'w').close()\n"
         "subprocess.run(['git', 'add', 'f.txt'], cwd=sys.argv[1], check=True)\n"
     )
-    assert dev._run([sys.executable, "-c", script, str(suite)]) == 0
+    assert dev._run([sys.executable, "-c", script, str(suite)], dev._fixture_env()) == 0
     assert (real / ".git" / "config").read_text() == config
     assert not (real / ".git" / "index").exists()
     assert (suite / ".git" / "index").is_file()
+
+
+def test_lint_children_scan_the_hook_candidate_index(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    (repo / "py").mkdir(parents=True)
+    init_repo(repo)
+    (repo / ".gitignore").write_text("notes.md\n")
+    (repo / "a.md").write_text("# a\n")
+    commit_all(repo)
+    (repo / "notes.md").write_text("# notes\n\n[x](missing.md)\n")
+    candidate = {**os.environ, "GIT_INDEX_FILE": str(tmp_path / "candidate-index")}
+    subprocess.run(["git", "read-tree", "HEAD"], cwd=repo, env=candidate, check=True)
+    subprocess.run(["git", "add", "-f", "notes.md"], cwd=repo, env=candidate, check=True)
+    monkeypatch.setenv("GIT_DIR", str(repo / ".git"))
+    monkeypatch.setenv("GIT_INDEX_FILE", candidate["GIT_INDEX_FILE"])
+    monkeypatch.setenv("PYTHONPATH", str(ROOT / "py"))
+    monkeypatch.setenv("TACKBOX_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setattr(dev, "_ROOT", repo)
+    lint_from_py = [
+        sys.executable, "-c",
+        "import subprocess, sys\n"
+        "lint = [sys.executable, '-m', 'tackbox.cli', 'lint', '.']\n"
+        "sys.exit(subprocess.run(lint, cwd='py').returncode)\n",
+    ]
+    candidate_code = dev._run(lint_from_py, dev._checkout_env())
+    isolated_code = dev._run(lint_from_py, dev._fixture_env())
+    assert (candidate_code, isolated_code) == (1, 0)
 
 
 def _capture_stdout(call):
@@ -146,8 +172,12 @@ def _capture_stdout(call):
     return code, buf.getvalue()
 
 
-def _unexpected_run(cmd):
+def _unexpected_run(cmd, env=None):
     pytest.fail(f"unexpected command: {cmd}")
+
+
+_FIXTURE_ENV = {"FIXTURE": "1"}
+_CHECKOUT_ENV = {"CHECKOUT": "1"}
 
 
 _PIN = {"version": "1.25.0", "source_url": "https://example.invalid/opengrep"}
@@ -155,6 +185,7 @@ _PIN = {"version": "1.25.0", "source_url": "https://example.invalid/opengrep"}
 
 def _set_opengrep_version(monkeypatch, version, returncode=0, stderr="", pin=_PIN, executable="/opengrep"):
     monkeypatch.setattr(dev, "_opengrep_pin", lambda: pin)
+    monkeypatch.setattr(dev, "_fixture_env", lambda: _FIXTURE_ENV)
     executable = None if version is None else executable
     monkeypatch.setattr(dev.shutil, "which", lambda name: executable)
     calls = []
@@ -171,7 +202,8 @@ def _set_opengrep_version(monkeypatch, version, returncode=0, stderr="", pin=_PI
 def test_matching_opengrep_version_runs_lint(monkeypatch):
     monkeypatch.setattr(dev, "_bootstrap", lambda: 0)
     calls = _set_opengrep_version(monkeypatch, "1.25.0")
-    monkeypatch.setattr(dev, "_run", lambda cmd: calls.append((cmd, {})) or 0)
+    monkeypatch.setattr(dev, "_checkout_env", lambda: _CHECKOUT_ENV)
+    monkeypatch.setattr(dev, "_run", lambda cmd, env=None: calls.append((cmd, {"env": env})) or 0)
 
     assert dev.lint() == 0
     commands = [cmd for cmd, _kwargs in calls]
@@ -180,6 +212,8 @@ def test_matching_opengrep_version_runs_lint(monkeypatch):
         ["go", "build", "./go/..."],
     ]
     assert commands.count(["/opengrep", "--version"]) == 1
+    assert calls[0][1]["env"] is _FIXTURE_ENV
+    assert all(kwargs["env"] is _CHECKOUT_ENV for _cmd, kwargs in calls[1:])
 
 
 @pytest.mark.parametrize(
@@ -390,9 +424,10 @@ def test_test_runs_every_discovered_runner_even_after_a_failure(monkeypatch):
     monkeypatch.setattr(dev, "_maven_runners", lambda *a, **k: [["MV1"], ["MV2"]])
     ran = []
     monkeypatch.setattr(dev, "_bootstrap", lambda: 0)
+    monkeypatch.setattr(dev, "_fixture_env", lambda: _FIXTURE_ENV)
 
-    def fake_run(cmd):
-        ran.append(cmd)
+    def fake_run(cmd, env=None):
+        ran.append((cmd, env))
         return 1 if cmd == ["PY1"] else 0  # a mid-list failure
 
     monkeypatch.setattr(dev, "_run", fake_run)
@@ -400,8 +435,8 @@ def test_test_runs_every_discovered_runner_even_after_a_failure(monkeypatch):
     with redirect_stdout(buf):
         rc = dev.test()
     assert ran == [
-        dev._go_test_argv(), ["npm", "test"],
-        ["PY1"], ["PY2"], ["MV1"], ["MV2"],
+        (cmd, _FIXTURE_ENV)
+        for cmd in (dev._go_test_argv(), ["npm", "test"], ["PY1"], ["PY2"], ["MV1"], ["MV2"])
     ]
     assert rc != 0  # the PY1 failure surfaces
     assert "dev.py: npm test" in buf.getvalue()  # each runner announced before it runs

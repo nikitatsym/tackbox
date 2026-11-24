@@ -9,6 +9,7 @@ lock on every run.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import platform
@@ -36,20 +37,30 @@ _PRUNE = {".git", ".claude", ".worktrees", ".venv", "venv", "node_modules", "bui
 os.environ["PYTHONUTF8"] = "1"
 
 
-def _run(cmd: list[str]) -> int:
+def _run(cmd: list[str], env: dict[str, str] | None = None) -> int:
     # Windows CreateProcess has no PATHEXT: resolve npm/mvn to their .cmd shims.
     exe = shutil.which(cmd[0])
-    return subprocess.run([exe, *cmd[1:]] if exe else cmd, cwd=_ROOT, env=_child_env()).returncode
+    return subprocess.run([exe, *cmd[1:]] if exe else cmd, cwd=_ROOT, env=env).returncode
 
 
-def _child_env() -> dict[str, str]:
-    # A git hook exports GIT_DIR, GIT_INDEX_FILE, ... of the committing checkout;
-    # a suite's `git init` in a temp dir would rewrite that repository instead.
-    # Children rediscover their repository from their own cwd.
-    local = subprocess.run(
+@functools.cache
+def _repository_variables() -> frozenset[str]:
+    out = subprocess.run(
         ["git", "rev-parse", "--local-env-vars"], capture_output=True, text=True, check=True
-    ).stdout.split()
-    return {name: value for name, value in os.environ.items() if name not in local}
+    ).stdout
+    return frozenset(out.split())
+
+
+def _fixture_env() -> dict[str, str]:
+    # Fixture git must not address the checkout a hook exports (GIT_DIR, GIT_INDEX_FILE).
+    return {name: value for name, value in os.environ.items() if name not in _repository_variables()}
+
+
+def _checkout_env() -> dict[str, str] | None:
+    # A linked-worktree hook exports GIT_DIR alone, which makes `uv run --directory py` the work tree.
+    if "GIT_DIR" not in os.environ or "GIT_WORK_TREE" in os.environ:
+        return None
+    return {**os.environ, "GIT_WORK_TREE": str(_ROOT)}
 
 
 def _bootstrap() -> int:
@@ -91,6 +102,7 @@ def _check_opengrep() -> int:
             cwd=_ROOT,
             capture_output=True,
             text=True,
+            env=_fixture_env(),
         )
         if result.returncode != 0:
             print(f"dev.py: {executable} --version exited {result.returncode}", flush=True)
@@ -177,14 +189,16 @@ def lint() -> int:
         return code
     # tackbox self-lint runs in-tree (dev mode), not `uvx tackbox@latest`: a
     # commit that changes a rule must be validated by that rule from the tree.
+    # Lint keeps a hook's GIT_INDEX_FILE: it checks the commit candidate.
+    env = _checkout_env()
     return _aggregate(
         [
-            _run(["go", "build", "./go/..."]),
-            _run(["go", "vet", "./go/..."]),
-            _run(["uv", "run", "--directory", "py", "python", "-m", "tackbox.cli", "lint", "."]),
+            _run(["go", "build", "./go/..."], env),
+            _run(["go", "vet", "./go/..."], env),
+            _run(["uv", "run", "--directory", "py", "python", "-m", "tackbox.cli", "lint", "."], env),
             # Hygiene checks run under uv for pyyaml; the system python3 that runs
             # dev.py has none. hygiene.py stays out of the tackbox package.
-            _run(["uv", "run", "--with", "pyyaml", "python", str(_ROOT / "hygiene.py")]),
+            _run(["uv", "run", "--with", "pyyaml", "python", str(_ROOT / "hygiene.py")], env),
         ]
     )
 
@@ -211,7 +225,7 @@ def test() -> int:
     codes: list[int] = []
     for cmd in runners:
         print(f"dev.py: {shlex.join(cmd)}", flush=True)  # make each discovered suite visible
-        codes.append(_run(cmd))
+        codes.append(_run(cmd, _fixture_env()))
     return _aggregate(codes)
 
 
