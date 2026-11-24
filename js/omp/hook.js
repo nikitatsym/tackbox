@@ -2,7 +2,6 @@
 
 const { spawn } = require('node:child_process')
 
-const PROTOCOL = 1
 const SUBCOMMAND = 'hook-protocol'
 const TIMEOUT_MS = 20000
 const COMMAND_ENV = 'TACKBOX_OMP_COMMAND'
@@ -17,7 +16,6 @@ const DEFAULT_TIMERS = { set: setTimeout, clear: clearTimeout }
 
 function request(phase, cwd, normalized) {
   const event = {
-    protocol: PROTOCOL,
     phase,
     cwd,
     tool: normalized.tool,
@@ -143,11 +141,6 @@ function execute(argv, event, timers, spawnChild = spawn) {
 
 function asDecision(payload) {
   if (!isObject(payload)) return unverified('the hook decision was not a JSON object')
-  if (!Number.isInteger(payload.protocol) || payload.protocol !== PROTOCOL) {
-    return unverified(
-      `the hook decision speaks protocol ${JSON.stringify(payload.protocol)}; this extension speaks ${PROTOCOL}`,
-    )
-  }
   if (!WIRE_KINDS.has(payload.decision)) {
     return unverified(`unknown hook decision ${JSON.stringify(payload.decision)}`)
   }

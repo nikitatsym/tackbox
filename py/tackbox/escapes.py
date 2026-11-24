@@ -40,8 +40,6 @@ from .engines import EngineSpec, active_engines, lintable
 from .gitfiles import collect_snapshot, resolve_attributes
 from .reporters import FILENAME as REPORTERS_FILE
 
-JSON_VERSION = 2
-
 # The counts block always carries every kind (a stable schema), even absent.
 # attribute-excluded counts unique files (one file may set several attributes);
 # the others count entries.
@@ -124,7 +122,6 @@ def run(
     if baseline is not None:
         current = _keep_new(current, baseline)
     doc = {
-        "version": JSON_VERSION,
         "since": since,
         "entries": current,
         "counts": _counts(current),

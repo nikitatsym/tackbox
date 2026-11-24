@@ -431,7 +431,7 @@ lintable files (the D012 predicate) plus the root `.tackbox/reporters`;
 an excluded file's own markers are dead, so it surfaces only as its
 `attribute-excluded` entries. Verb-site detection is textual per
 language - an inventory may over-report, it is observability, not a
-lint. The schema is version 2; the counts block gains an
+lint. The counts block includes an
 `attribute-excluded` count of unique files. Total ordering over mixed
 entries is pinned: sort key `(file, kind, kind-subkey)`, subkey
 `(line, text)` for the line-bearing kinds and `(attribute,)` for

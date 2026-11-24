@@ -195,7 +195,6 @@ jobs:
           import json
           import os
           print(json.dumps({
-              "protocol": 1,
               "phase": "post",
               "cwd": os.getcwd(),
               "tool": "bash",
@@ -208,7 +207,7 @@ jobs:
           import json
           import sys
           response = json.load(sys.stdin)
-          expected = {"protocol": 1, "decision": "allow", "reason": ""}
+          expected = {"decision": "allow", "reason": ""}
           if response != expected:
               raise SystemExit(f"unexpected hook-protocol response: {response!r}")
           '
@@ -442,7 +441,7 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          payload='{"protocol":1,"phase":"post","cwd":"/tmp","tool":"bash","targets":[],"unknown":null,"targetless":"opaque","succeeded":true}'
+          payload='{"phase":"post","cwd":"/tmp","tool":"bash","targets":[],"unknown":null,"targetless":"opaque","succeeded":true}'
           for i in $(seq 1 360); do
             err_file=$(mktemp)
             rc=0
@@ -454,7 +453,7 @@ jobs:
               printf '%s\n' "$response"
               # single-line -c: a nested block would keep YAML-relative indent
               # and hand python leading spaces (IndentationError).
-              printf '%s\n' "$response" | python3 -c 'import json,sys; e={"protocol":1,"decision":"allow","reason":""}; r=json.load(sys.stdin); sys.exit(0 if r==e else f"unexpected hook-protocol response: {r!r}")'
+              printf '%s\n' "$response" | python3 -c 'import json,sys; e={"decision":"allow","reason":""}; r=json.load(sys.stdin); sys.exit(0 if r==e else f"unexpected hook-protocol response: {r!r}")'
               echo "hook-protocol green after $(((i - 1) * 10))s"
               exit 0
             fi

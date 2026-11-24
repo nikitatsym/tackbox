@@ -277,7 +277,7 @@ def _parse_argv(argv: list[str]) -> argparse.Namespace:
     )
     sub.add_parser(
         "hook-protocol",
-        help="host-neutral agent hook protocol v1: one JSON event on stdin, "
+        help="host-neutral agent hook protocol: one JSON event on stdin, "
         "one JSON decision on stdout",
     )
     return parser.parse_args(argv)
@@ -913,7 +913,7 @@ def _print_banner(tackbox_root: Path) -> None:
 # -- Agent hook -----------------------------------------------------------
 #
 # Two hosts, one core. `tackbox hook` speaks Claude Code's event JSON and its
-# exit-code contract; `tackbox hook-protocol` speaks the versioned host-neutral
+# exit-code contract; `tackbox hook-protocol` speaks the host-neutral
 # protocol in hookproto. Both normalize into one `hookproto.Event`, run the same
 # gates and lint arms, then render the closed semantic outcome for their host.
 
@@ -1238,7 +1238,6 @@ def _claude_target(
         }
         protocol_tool = hookproto.EDIT
     request = {
-        "protocol": hookproto.VERSION,
         "phase": hookproto.PRE,
         "cwd": cwd,
         "tool": protocol_tool,

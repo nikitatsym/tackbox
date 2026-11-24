@@ -48,7 +48,6 @@ def _event(
     if not targets and unknown is None and targetless is None and tool in {"bash", "eval"}:
         targetless = "opaque"
     event = {
-        "protocol": 1,
         "phase": phase,
         "cwd": str(root),
         "tool": tool,
@@ -106,9 +105,7 @@ def _manifest_edit(root: Path, added: list[str], **kw) -> dict:
 def _decision(r: subprocess.CompletedProcess) -> dict:
     assert r.returncode == 0, f"a reached decision always exits 0:\n{r.stdout}\n{r.stderr}"
     assert r.stdout.strip().count("\n") == 0, f"expected one decision object:\n{r.stdout}"
-    payload = json.loads(r.stdout)
-    assert payload["protocol"] == 1, payload
-    return payload
+    return json.loads(r.stdout)
 
 
 def _decide(event: dict) -> dict:
@@ -126,15 +123,6 @@ def _no_decision(payload: str) -> subprocess.CompletedProcess:
 
 
 # -- protocol validation: no decision, never a traceback
-
-
-def test_unsupported_version_is_no_decision(tmp_path):
-    _repo(tmp_path)
-    for unsupported in (2, True, 1.0):
-        event = _event("pre", tmp_path, "edit", [])
-        event["protocol"] = unsupported
-        r = _no_decision(json.dumps(event))
-        assert f"unsupported protocol {unsupported!r}" in r.stderr, r.stderr
 
 
 def test_unknown_phase_is_no_decision(tmp_path):
@@ -185,7 +173,7 @@ def test_cwd_outside_git_allows_silently(tmp_path):
     # tmp_path is not a git repo: the hook is a deliberate no-op everywhere it
     # is not wired in, and a no-op is still a decision.
     payload = _decide(_event("pre", tmp_path, "edit", [_edit_target(tmp_path, "a.py", ["x = 1"])]))
-    assert payload == {"protocol": 1, "decision": "allow", "reason": ""}
+    assert payload == {"decision": "allow", "reason": ""}
 
 
 def test_git_without_devpy_allows(tmp_path):
@@ -254,7 +242,7 @@ def test_pre_unknown_payload_blocks_with_its_reason(tmp_path):
     _repo(tmp_path)
     reason = "tackbox cannot classify this edit call (no known field)"
     payload = _decide(_event("pre", tmp_path, "edit", [], unknown=reason))
-    assert payload == {"protocol": 1, "decision": "block", "reason": reason}
+    assert payload == {"decision": "block", "reason": reason}
 
 
 def test_pre_excluded_target_asks(tmp_path):
@@ -285,7 +273,7 @@ def test_pre_plain_edit_is_free(tmp_path):
     payload = _decide(
         _event("pre", tmp_path, "edit", [_edit_target(tmp_path, "svc.py", ["x = 2"])])
     )
-    assert payload == {"protocol": 1, "decision": "allow", "reason": ""}
+    assert payload == {"decision": "allow", "reason": ""}
 
 
 def test_pre_multi_file_call_asks_once_for_every_reason(tmp_path):
@@ -317,14 +305,14 @@ def test_target_free_channel_ignores_approvals(tmp_path, phase, tool):
     _repo(tmp_path)
     (tmp_path / "svc.py").write_text("# no-report: shelled in at module scope\nx = 1\n")
     payload = _decide(_event(phase, tmp_path, tool, []))
-    assert payload == {"protocol": 1, "decision": "allow", "reason": ""}
+    assert payload == {"decision": "allow", "reason": ""}
 
 
 def test_post_clean_tree_allows(tmp_path):
     _repo(tmp_path)
     (tmp_path / "svc.py").write_text("x = 1\n")
     payload = _decide(_event("post", tmp_path, "bash", []))
-    assert payload == {"protocol": 1, "decision": "allow", "reason": ""}
+    assert payload == {"decision": "allow", "reason": ""}
 
 
 def test_post_finding_on_touched_lines_blocks(tmp_path):
@@ -438,7 +426,6 @@ def test_post_unknown_mutation_does_not_attribute_unrelated_debt(tmp_path):
 def test_parse_request_requires_post_success_flag():
     with pytest.raises(hookproto.HookProtocolError, match="post.succeeded"):
         hookproto.parse_request({
-            "protocol": 1,
             "phase": "post",
             "cwd": str(Path.cwd()),
             "tool": "bash",
@@ -468,7 +455,7 @@ def test_render_decision_is_one_json_line():
         "post",
     )
     assert "\n" not in line
-    assert json.loads(line) == {"protocol": 1, "decision": "block", "reason": "a\nb"}
+    assert json.loads(line) == {"decision": "block", "reason": "a\nb"}
 
 
 def test_post_scope_maps_native_paths_to_posix_rels(tmp_path):
@@ -756,7 +743,7 @@ def test_missing_expected_post_file_is_unverified_but_failed_edit_is_not(tmp_pat
         targetless="failed",
         succeeded=False,
     )
-    assert _decide(failed) == {"protocol": 1, "decision": "allow", "reason": ""}
+    assert _decide(failed) == {"decision": "allow", "reason": ""}
 def test_unsuccessful_post_scopes_explicitly_landed_targets(tmp_path):
     target = tmp_path / "src" / "app.svelte"
     target.parent.mkdir()
@@ -780,9 +767,9 @@ def test_ambiguous_known_included_target_allows_while_unknown_target_blocks(tmp_
     known = _decide(
         _event("pre", tmp_path, "edit", [_edit_target(tmp_path, "a.py", [], ambiguous=True)])
     )
-    assert known == {"protocol": 1, "decision": "allow", "reason": ""}
+    assert known == {"decision": "allow", "reason": ""}
     unknown = _decide(_event("pre", tmp_path, "edit", [], unknown="unknown target"))
-    assert unknown == {"protocol": 1, "decision": "block", "reason": "unknown target"}
+    assert unknown == {"decision": "block", "reason": "unknown target"}
 
 
 def test_excluded_target_with_unavailable_attribute_child_is_unverified(tmp_path, monkeypatch):
@@ -1085,7 +1072,7 @@ def test_post_uses_only_actual_target_repository_despite_launch_debt(tmp_path):
     decision = _decide(_event("post", launch, "edit", [
         _edit_target(target_root, "clean.py", ["x = 1"]),
     ], succeeded=False))
-    assert decision == {"protocol": 1, "decision": "allow", "reason": ""}
+    assert decision == {"decision": "allow", "reason": ""}
 
 
 def test_claude_relative_path_is_resolved_from_launch_cwd_to_target_repository(tmp_path):
@@ -1148,7 +1135,7 @@ def test_pre_plain_delete_outside_launch_repository_preserves_free_removal(tmp_p
     decision = _decide(_event("pre", tmp_path, "edit", [{
         "path": str(root / "nested/gone.py"), "op": "delete", "expectedPresent": False,
     }]))
-    assert decision == {"protocol": 1, "decision": "allow", "reason": ""}
+    assert decision == {"decision": "allow", "reason": ""}
 
 
 def test_target_in_inactive_repository_does_not_inherit_launch_gate(tmp_path):
@@ -1159,7 +1146,7 @@ def test_target_in_inactive_repository_does_not_inherit_launch_gate(tmp_path):
     decision = _decide(_event("pre", launch, "write", [
         _write_target(inactive, ".tackbox/approvals", MANIFEST_ENTRY + "\n"),
     ]))
-    assert decision == {"protocol": 1, "decision": "allow", "reason": ""}
+    assert decision == {"decision": "allow", "reason": ""}
 
 
 

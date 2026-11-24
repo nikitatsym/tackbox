@@ -1,4 +1,4 @@
-"""The versioned host-neutral hook protocol.
+"""The host-neutral hook protocol.
 
 Hosts describe mutations as absolute event paths and precise target operations. The
 policy core returns a closed semantic outcome; only this module maps it to the
@@ -11,8 +11,6 @@ import json
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-
-VERSION = 1
 
 PRE = "pre"
 POST = "post"
@@ -104,7 +102,7 @@ class WireDecision:
 
 
 class HookProtocolError(ValueError):
-    """A request this tackbox does not speak (bad version, phase, or shape)."""
+    """A hook request with an invalid phase or shape."""
 
 
 def parse_request(payload: object) -> Event:
@@ -115,11 +113,6 @@ def parse_request(payload: object) -> Event:
     """
     if not isinstance(payload, dict):
         raise HookProtocolError("hook request must be a JSON object")
-    protocol = payload.get("protocol")
-    if type(protocol) is not int or protocol != VERSION:
-        raise HookProtocolError(
-            f"unsupported protocol {protocol!r}; this tackbox speaks {VERSION}"
-        )
     phase = payload.get("phase")
     if phase not in (PRE, POST):
         raise HookProtocolError(f"phase must be {PRE!r} or {POST!r}, got {phase!r}")
@@ -222,9 +215,7 @@ def wire_decision(outcome: Outcome, phase: str) -> WireDecision:
 def render_decision(outcome: Outcome, phase: str) -> str:
     """Render the one-line JSON response for a semantic outcome."""
     decision = wire_decision(outcome, phase)
-    return json.dumps(
-        {"protocol": VERSION, "decision": decision.decision, "reason": decision.reason}
-    )
+    return json.dumps({"decision": decision.decision, "reason": decision.reason})
 
 
 def _target(raw: object) -> Target:

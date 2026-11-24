@@ -23,7 +23,7 @@ function stub(body) {
 }
 
 function answering(kind, reason = '') {
-  return stub(`process.stdin.resume(); process.stdout.write(${JSON.stringify(JSON.stringify({ protocol: 1, decision: kind, reason }))})`)
+  return stub(`process.stdin.resume(); process.stdout.write(${JSON.stringify(JSON.stringify({ decision: kind, reason }))})`)
 }
 
 function commandFor(body) {
@@ -155,14 +155,12 @@ test('a development override is argv-only and malformed JSON is unverified', () 
   assert.match(hook.resolveArgv({ TACKBOX_OMP_COMMAND: '{bad' }, manifest.version).error, /JSON array/)
 })
 
-test('response validation rejects bad version, kind, and reason', () => {
-  assert.equal(hook.asDecision({ protocol: 1, decision: 'block', reason: 'no' }).kind, hook.BLOCK)
+test('response validation rejects bad kinds and reasons', () => {
+  assert.equal(hook.asDecision({ decision: 'block', reason: 'no' }).kind, hook.BLOCK)
   for (const response of [
-    { protocol: '1', decision: 'allow', reason: '' },
-    { protocol: 2, decision: 'allow', reason: '' },
-    { protocol: 1, decision: 'maybe', reason: 'x' },
-    { protocol: 1, decision: 'block', reason: 7 },
-    { protocol: 1, decision: 'allow', reason: 'unexpected' },
+    { decision: 'maybe', reason: 'x' },
+    { decision: 'block', reason: 7 },
+    { decision: 'allow', reason: 'unexpected' },
   ]) {
     assert.equal(hook.asDecision(response).kind, hook.UNVERIFIED)
   }
@@ -170,13 +168,12 @@ test('response validation rejects bad version, kind, and reason', () => {
 
 test('the spawned client sends strict post protocol fields', async () => {
   const record = path.join(DIR, `request-${stubs}.json`)
-  const command = commandFor(`let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => { input += chunk }); process.stdin.on('end', () => { require('node:fs').writeFileSync(${JSON.stringify(record)}, input); process.stdout.write(${JSON.stringify(JSON.stringify({ protocol: 1, decision: 'allow', reason: '' }))}) })`)
+  const command = commandFor(`let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => { input += chunk }); process.stdin.on('end', () => { require('node:fs').writeFileSync(${JSON.stringify(record)}, input); process.stdout.write(${JSON.stringify(JSON.stringify({ decision: 'allow', reason: '' }))}) })`)
   const decision = await withCommand(command, () => hook.decide(protocolEvent('post'), {
     env: process.env, version: manifest.version, timers: null,
   }))
   assert.equal(decision.kind, hook.ALLOW)
   const sent = JSON.parse(readFileSync(record, 'utf8'))
-  assert.equal(sent.protocol, 1)
   assert.equal(sent.phase, 'post')
   assert.equal(sent.succeeded, true)
   assert.equal(sent.targets[0].expectedPresent, true)
@@ -227,7 +224,7 @@ test('protocol stream failures are unverified and EPIPE outranks a readable resp
   }
   const child = childWithProtocolStreams()
   const run = hook.execute(['child'], protocolEvent(), { set: setTimeout, clear: clearTimeout }, () => child)
-  child.stdout.write(JSON.stringify({ protocol: 1, decision: 'allow', reason: '' }))
+  child.stdout.write(JSON.stringify({ decision: 'allow', reason: '' }))
   child.emit('close', 0)
   const epipe = new Error('write EPIPE')
   epipe.code = 'EPIPE'
@@ -358,7 +355,7 @@ test('a failed edit result does not become a missing-target verification error',
 
 test('the post adapter uses authoritative OMP 18.0.11 details before input', async () => {
   const record = path.join(DIR, `details-${stubs}.json`)
-  const command = commandFor(`let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => { input += chunk }); process.stdin.on('end', () => { require('node:fs').writeFileSync(${JSON.stringify(record)}, input); process.stdout.write(${JSON.stringify(JSON.stringify({ protocol: 1, decision: 'allow', reason: '' }))}) })`)
+  const command = commandFor(`let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => { input += chunk }); process.stdin.on('end', () => { require('node:fs').writeFileSync(${JSON.stringify(record)}, input); process.stdout.write(${JSON.stringify(JSON.stringify({ decision: 'allow', reason: '' }))}) })`)
   const result = await toolResult(command, {
     input: { path: 'input.js', old_string: 'old', new_string: 'wrong' },
     details: detail('actual.js'),
@@ -372,7 +369,7 @@ test('the post adapter uses authoritative OMP 18.0.11 details before input', asy
 
 test('a thrown aggregate result still scopes successful per-file details', async () => {
   const record = path.join(DIR, `partial-${stubs}.json`)
-  const command = commandFor(`let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => { input += chunk }); process.stdin.on('end', () => { require('node:fs').writeFileSync(${JSON.stringify(record)}, input); process.stdout.write(${JSON.stringify(JSON.stringify({ protocol: 1, decision: 'allow', reason: '' }))}) })`)
+  const command = commandFor(`let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => { input += chunk }); process.stdin.on('end', () => { require('node:fs').writeFileSync(${JSON.stringify(record)}, input); process.stdout.write(${JSON.stringify(JSON.stringify({ decision: 'allow', reason: '' }))}) })`)
   const result = await toolResult(command, {
     isError: true,
     details: {
@@ -394,7 +391,7 @@ test('a thrown aggregate result still scopes successful per-file details', async
 })
 test('pathless noop details reach the target-free post channel', async () => {
   const record = path.join(DIR, `noop-${stubs}.json`)
-  const command = commandFor(`let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => { input += chunk }); process.stdin.on('end', () => { require('node:fs').writeFileSync(${JSON.stringify(record)}, input); process.stdout.write(${JSON.stringify(JSON.stringify({ protocol: 1, decision: 'allow', reason: '' }))}) })`)
+  const command = commandFor(`let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => { input += chunk }); process.stdin.on('end', () => { require('node:fs').writeFileSync(${JSON.stringify(record)}, input); process.stdout.write(${JSON.stringify(JSON.stringify({ decision: 'allow', reason: '' }))}) })`)
   const result = await toolResult(command, {
     input: { input: '[input.js#ABCD]\nPUT 1.=1:\n+new\n' },
     details: { op: 'update', diff: '', snapshotsPruned: false },

@@ -130,20 +130,19 @@ decision on stdout. A pre request for an edit that adds an approval line, and
 its response:
 
 ```json
-{"protocol": 1, "phase": "pre", "cwd": "/repo", "tool": "edit",
+{"phase": "pre", "cwd": "/repo", "tool": "edit",
  "targets": [{"path": "/repo/.tackbox/approvals", "op": "edit",
               "expectedPresent": true,
               "added": ["app/svc.py#run: no-report: the caller retries the whole batch"]}]}
 ```
 
 ```json
-{"protocol": 1, "decision": "ask", "reason": "approve suppression marker: app/svc.py#run: no-report: the caller retries the whole batch"}
+{"decision": "ask", "reason": "approve suppression marker: app/svc.py#run: no-report: the caller retries the whole batch"}
 ```
 
 Request fields; a request that breaks any of these rules gets exit `1` and no
 decision:
 
-- `protocol` is `1`.
 - `phase` is `pre` (before the tool runs, still refusable) or `post` (after it
   ran). A post request requires the boolean `succeeded`, so a failed tool is
   not misreported as a missing landed file; a pre request must not carry it.
@@ -170,7 +169,7 @@ decision:
 - `unknown` is a non-empty reason for a mutation whose files the host cannot
   name. It excludes targets and `targetless`, and it blocks pre and warns post.
 
-The response is `{"protocol": 1, "decision": ..., "reason": ...}`, with an
+The response is `{"decision": ..., "reason": ...}`, with an
 empty reason for `allow`. The decisions map the semantic outcomes: inactive and
 allow give `allow`; approval-required gives `ask` pre and `block` post; a
 violation gives `block`; unverified gives `block` pre and `warn` post. Hosts

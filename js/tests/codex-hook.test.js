@@ -40,7 +40,6 @@ test('Codex apply_patch becomes a strict protocol request', () => {
   const result = requestFromEvent(event('PreToolUse', PATCH))
   assert.equal(result.failure, undefined)
   assert.deepEqual(result.request, {
-    protocol: 1,
     phase: 'pre',
     cwd: CWD,
     tool: 'apply_patch',
@@ -184,7 +183,7 @@ test('the executable maps unexpected synchronous and asynchronous failures to ex
 })
 
 test('the executable completes an allowed Codex hook', () => {
-  const allow = "process.stdout.write(JSON.stringify({protocol:1,decision:'allow',reason:''}))"
+  const allow = "process.stdout.write(JSON.stringify({decision:'allow',reason:''}))"
   const input = event('PreToolUse', PATCH)
   input.cwd = process.cwd()
   const result = spawnSync(process.execPath, [BIN], {

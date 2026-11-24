@@ -110,7 +110,6 @@ def test_full_inventory_every_kind(tmp_path):
     repo = _full_repo(tmp_path)
     doc = _doc(_run(repo))
 
-    assert doc["version"] == 2
     assert doc["since"] is None
     assert doc["counts"] == {
         "marker": 5,
@@ -309,7 +308,7 @@ def test_verb_word_boundaries(tmp_path):
     assert doc["counts"]["quiet-site"] == 0
 
 
-# -- attribute-excluded entries (schema v2)
+# -- attribute-excluded entries
 
 
 def _attr_entries(doc: dict) -> set[tuple[str, str]]:
@@ -333,7 +332,6 @@ def test_attribute_excluded_entries_shape_and_counts(tmp_path):
     )
     init_repo(tmp_path, commit=True)
     doc = _doc(_run(tmp_path))
-    assert doc["version"] == 2
     assert _attr_entries(doc) == {
         ("gen/api.pb.go", "linguist-generated"),
         ("both.go", "gitlab-generated"),

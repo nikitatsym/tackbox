@@ -18,7 +18,6 @@ It lists:
 
 ```json
 {
-  "version": 2,
   "since": null,
   "entries": [
     {"kind": "attribute-excluded", "file": "gen/api.pb.go",
@@ -41,9 +40,9 @@ It lists:
 }
 ```
 
-- `version` is the schema version (`2`); `counts` always carries all five
-  kinds, even at zero, so consumers see a stable shape. Every count is an
-  entry count except `attribute-excluded`, which counts unique files.
+- `counts` always carries all five kinds, even at zero, so consumers see a
+  stable shape. Every count is an entry count except `attribute-excluded`,
+  which counts unique files.
 - `since` echoes the `--since` rev, or `null`.
 - `attribute-excluded` entries carry only `kind` / `file` / `attribute` (no
   line or text): the whole file is the bypass, one entry per set attribute
