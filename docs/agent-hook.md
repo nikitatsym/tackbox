@@ -23,12 +23,12 @@ import to silence the finding.
   error carrying the findings. The mutation has already landed; this is
   not a block or rollback. Debt includes a new uncovered marker, a new
   orphaned approval, and an approval whose marker was deleted.
-  A verified violation is always a tool error. A post event
-  that cannot be verified reports three facts: the mutation may already have
-  landed, why verification did not complete, and that the mutation must not be
-  repeated before `dev.py check`. OMP appends that warning to the model-facing
-  tool result without changing a successful tool state. Claude Code writes it
-  to user-visible PostToolUse stderr with exit 1, so it is not model-visible.
+  A post event that cannot be verified reports three facts: the mutation may
+  already have landed, why verification did not complete, and that the
+  mutation must not be repeated before `dev.py check`. OMP appends that
+  warning to the model-facing tool result without changing a successful tool
+  state. Claude Code writes it to user-visible PostToolUse stderr with exit 1,
+  so it is not model-visible.
 - **Pre-edit** asks for approval before a new `.tackbox/approvals` line or a
   new `.tackbox/reporters` line lands, before a positive exclusion line is
   added to any `.gitattributes`, before editing an attribute-excluded file, and
@@ -69,9 +69,8 @@ the session starts outside Git.
   PostToolUse finding on edited lines, a non-compiling Go package, or
   session approvals debt in a touched file.
 - **hook-protocol** - `0` whenever a decision was written, whatever the
-  decision says (it rides the JSON on stdout, never the exit code); `1`
-  plus one stderr line and no decision for unreadable stdin or a request the
-  wire below rejects.
+  decision says (it rides the JSON on stdout, never the exit code); `1` and
+  no decision for unreadable stdin or a request the wire below rejects.
 
 ## Codex
 
@@ -96,16 +95,16 @@ adapter once, globally, in `~/.codex/hooks.json`:
 }
 ```
 
-The adapter converts Codex's patch payload to `tackbox hook-protocol` and pins
-the Python wheel to the resolved npm package version.
+The adapter converts Codex's patch payload to `tackbox hook-protocol`, run
+through the pinned wheel ([README](../README.md#agent-hook)).
 Before a patch, any non-allow decision blocks. After a patch, verified findings
 replace the tool result; an unverified decision adds model-visible context that
 the mutation may already have landed and must not be repeated.
 
 ## Oh My Pi
 
-The extension runs `uvx tackbox@<npm package version> hook-protocol` for each
-edit.
+The extension runs `tackbox hook-protocol` for each edit, through the pinned
+wheel ([README](../README.md#agent-hook)).
 
 - A pre-edit ask becomes a confirmation dialog. In a headless or subagent
   session, where nobody can answer, it blocks with the reason instead of
@@ -114,7 +113,7 @@ edit.
   keeps the agent in-loop on them.
 - An unverified pre event blocks, including a check that does not answer
   within 20 seconds. An unverified post event keeps the tool's own result and
-  adds the three-fact warning.
+  adds the warning described under Post-edit.
 - An opaque write channel (`xd://` tool devices, archive members, SQLite rows),
   every `bash` call, and every `eval` call name no file, so they run
   neither approvals checks nor targeted lint.
@@ -141,8 +140,8 @@ its response:
 {"protocol": 1, "decision": "ask", "reason": "approve suppression marker: app/svc.py#run: no-report: the caller retries the whole batch"}
 ```
 
-Request fields, all checked; a request that breaks any rule gets exit `1` and
-no decision:
+Request fields; a request that breaks any of these rules gets exit `1` and no
+decision:
 
 - `protocol` is `1`.
 - `phase` is `pre` (before the tool runs, still refusable) or `post` (after it
@@ -159,9 +158,10 @@ no decision:
     `expectedPresent: false` and the destination with `true`; only move
     targets carry `moveId`;
   - `content` (the full new text) or `added` / `removed` (lists of text
-    fragments), never both; `ambiguous: true` instead marks a known target that
-    needs whole-file treatment. Every target except a delete or a move carries
-    one of them, and a delete carries no `content` or `added`;
+    fragments), never both. `ambiguous: true` marks a known target that needs
+    whole-file treatment; it may come with fragments, never with `content`.
+    Every target except a delete or a move carries `content`, fragments, or
+    `ambiguous: true`, and a delete carries no `content` or `added`;
   - a `write` request carries only `write` targets.
 - A request with no targets and no `unknown` runs no checks and is allowed.
   `targetless` says why: `opaque` (a channel that names no file; required

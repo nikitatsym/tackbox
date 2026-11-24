@@ -31,8 +31,7 @@ exclude = ["tests*"]
 ]
 
 # Dev/test toolchain (what dev.py passes via `uv run --group dev`). flake8 hosts
-# the pyrules TBX plugin declared above; pyyaml backs the workflow/hygiene tests;
-# markdown-it-py renders the PyPI description for its link test.
+# the pyrules TBX plugin declared above; pyyaml backs the workflow/hygiene tests.
 [dependency-groups]
 dev = ["pytest>=8", "pyyaml>=6", "flake8", "markdown-it-py>=4.3"]
 

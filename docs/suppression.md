@@ -8,10 +8,8 @@ this file holds the details.
 A marker is `<keyword>: <reason>` carried by the language's
 ordinary comment token:
 
-- Go, Java, JS/TS: a `//` line comment. Block comments are never
-  markers; the one exception is `dup-ok`, where the duplication
-  engine also accepts a standalone single-line `/* ... */` (see
-  [duplication](rules.md#duplication-dup001-dup002-dup003)).
+- Go, Java, JS/TS: a `//` line comment. Block comments are never markers,
+  except for [`dup-ok`](rules.md#duplication-dup001-dup002-dup003).
 - Python: a `#` comment.
 - Svelte: inside `<script>` blocks the `//` form works as in JS/TS;
   the template adds two forms - a `//` comment inside a `{...}`
@@ -25,9 +23,12 @@ standalone above the block, directly above the statement) is each rule's own
 contract. A marker suppresses only with a reason of at least 10 characters
 (D009).
 
-The approvals check and `tackbox escapes` take in every comment that starts
-with one of those keywords or with `long-comment:`, whatever its reason length,
-so each needs a manifest line. `long-comment` suppresses no rule.
+The approvals check inventories every comment that contains one of those
+keywords, or `long-comment`, followed by a colon - anywhere in the comment,
+whatever the reason length - so each needs a manifest line even where it
+suppresses nothing. Svelte template expressions are matched as text.
+`long-comment` suppresses no rule. `tackbox escapes` matches the same keywords
+in raw source instead ([escapes](escapes.md)).
 
 ## Approval manifest
 
@@ -51,18 +52,15 @@ Only markers in files an engine would lint participate in the check
 extension (a `.java.txt`) is dead text - no entry needed, no
 question - while the `.tackbox/reporters` gate stays unconditional.
 
-Approving is adding the line, so a green check passes through a visible
-diff and a human decision. Writing a marker never asks by itself. Removing a
-manifest line is free; a marker whose text, scope, or count changes needs its
-entry updated. What an agent session may edit while approvals are
-inconsistent: [agent hook](agent-hook.md#session-and-gates).
+Removing a manifest line is free; a marker whose text, scope, or count
+changes needs its entry updated. Agent sessions:
+[agent hook](agent-hook.md#session-and-gates).
 
 Approvals messages carry the suppressed rule's text, or say the marker
 suppresses nothing when no finding is available, such as in the standalone
 `approvals` command. Each inconsistency takes one line; no message supplies
 an approval entry to copy. Suppressed findings stay out of ordinary lint
-output, its exit status, and codequality. See D020 in
-[rules/DECISIONS.md](../rules/DECISIONS.md) for the session boundary.
+output, its exit status, and codequality.
 
 ## Generated and vendored code
 
@@ -90,10 +88,8 @@ the excluded files in that scope (absent at zero):
 excluded by attributes: 12 files in scope (tackbox escapes lists all)
 ```
 
-The agent hook asks before an edit adds an exclusion or touches an excluded
-file ([agent hook](agent-hook.md#session-and-gates)). Generators run through
-Bash and are unaffected; hosts collapse excluded-file diffs, so reviewers must
-expand them.
+Hosts collapse excluded-file diffs, so reviewers must expand them. Agent
+sessions: [agent hook](agent-hook.md#session-and-gates).
 
 `tackbox doctor` adds an informational `attributes` section (never a
 check, no exit-code effect) naming local conditions that can make a

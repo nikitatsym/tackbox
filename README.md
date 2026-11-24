@@ -154,8 +154,8 @@ lint:
   unresolvable files leave it incomplete; `1` infra.
 - `tackbox escapes [--since <rev>]` - print the bypass surface as JSON
   ([schema](docs/escapes.md)). Not a gate: `0` whenever it runs, entries or
-  not; `1` for a bad `--since` rev, or git older than 2.40 on the `--since`
-  path.
+  not; `1` for an infrastructure failure, such as attributes that cannot be
+  resolved, a bad `--since` rev, or git older than 2.40 on the `--since` path.
 - `tackbox doctor` - verify the install: `0` all checks pass, `1` at least
   one failed.
 - `tackbox hook`, `tackbox hook-protocol` - the [agent hook](#agent-hook);
@@ -183,7 +183,7 @@ rule decision and its rationale.
 
 ## Exceptions
 
-There are no flags to disable individual rules. To keep a finding, put a
+There are no flags to disable individual rules. To suppress a finding, put a
 marker with its reason at the site, such as `// no-report: <reason>`
 ([keywords and forms](docs/suppression.md#markers)), and approve it with a line
 in the approval manifest. The unused-binding lane has no suppression.
@@ -248,8 +248,9 @@ undoes a write, and shell commands run no approval checks. Contract:
 Every host needs `uvx` on PATH: the hook runs tackbox through it. Codex and
 Oh My Pi also need npm and a Node.js matching
 `>=20.19.0 <22.0.0 || >=22.12.0 <23.0.0 || >=23.2.0` for the adapter. The
-adapter runs `uvx tackbox@<its own version>`; the first edit after installing
-or upgrading it downloads that wheel, so it needs network access once.
+adapter pins the Python wheel to its own version (`uvx tackbox@<version>`);
+if that wheel is not cached yet, the next edit downloads it, so it needs
+network access then.
 
 ### Claude Code
 

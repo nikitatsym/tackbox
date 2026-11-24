@@ -12,8 +12,13 @@ rule by rule with examples.
 
 - Every failure path (a Go err-branch, a `catch` / `except`) must propagate,
   capture, or carry an explicit `no-report: <reason>` marker.
-- A parse result that falls back to a default must capture or carry
-  `parse-skip: <reason>`.
+- A parse failure that falls back to a default needs `parse-skip: <reason>`
+  unless the error is handled. In Go (ERC002), capturing or propagating the
+  error counts for parsers that return one; a nil result such as
+  `net.ParseIP`'s needs a capture on the nil branch
+  ([Go reference](../go/README.md#rules)). In JS / TS
+  ([`no-parse-fallback`](../js/README.md#rules)) only propagating counts, so
+  reporting and then returning a default is a finding.
 - A terminal exit must be preceded by a capture or carry `no-report` (Go,
   Java); JS and Python flag an exit inside a catch.
 - A bare nil return (Go) must carry `nil-return: <reason>` or use a

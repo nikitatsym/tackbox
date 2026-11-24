@@ -211,8 +211,7 @@ and validated (msg/dedupKey) by ERC006. Other exports of that package
 `Error(...)` that merely shares the name is not trusted.
 
 A repo may also declare its own sinks in `.tackbox/reporters`
-([format and validation](../docs/rules.md#reporter-recognition)); a
-`[usage]` sink is honored only in Go (ERC003).
+([format, validation, and `[usage]` sinks](../docs/rules.md#reporter-recognition)).
 
 Return propagation is defined by [D022](../rules/DECISIONS.md#d022---returned-go-error-data-establishes-propagation-2026-10-10).
 `panic(err)` also propagates the referenced error.

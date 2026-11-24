@@ -4,8 +4,8 @@ How the `tackbox` wheel gets its engines. The store location, its overrides,
 and the platforms are in the [README](../README.md#requirements).
 
 `uvx tackbox@latest` installs one small platform wheel, `tackbox`, with the CLI
-and tackbox's own analyzers; it is released on every push. The bundled
-runtimes and third-party analyzers ship as two separate PyPI projects:
+and tackbox's own analyzers. The bundled runtimes and third-party analyzers
+ship as two separate PyPI projects:
 
 - `tackbox-engines` - the Node runtime (none on Android), `jscpd`, and the
   vendored third-party `node_modules`;

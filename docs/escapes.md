@@ -4,9 +4,10 @@
 review tooling (D013); exit codes are under [Commands](../README.md#commands).
 It lists:
 
-- **suppression markers** (`// no-report`, `// parse-skip`,
-  `// nil-return`, `// long-comment`, `// test-skip`, `// dup-ok`), each
-  with its reason;
+- **suppression markers** - every marker keyword
+  ([keywords](suppression.md#markers)) followed by a colon, each with its
+  reason. Matching is textual over the raw source, so a keyword inside a
+  string is listed too, though it is no marker and needs no approval;
 - **`.tackbox/reporters` declarations** - the tier-2 sinks;
 - **notify / quiet lane choices** - the call sites of the user-lane-only
   `notify` and the telemetry-only `quiet` verbs;
