@@ -1,9 +1,8 @@
 # Escapes inventory
 
-`tackbox escapes` prints the repo's whole bypass surface as JSON on
-stdout - every place code legitimately steps off the paved road, in one
-cheap command that review tooling of any harness can consume (D013). It
-enumerates:
+`tackbox escapes` prints the repo's bypass surface as JSON on stdout, for
+review tooling (D013); exit codes are under [Commands](../README.md#commands).
+It lists:
 
 - **suppression markers** (`// no-report`, `// parse-skip`,
   `// nil-return`, `// long-comment`, `// test-skip`, `// dup-ok`), each
@@ -13,12 +12,6 @@ enumerates:
   `notify` and the telemetry-only `quiet` verbs;
 - **attribute-excluded files** - one entry per set generated or vendored
   attribute.
-
-It is an **inventory, not a gate**: it is not wired into `dev.py check`.
-The rules and the hook are the enforcement; this command is food for a
-reviewer (human or agent) who wants the escapes laid out without
-re-deriving them. Usage and exit codes are in the
-[README](../README.md#escapes-inventory).
 
 ## JSON contract
 
@@ -80,22 +73,16 @@ notify / quiet call sites are detected **textually per language**
 (`report_quiet` / `notify` in Python, `reportQuiet` / `notify` in the JS
 family, `.Quiet(` / `.Notify(` in Go, `.quiet(` / `.notify(` in Java),
 word-boundaried so `notifyAll(` does not match. Textual detection can
-over-report (a match inside a comment or string counts) - that is fine:
-this is observability, not a lint.
+over-report (a match inside a comment or string counts).
 
 ## `--since <rev>`
 
 `--since <rev>` prints only entries **new against `<rev>`**, compared by
 content identity (`(kind, file, text)`, or `(kind, file, attribute)` for
-attribute-excluded) - the same extraction run against the tree at `<rev>`
-(via `git ls-tree` + `git show`) subtracted, count aware, from the current
-tree's entries. The baseline is attribute-aware: it resolves the attributes
-as of `<rev>` (via the seam's `git check-attr --source`), so an attribute
-added since the rev reports its newly-excluded files, a removed one
-re-activates its markers as new (never a silent subtraction), and an
-unchanged one adds no noise. Because `--source` needs git >= 2.40, an older
-git is a named infra error on the `--since` path only (the plain listing
-needs no version bump). It over-reports on moved code (a new file path is a
-new identity) but never silently drops an entry - the conservative direction
-for a review aid. A bad rev is the other infra error: one stderr line,
-exit 1.
+attribute-excluded): the same extraction runs against the tree at `<rev>` and
+is subtracted, count aware, from the current tree's entries. Attributes are
+resolved as of `<rev>`, so an attribute added since the rev reports its
+newly-excluded files, a removed one re-activates its markers as new (never a
+silent subtraction), and an unchanged one adds no noise. This needs
+git >= 2.40; the plain listing does not. It over-reports on moved code (a new
+file path is a new identity) but never silently drops an entry.

@@ -163,8 +163,7 @@ Declarations with no references are left to ERC010; dead recursive functions
 and callees reached only by dead code can get both ERC010 and ERC011.
 Remove that dead code rather than editing its parameters. ERC011 has the
 same host and build-configuration limits as [ERC010](#unused-declarations-erc010).
-Hook presentation follows the [agent hook contract](../docs/agent-hook.md);
-full repository gates cover findings outside the hook's target and line scope.
+Hook presentation follows the [agent hook contract](../docs/agent-hook.md).
 
 The linked x/tools supports Go 1.27.2 export data.
 
@@ -211,10 +210,9 @@ and validated (msg/dedupKey) by ERC006. Other exports of that package
 (`Init`, `Flush`, `Crumb`, ...) are not captures, and a bare local
 `Error(...)` that merely shares the name is not trusted.
 
-A repo may also declare its own sinks in a root `.tackbox/reporters`
-file (`file#function: reason`); a declared call counts only when the
-caught error flows into its arguments. Declarations are validated every
-run - a dead file or symbol is a hard error.
+A repo may also declare its own sinks in `.tackbox/reporters`
+([format and validation](../docs/rules.md#reporter-recognition)); a
+`[usage]` sink is honored only in Go (ERC003).
 
 Return propagation is defined by [D022](../rules/DECISIONS.md#d022---returned-go-error-data-establishes-propagation-2026-10-10).
 `panic(err)` also propagates the referenced error.

@@ -7,18 +7,18 @@ languages.
 
 ## Core policy
 
-Across supported languages, the core policy is:
+Every language applies the same model; [Go](../go/README.md#rules) shows it
+rule by rule with examples.
 
-- Every `err != nil` branch must propagate, capture, or carry an
-  explicit `// no-report: <reason>` marker.
-- Common parser results that fall through to `nil` must capture or
-  carry `// parse-skip: <reason>`.
-- Terminal exits (`log.Fatal*`, `os.Exit`, project-local `die`) must
-  be preceded by a capture call or carry a `// no-report: <reason>`
-  marker (e.g. for the normal `os.Exit(0)` at the end of main).
-- Bare `return nil` from a single-result function must carry
-  `// nil-return: <reason>` or use `(val, ok)` / `(val, err)`.
-- A single err-branch may not both capture and `return err`.
+- Every failure path (a Go err-branch, a `catch` / `except`) must propagate,
+  capture, or carry an explicit `no-report: <reason>` marker.
+- A parse result that falls back to a default must capture or carry
+  `parse-skip: <reason>`.
+- A terminal exit must be preceded by a capture or carry `no-report` (Go,
+  Java); JS and Python flag an exit inside a catch.
+- A bare nil return (Go) must carry `nil-return: <reason>` or use a
+  `(val, ok)` / `(val, err)` result.
+- A single failure path may not both capture and propagate (Go, Java, JS).
 - The dedupKey must be a well-formed literal; in Go, capture-call
   arguments must additionally not carry raw user input (a
   `*http.Request` field).
@@ -30,19 +30,14 @@ Across supported languages, the core policy is:
   (error/warn already reach the user, so the pair double-shows). A
   `notify` is validated like a capture: static-literal msg, well-formed
   literal dedupKey.
-- A skipped test must state a reason: `t.Skip("why")` / `t.Skipf`, or
-  `// test-skip: <reason>` above a bare `t.SkipNow()`. The same
-  contract holds in every language (skip / todo / xfail /
-  `@Disabled`); focused tests (`it.only`, `fit`) are an unconditional
-  error.
+- A skipped test must state a reason in every language (skip / todo / xfail /
+  `@Disabled`); focused tests (`it.only`, `fit`) are an unconditional error.
 
 ## Duplication (DUP001, DUP002, DUP003)
 
-The `tackbox-jscpd` engine wraps a copy/paste detector and runs by
-default over Go, Python, Java, and the JS family (`.js`, `.jsx`, `.mjs`,
-`.cjs`, `.ts`, `.tsx`, `.svelte`); Markdown is excluded, since prose
-repetition is not a defect. A consumer on `@latest` gets it in CI with
-no wiring.
+Duplication is checked across Go, Python, Java, and the JS family (`.js`,
+`.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.svelte`); Markdown is excluded,
+since prose repetition is not a defect.
 
 - **DUP001** flags a duplicated block - a clone of at least 50 tokens.
   Both ends are reported, each a finding at its own site, naming the
@@ -79,7 +74,8 @@ Every language also honors a function declared in a repo-root
 `.tackbox/reporters` file (`file#function: reason`) - tier-2. A
 declaration names a report sink - it is not an exclude: it disables no
 rule, and a declared call is honored only when the caught error flows
-into its arguments.
+into its arguments. Declarations are validated every run - a dead file or
+symbol is a hard error.
 
 A `[usage]` declaration (`file#function [usage]: reason`) names the
 opposite lane: a deliberate user-facing diagnostic exit, e.g. a CLI

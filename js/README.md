@@ -15,13 +15,11 @@ uvx tackbox@latest lint .
 
 ## Oh My Pi extension
 
-The same npm package carries tackbox's Oh My Pi extension, so
-`omp plugin install tackbox` wires the rules into an agent's edit loop
-with nothing else to configure. See the
-[agent hook contract](../docs/agent-hook.md) for what it gates and how a
-decision reaches the agent, and
-[CONTRIBUTING.md](../CONTRIBUTING.md#oh-my-pi-against-a-working-tree) for the
-development command override.
+The same npm package carries tackbox's Oh My Pi extension. Setup is in the
+[README](../README.md#oh-my-pi), what it gates in the
+[agent hook contract](../docs/agent-hook.md), and the development command
+override in
+[CONTRIBUTING.md](../CONTRIBUTING.md#oh-my-pi-against-a-working-tree).
 
 ## Direct ESLint integration
 
@@ -216,9 +214,7 @@ repo-relative:
   fragment is not checked.
 - `G` - a gitlink (submodule) root; a target under it is skipped.
 
-The tackbox CLI builds this inventory from the git listing and passes it in;
-the flags exist for that one caller and are a deliberate breaking change to the
-public bin.
+The tackbox CLI builds this inventory from the git listing and passes it in.
 
 ### Declared charset
 

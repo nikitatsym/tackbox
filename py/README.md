@@ -1,12 +1,8 @@
 # pyrules (Python)
 
 Python exception and test-skip rules ship as the `pyrules` flake8 plugin
-(`TBX` codes) inside the `tackbox` wheel, run by the CLI - there is no
-separate install:
-
-```bash
-uvx tackbox@latest lint .
-```
+(`TBX` codes) inside the `tackbox` wheel and run as part of `tackbox lint`
+([requirements](../README.md#requirements)).
 
 ## Rules
 
@@ -37,11 +33,10 @@ A skip reason is accepted in any of the natural forms:
 `@pytest.mark.skip(reason=...)`,
 `@pytest.mark.skipif(cond, reason=...)`,
 `@pytest.mark.xfail(reason=...)`, `pytest.skip(...)`, or
-`@unittest.skip(...)`. `contextlib.suppress` is flagged as a
-cosmetic dodge of the swallow rule; the one allowlisted use is
-`asyncio.CancelledError` around `await task` after `task.cancel()`,
-where the CancelledError on the await IS the confirmation that the
-cancel propagated, not an error to log. The notify gate (TBX010) and
+`@unittest.skip(...)`. `contextlib.suppress` is a finding (TBX002); the one
+allowlisted use is `asyncio.CancelledError` around `await task` after
+`task.cancel()`, where the CancelledError on the await is the confirmation
+that the cancel propagated, not an error to log. The notify gate (TBX010) and
 the user-lane argument contract - static-literal msg, well-formed
 `dedup_key` (TBX011) - apply to the `tackbox_report` verbs recognized
 by import origin (D010).

@@ -14,10 +14,9 @@ a snapshot taken when the agent starts. Without a commit, the whole tree is
 added. Existing committed debt is left to `dev.py check` and CI; dirty debt
 already present when an agent starts still belongs to the hook session.
 
-An import can be temporarily unused between edits. The post hook reports it
-on the added line without undoing the edit; adding its use clears the finding.
-Add the import and its use in one edit when possible. Do not delete a needed
-import just to silence feedback during a multi-step change.
+An import that stays unused until a later edit is reported on its added line.
+Add the import and its use in one edit when possible; do not delete a needed
+import to silence the finding.
 
 - **Post-edit** re-lints touched files (Go: their package). A finding on
   added lines or session approvals debt in a touched file becomes a tool
@@ -33,7 +32,9 @@ import just to silence feedback during a multi-step change.
 - **Pre-edit** asks for approval before a new `.tackbox/approvals` line or a
   new `.tackbox/reporters` line lands, before a positive exclusion line is
   added to any `.gitattributes`, before editing an attribute-excluded file, and
-  before deleting or moving the root `dev.py`; removing a gate line is free.
+  before deleting or moving the root `dev.py`. Removing a gate line is free, as
+  are `=false`, `-attr`, and other non-exclusion `.gitattributes` lines; one
+  edit that adds several gated lines draws one all-or-nothing ask.
   A known target whose content is ambiguous asks when it reaches a bypass
   surface. An unclassifiable file mutation or a failed policy dependency blocks
   before it can run; it is never weakened into an approval prompt.
@@ -52,13 +53,13 @@ Cross-repository edits and moves check every affected worktree and produce one
 indivisible pre decision. All approval reasons and blockers remain visible, with
 repository paths identifying multi-worktree results. A blocked or unverified
 target prevents the entire pre mutation; post results check only targets that
-the host reports as landed and never claim rollback.
+the host reports as landed.
 
-A target is inactive only when discovery emits C-locale stderr containing
-`not a git repository`, or its discovered worktree has no root `dev.py`.
-A missing git executable, unreadable parent, corrupt Git config, or another
-discovery failure is unverified, not a no-op. Unclassifiable explicit file
-mutations fail closed even when the session starts outside Git.
+A target outside any Git worktree, or in a worktree without a root `dev.py`,
+is inactive: the hook allows it. A discovery failure (git missing, an
+unreadable parent, a corrupt Git config) makes the target unverified instead,
+and an explicit file mutation the hook cannot classify fails closed even when
+the session starts outside Git.
 
 ## Exit codes
 
@@ -66,12 +67,11 @@ mutations fail closed even when the session starts outside Git.
   approval prompt or a refusal before an unrelated edit); `1` a
   non-blocking infra error (unreadable stdin, a git failure); `2` a
   PostToolUse finding on edited lines, a non-compiling Go package, or
-  session approvals debt in a touched file. A post error reports a
-  mutation that already landed; it does not block or undo the write.
-- **hook-protocol** - `0` whenever a decision was reached, whatever the
+  session approvals debt in a touched file.
+- **hook-protocol** - `0` whenever a decision was written, whatever the
   decision says (it rides the JSON on stdout, never the exit code); `1`
-  plus one stderr line when none was: unreadable stdin, or a request
-  whose protocol version this tackbox does not speak.
+  plus one stderr line and no decision for unreadable stdin or a request the
+  wire below rejects.
 
 ## Codex
 
@@ -104,67 +104,75 @@ the mutation may already have landed and must not be repeated.
 
 ## Oh My Pi
 
-The npm package declares an extension (`package.json#omp.extensions`) that
-runs `uvx tackbox@<npm package version> hook-protocol`. The extension
-subscribes to the public `tool_call` / `tool_result` events.
+The extension runs `uvx tackbox@<npm package version> hook-protocol` for each
+edit.
 
-- a pre-edit ask becomes a confirmation dialog. In a headless or subagent
+- A pre-edit ask becomes a confirmation dialog. In a headless or subagent
   session, where nobody can answer, it blocks with the reason instead of
   approving itself; a denied ask blocks before the tool runs.
-- a verified post violation becomes a tool error carrying the findings, which
+- A verified post violation becomes a tool error carrying the findings, which
   keeps the agent in-loop on them.
-- an unverified pre event blocks. The child has a 20-second deadline inside
-  OMP's 30-second handler budget. An unverified post event carries the shared
-  three-fact warning, omits an `isError` override so OMP preserves the host
-  state, and tells the model not to repeat the mutation before `dev.py check`.
-- an opaque write channel (`xd://` tool devices, archive members, SQLite rows),
+- An unverified pre event blocks, including a check that does not answer
+  within 20 seconds. An unverified post event keeps the tool's own result and
+  adds the three-fact warning.
+- An opaque write channel (`xd://` tool devices, archive members, SQLite rows),
   every `bash` call, and every `eval` call name no file, so they run
   neither approvals checks nor targeted lint.
 - MCP tool names are not enumerated by this extension. Their file mutations are
   an explicit residual outside its pre gate and targeted post checks;
   review their diff and run `dev.py check`.
-- the post adapter consumes each result-detail record independently. It falls
-  back to a snapshot only for that record when the record is pruned; failed
-  records do not widen the scope of successful landed records. OMP 18.x does
-  not identify a landed subset for a single aggregate error without per-file
-  details, so Tackbox preserves the host error and cannot safely perform
-  targeted lint for that residual. It does not run a whole-tree approvals check.
+- When OMP cannot say which files a failed edit landed, the hook keeps the
+  host's error and skips targeted lint; run `dev.py check`.
 
 ## Other hosts
 
-`tackbox hook-protocol` is the host-neutral wire - one JSON event on stdin,
-one JSON decision on stdout:
+`tackbox hook-protocol` reads one JSON request on stdin and writes one JSON
+decision on stdout. A pre request for an edit that adds an approval line, and
+its response:
 
 ```json
 {"protocol": 1, "phase": "pre", "cwd": "/repo", "tool": "edit",
- "targets": [{"path": "/repo/app/svc.py", "op": "edit",
+ "targets": [{"path": "/repo/.tackbox/approvals", "op": "edit",
               "expectedPresent": true,
-              "added": ["x = 2"], "removed": ["x = 1"]}],
- "unknown": null}
+              "added": ["app/svc.py#run: no-report: the caller retries the whole batch"]}]}
 ```
 
 ```json
-{"protocol": 1, "decision": "ask",
- "reason": "approve suppression marker: app/svc.py: no-report: covered upstream"}
+{"protocol": 1, "decision": "ask", "reason": "approve suppression marker: app/svc.py#run: no-report: the caller retries the whole batch"}
 ```
 
-- `cwd` is the host session's non-empty absolute working directory, used by
-  adapters to resolve relative paths. Each target selects its own repository.
+Request fields, all checked; a request that breaks any rule gets exit `1` and
+no decision:
+
+- `protocol` is `1`.
 - `phase` is `pre` (before the tool runs, still refusable) or `post` (after it
-  landed). Pre requests omit `succeeded`; post requests require the boolean
-  `succeeded`, so a failed tool is not misreported as a missing landed file.
-- `tool` is one of `edit`, `apply_patch`, `write`, `bash`, or `eval`. `bash` and
-  `eval` are target-free channels and run no approvals or targeted lint.
-- a **target** is one file mutation with an absolute `path`, `op`, and
-  `expectedPresent`. `edit` and `write` expect the path to exist, `delete`
-  expects it absent, and a move reports an absent source plus a present
-  destination. `content` is a full replacement; otherwise `added` and
-  `removed` are text fragments. `content` and fragments are mutually exclusive.
-  `ambiguous: true` means a known target needs whole-file treatment.
-- **zero targets** is the opaque channel: no approvals or targeted lint runs.
-  `unknown` is a non-empty reason only when no concrete target can be named;
-  it blocks pre and warns post.
-- the wire decisions are `allow`, `ask`, `block`, and `warn`. The semantic
-  outcomes are inactive, allow, approval-required, violation, and unverified:
-  unverified maps to `block` pre and `warn` post. Hosts must make a post warning
-  visible without turning a successful mutation into a repeatable tool error.
+  ran). A post request requires the boolean `succeeded`, so a failed tool is
+  not misreported as a missing landed file; a pre request must not carry it.
+- `cwd` is the host session's absolute working directory, used only to
+  resolve relative host paths. Each target selects its own repository.
+- `tool` is one of `edit`, `apply_patch`, `write`, `bash`, or `eval`.
+- `targets` is a required list; each target is one file mutation:
+  - an absolute `path`, an `op` (`edit`, `write`, `delete`, or `move`), and a
+    boolean `expectedPresent`: `true` for `edit` and `write`, `false` for
+    `delete`;
+  - a move is two targets with the same non-empty `moveId`, the source with
+    `expectedPresent: false` and the destination with `true`; only move
+    targets carry `moveId`;
+  - `content` (the full new text) or `added` / `removed` (lists of text
+    fragments), never both; `ambiguous: true` instead marks a known target that
+    needs whole-file treatment. Every target except a delete or a move carries
+    one of them, and a delete carries no `content` or `added`;
+  - a `write` request carries only `write` targets.
+- A request with no targets and no `unknown` runs no checks and is allowed.
+  `targetless` says why: `opaque` (a channel that names no file; required
+  for `bash` and `eval`, which never carry targets), `no-op` (the tool changed
+  nothing), or `failed` (a failed tool with no landed target).
+- `unknown` is a non-empty reason for a mutation whose files the host cannot
+  name. It excludes targets and `targetless`, and it blocks pre and warns post.
+
+The response is `{"protocol": 1, "decision": ..., "reason": ...}`, with an
+empty reason for `allow`. The decisions map the semantic outcomes: inactive and
+allow give `allow`; approval-required gives `ask` pre and `block` post; a
+violation gives `block`; unverified gives `block` pre and `warn` post. Hosts
+must make a post warning visible without turning a successful mutation into a
+repeatable tool error.

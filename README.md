@@ -24,12 +24,9 @@ it's written: hooked into the agent's edit loop it flags the finding
 before the turn ends, and the same rules gate pre-commit and CI -
 one coverage bar for hand-written and agent-written code.
 
-There are no per-rule disable flags. A local exception stays visible
-as a reasoned `// no-report: <reason>` marker at the site, and every
-marker must be covered by a line in the committed approval manifest
-(`.tackbox/approvals`). Adding that line is the act that draws the
-approval ask in an agent session; an uncovered marker keeps lint,
-`dev.py check`, and CI red until it is approved or reverted.
+There are no per-rule disable flags: a local exception stays visible as a
+reasoned marker at the site and needs an approval (see
+[Exceptions](#exceptions)).
 
 ```go
 resp, err := client.Do(req)
@@ -74,18 +71,18 @@ uvx tackbox@latest lint .
 
 ## Requirements
 
-The wheel is hermetic: a consumer needs only `git` on PATH (plus a Go
-toolchain if the repo has `.go` files, and a Java 17+ runtime if it
-has `.java` files) and, the first time a given engine payload version
-runs, network access to fetch that payload once.
-Rules roll out via `@latest` - a new safety rule reaches every repo on
-its next run.
+tackbox runs through `uvx` (part of [uv](https://docs.astral.sh/uv/)) inside a
+Git checkout. The wheel is hermetic: beyond that, a consumer needs only `git`
+on PATH (plus a Go toolchain if the repo has `.go` files, and a Java 17+
+runtime if it has `.java` files). Rules roll out via `@latest` - a new safety
+rule reaches every repo on its next run.
 
-Engine payloads are cached per version under `$XDG_DATA_HOME/tackbox/`
-(default `~/.local/share/tackbox/`; override with `TACKBOX_ENGINES_DIR` /
-`TACKBOX_OPENGREP_DIR`, each naming an already-unpacked payload); after the
-first fetch tackbox runs offline until a payload version changes. Details:
-[docs/distribution.md](docs/distribution.md).
+The first run of each engine payload version downloads it once into a per-user
+store under `$XDG_DATA_HOME/tackbox/` (default `~/.local/share/tackbox/`);
+later runs reuse it without downloading again, including later tackbox
+versions that pin the same payload. To skip the download, point
+`TACKBOX_ENGINES_DIR` / `TACKBOX_OPENGREP_DIR` at an already-unpacked payload.
+How payloads are pinned and verified: [docs/distribution.md](docs/distribution.md).
 
 Wheels cover Linux x86_64/arm64 (manylinux), macOS 15 or newer on arm64,
 Windows x86_64, and Android arm64 (`android_24_arm64_v8a`, Termux). Android
@@ -146,24 +143,36 @@ lint:
 ## Commands
 
 - `tackbox lint [path]` - `0` clean, `1` findings, `2` a scope matching no
-  files or a git/engine setup failure; a closed downstream pipe
+  files, an unusable `--changed` / `--since` (an unknown ref, or a repo with
+  no commits), or an engine or setup failure. A closed downstream pipe
   (`lint | head`) exits `141`.
-- `tackbox approvals [--draft]` - check the approval manifest: `0`
-  consistent, `2` inconsistent, `1` infra. `--draft` prints entry lines for
-  uncovered markers and is not a gate.
-- `tackbox escapes` - print the bypass surface as JSON; `0` whenever it runs.
-- `tackbox doctor` - verify the install: `0` all checks pass, `1` one failed.
-- `tackbox hook`, `tackbox hook-protocol` - the agent hook (below).
+- `tackbox approvals` - check the approval manifest against the tree: `0`
+  consistent, `2` inconsistent (uncovered markers, orphaned entries, or
+  unresolvable files), `1` infra.
+- `tackbox approvals --draft` - print an entry line for every uncovered marker.
+  Not a gate: `0` when the draft is complete, orphans or not; `2` when
+  unresolvable files leave it incomplete; `1` infra.
+- `tackbox escapes [--since <rev>]` - print the bypass surface as JSON
+  ([schema](docs/escapes.md)). Not a gate: `0` whenever it runs, entries or
+  not; `1` for a bad `--since` rev, or git older than 2.40 on the `--since`
+  path.
+- `tackbox doctor` - verify the install: `0` all checks pass, `1` at least
+  one failed.
+- `tackbox hook`, `tackbox hook-protocol` - the [agent hook](#agent-hook);
+  exit codes in [docs/agent-hook.md](docs/agent-hook.md#exit-codes).
 
-`tackbox lint` scans the git-tracked source set under `path` (default `.`);
-`--changed` narrows it to the dirty tree, `--since <ref>` to `<ref>...HEAD`
-plus the dirty tree. The approvals check ignores the scope: it always covers
+`tackbox lint` scans the source set - tracked files plus untracked files that
+are not ignored - under `path` (default `.`). `--changed` narrows it to files
+that differ from HEAD (staged, unstaged, untracked); `--since <ref>` to the
+three-dot diff `<ref>...HEAD` plus those, so it already includes `--changed`.
+`path` composes with both: `tackbox lint src --changed` lints only the dirty
+files under `src/`. The approvals check ignores the scope: it always covers
 the whole tree, so a scoped CI lint cannot scope the wall away.
 
 ## Rules
 
-Covers ERC001-011 (Go, via `erclint`), JV001-014 (Java, via `javalint`;
-JV008 is retired), Python exception, reporting, test, and unused-binding rules
+Covers ERC001-011 (Go, via `erclint`), JV001-007 and JV009-014 (Java, via
+`javalint`), Python exception, reporting, test, and unused-binding rules
 (via flake8), frontend rules (JS, TS, Svelte, via ESLint), duplication,
 and Markdown link integrity and declared-charset checks. References:
 [Go](go/README.md), [Java](java/README.md), [Python](py/README.md),
@@ -174,12 +183,10 @@ rule decision and its rationale.
 
 ## Exceptions
 
-There are no flags to disable individual rules. A finding is suppressed only
-by a per-site marker plus a covering line in the approval manifest. A marker
-is `no-report`, `parse-skip`, `nil-return`, `test-skip`, or `dup-ok`, followed
-by `: <reason>` of at least 10 characters, in the language's comment syntax
-([marker forms](docs/suppression.md)). `long-comment` suppresses no rule but
-counts as a marker too. The unused-binding lane has no suppression.
+There are no flags to disable individual rules. To keep a finding, put a
+marker with its reason at the site, such as `// no-report: <reason>`
+([keywords and forms](docs/suppression.md#markers)), and approve it with a line
+in the approval manifest. The unused-binding lane has no suppression.
 
 ### Approval manifest
 
@@ -192,9 +199,9 @@ js/src/boot.ts#init.<h4f2a9c1e>: no-report: splash fallback, reported upstream
 tools/gen.py: parse-skip: config validated upstream
 ```
 
-`tackbox approvals --draft` prints a ready entry line for every uncovered
-marker. Approving is adding the line; in an agent session the edit that adds
-it draws an approval ask. Address grammar and the check:
+Approving is adding the line (`tackbox approvals --draft` prints it, see
+[Commands](#commands)); in an agent session the edit that adds it draws an
+approval ask. Address grammar and the check:
 [docs/suppression.md](docs/suppression.md#approval-manifest).
 
 ### Generated and vendored code
@@ -214,15 +221,9 @@ match a trailing-slash directory form. Details:
 
 ### Escapes inventory
 
-`tackbox escapes` prints every marker, `.tackbox/reporters` declaration,
-notify / quiet call site, and attribute-excluded file as JSON - an
-inventory for review, not a gate:
-
-```bash
-uvx tackbox@latest escapes --since origin/main --context 5
-```
-
-JSON contract: [docs/escapes.md](docs/escapes.md).
+`tackbox escapes` lists every marker, `.tackbox/reporters` declaration,
+notify / quiet call site, and attribute-excluded file for review
+([schema](docs/escapes.md)).
 
 ## Runtime reporting helpers
 
@@ -237,16 +238,18 @@ specified in [docs/report-contracts.md](docs/report-contracts.md).
 
 ## Agent hook
 
-One shared core wires the rules into a coding agent's edit loop, whichever
-host drives it. **Pre-edit** asks for approval before a new
-`.tackbox/approvals` or `.tackbox/reporters` line, a positive exclusion line
-in a `.gitattributes`, an edit of an attribute-excluded file, or deleting or
-moving the root `dev.py`. **Post-edit** re-lints touched files (Go: their
-package); a finding on added lines or session approvals debt becomes a tool
-error. The mutation has already landed; post never undoes it. A session is
-each target worktree's difference from HEAD, staged and untracked files
-included; `dev.py check` and CI stay the authoritative gate. Full contract:
+The same rules run in a coding agent's edit loop. Before an edit, gated
+changes (a new approval or reporter line, an exclusion in `.gitattributes`, an
+edit of an excluded file, removing the root `dev.py`) ask for approval; after
+it, findings on the added lines come back as a tool error. The hook never
+undoes a write, and shell commands run no approval checks. Contract:
 [docs/agent-hook.md](docs/agent-hook.md).
+
+Every host needs `uvx` on PATH: the hook runs tackbox through it. Codex and
+Oh My Pi also need npm and a Node.js matching
+`>=20.19.0 <22.0.0 || >=22.12.0 <23.0.0 || >=23.2.0` for the adapter. The
+adapter runs `uvx tackbox@<its own version>`; the first edit after installing
+or upgrading it downloads that wheel, so it needs network access once.
 
 ### Claude Code
 
@@ -269,10 +272,13 @@ included; `dev.py check` and CI stay the authoritative gate. Full contract:
 }
 ```
 
-`uvx tackbox hook` runs the cached tackbox (no `@latest`): the hook is
-fast in-loop feedback, not the authoritative gate.
+`uvx tackbox hook` runs the cached tackbox (no `@latest`), so the in-loop
+hook does not wait for a registry lookup.
 
 ### Codex
+
+Install the adapter once; `tackbox-codex-hook` must be on the PATH Codex runs
+hooks with:
 
 ```bash
 npm install --global tackbox@latest
@@ -289,9 +295,7 @@ supports the prompt.
 omp plugin install tackbox
 ```
 
-That is the whole wiring: the npm package declares an extension and OMP
-loads it. A pre-edit ask becomes a confirmation dialog; a headless or
-subagent session, where nobody can answer, blocks with the reason. Host
+That is the whole wiring. Approval dialogs, headless sessions, and host
 limits: [docs/agent-hook.md](docs/agent-hook.md#oh-my-pi).
 
 ## Development
